@@ -1,0 +1,8 @@
+{
+  "number-trace-kit": [
+    "extractNumbers",
+    "reconcile",
+    "reconcileComponents",
+    "traceNumbers"
+  ]
+}
