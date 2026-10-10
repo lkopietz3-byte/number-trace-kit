@@ -217,6 +217,18 @@ describe('derivations', () => {
     expect(only(trace('+25%', 'from 80 to 100', { derivations: [...d] })).status).toBe('derived')
   })
 
+  it('an explicit sign must agree with the derived value', () => {
+    // Evidence order 100 then 80: later minus earlier is -20.
+    const d = ['difference'] as const
+    expect(only(trace('-20', 'a 100 b 80', { derivations: [...d] })).status).toBe('derived')
+    expect(only(trace('20', 'a 100 b 80', { derivations: [...d] })).status).toBe('derived')
+    // +20 would need earlier minus later, the reverse of the order the evidence gives.
+    expect(only(trace('+20', 'a 100 b 80', { derivations: [...d] })).status).toBe('unknown')
+    // Sums have no direction: a minus sign on a positive sum is plain wrong.
+    expect(only(trace('-180', 'a 100 b 80', { derivations: ['sum'] })).status).toBe('untraced')
+    expect(only(trace('-180', 'a 100 b 80', { derivations: ['sum'], signMode: 'magnitude' })).status).toBe('derived')
+  })
+
   it('reports how many derivations produced the number', () => {
     const r = only(trace('0.5', 'a 1 b 2 c 4', { derivations: ['ratio'] }))
     expect(r.status).toBe('derived')
@@ -327,6 +339,10 @@ describe('ignoring', () => {
     expect(trace('I have 0, 7, 10 and 11 items', 'x', { ignoreSmallIntegersUpTo: 10 }).numbers.map((n) => n.status)).toEqual([
       'ignored', 'ignored', 'ignored', 'untraced',
     ])
+    // Not a number with a unit, and not one the text leaves unclear (5² is 25).
+    expect(trace('5 days and 5\u00b2 and 3rd', 'x', { ignoreSmallIntegersUpTo: 10 }).numbers.map((n) => n.status)).toEqual([
+      'untraced', 'unknown', 'untraced',
+    ])
     // Not percents, amounts, signed or decimal numbers.
     expect(trace('5% $5 -5 5.5', 'x', { ignoreSmallIntegersUpTo: 10 }).numbers.map((n) => n.status)).toEqual([
       'untraced', 'untraced', 'untraced', 'untraced',
@@ -339,6 +355,19 @@ describe('ignoring', () => {
       ['4.2', 'ignored'], ['4.3', 'untraced'], ['99', 'untraced'],
     ])
     expect(r.numbers[0]?.reason).toBe('pattern')
+  })
+
+  it('ignorePattern never sees more than the first 64 characters of a long number', () => {
+    const long = '9'.repeat(100)
+    // 64 characters of the number plus 16 after it: 80 in all, never 81.
+    expect(only(trace(long, 'x', { ignorePattern: /9{80}/ })).status).toBe('ignored')
+    expect(only(trace(long, 'x', { ignorePattern: /9{81}/ })).status).toBe('unknown')
+    // And only 32 characters before and 16 after.
+    const text = `${'a '.repeat(30)}7 ${'b '.repeat(20)}`
+    expect(only(trace(text, 'x', { ignorePattern: /a a a a a a a a a a a a a a a a 7/ })).status).toBe('ignored')
+    expect(only(trace(text, 'x', { ignorePattern: /a a a a a a a a a a a a a a a a a a 7/ })).status).toBe('untraced')
+    expect(only(trace(text, 'x', { ignorePattern: /7 b b b b b b b b/ })).status).toBe('ignored')
+    expect(only(trace(text, 'x', { ignorePattern: /7 b b b b b b b b b b/ })).status).toBe('untraced')
   })
 
   it('ignorePattern state does not leak between numbers (global and sticky flags)', () => {

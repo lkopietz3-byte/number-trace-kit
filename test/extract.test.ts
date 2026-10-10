@@ -255,6 +255,13 @@ describe('dates and times', () => {
       ['3', '3', 'day'], ['March', '3', 'month'], ['2027', '2027', 'year'],
     ])
     expect(extractNumbers('the 3rd of July').map((x) => [x.raw, x.part])).toEqual([['3rd', 'day'], ['July', 'month']])
+    expect(extractNumbers('the 1st of May, 2026').map((x) => [x.raw, x.part])).toEqual([
+      ['1st', 'day'], ['May', 'month'], ['2026', 'year'],
+    ])
+    // A number after a date is a year only when it can be one.
+    expect(extractNumbers('on 5 March, 3000 people came').map((x) => [x.raw, x.part ?? x.kind])).toEqual([
+      ['5', 'day'], ['March', 'month'], ['3000', 'count'],
+    ])
   })
 
   it('does not read a lowercase modal verb as a month', () => {

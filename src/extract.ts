@@ -254,7 +254,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
   const idTokens: Tok[] = []
   let floor = 0
   let lastMonth: { start: number; end: number } | null = null
-  let lastDayEnd = -1
+  let lastDateEnd = -1
 
   const at = (k: number): number => (k >= 0 && k < n ? (f[k] ?? -1) : -1)
   const runEnd = (k: number): number => {
@@ -431,7 +431,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         const suf = ordinalSuffixAt(e)
         if (suf > 0) e += suf
         pushDate(i, e, v, 'day', undefined)
-        lastDayEnd = e
+        lastDateEnd = e
         return e
       }
       if (a === 4) {
@@ -441,10 +441,10 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       }
       return -1
     }
-    if (a === 4 && lastDayEnd >= 0 && floor === lastDayEnd) {
-      const gap = i - lastDayEnd
-      if ((gap === 1 && (at(lastDayEnd) === 0x20 || at(lastDayEnd) === 0x2c)) ||
-        (gap === 2 && at(lastDayEnd) === 0x2c && at(lastDayEnd + 1) === 0x20)) {
+    if (a === 4 && v >= 1000 && v <= 2999 && lastDateEnd >= 0 && floor === lastDateEnd) {
+      const gap = i - lastDateEnd
+      if ((gap === 1 && (at(lastDateEnd) === 0x20 || at(lastDateEnd) === 0x2c)) ||
+        (gap === 2 && at(lastDateEnd) === 0x2c && at(lastDateEnd + 1) === 0x20)) {
         pushDate(i, e0, v, 'year', undefined)
         return e0
       }
@@ -461,7 +461,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         if (w !== null) {
           pushDate(i, e, v, 'day', undefined)
           pushMonth(p, w.end, w.month)
-          lastDayEnd = -1
+          lastDateEnd = w.end
           return w.end
         }
       }
