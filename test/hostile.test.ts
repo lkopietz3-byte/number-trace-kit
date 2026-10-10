@@ -153,14 +153,40 @@ describe('hostile values', () => {
     expect(traceNumbers(nfd, nfc).verdict).toBe('clean')
   })
 
-  it('look-alike letters do not turn into digits or units', () => {
-    // Cyrillic "а" and Greek "ο" are letters, not digits.
-    expect(extractNumbers('5а and 7ο')).toEqual([])
-    expect(extractNumbers('аο')).toEqual([])
+  it('look-alike letters of other scripts end a number instead of hiding it', () => {
+    // Cyrillic "а" and Greek "ο" look like Latin letters but are not digits or units.
+    // Gluing them to a number must not make it skip the check.
+    expect(extractNumbers('5\u0430 and 7\u03bf').map((t) => t.raw)).toEqual(['5', '7'])
+    expect(traceNumbers('Total 5\u0430', 'x').verdict).toBe('untraced')
+    expect(extractNumbers('\u0430\u03bf')).toEqual([])
   })
 
-  it('other digit systems are not numbers (documented limit)', () => {
-    expect(extractNumbers('१२३ and ᵽ8')).toEqual([])
+  it('numbers in CJK text are numbers: "100円", "第3回", "1,234.50米ドル"', () => {
+    expect(extractNumbers('売上は1,234円で、第3回、5%増').map((t) => [t.raw, t.value])).toEqual([
+      ['1,234', '1234'], ['3', '3'], ['5%', '5'],
+    ])
+  })
+
+  it('decimal digits of other scripts are folded to ASCII', () => {
+    expect(extractNumbers('\u0967\u0968\u0969 and \u0e51\u0e52 and \u09e8\u09e6%').map((t) => [t.value, t.kind])).toEqual([
+      ['123', 'count'], ['12', 'count'], ['20', 'percent'],
+    ])
+    expect(traceNumbers('\u0967\u0968\u0969', 'total 123').verdict).toBe('clean')
+  })
+
+  it('every digit block in the folding table is a block of ten decimal digits', () => {
+    const zeros = [0x0660, 0x06f0, 0x07c0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66, 0x0be6, 0x0c66, 0x0ce6, 0x0d66, 0x0de6, 0x0e50, 0x0ed0, 0x0f20, 0x1040, 0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0, 0x1a80, 0x1a90, 0x1b50, 0x1bb0, 0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0, 0xaa50, 0xabf0]
+    for (const zero of zeros) {
+      for (let d = 0; d <= 9; d++) {
+        const ch = String.fromCharCode(zero + d)
+        expect(/^\p{Nd}$/u.test(ch), zero.toString(16)).toBe(true)
+        expect(extractNumbers(`x ${ch}`)[0]?.value).toBe(String(d))
+      }
+    }
+  })
+
+  it('digits outside the Basic Multilingual Plane are not read (documented limit)', () => {
+    expect(extractNumbers('\u{1d7d8}\u{1d7d9}')).toEqual([])
   })
 
   it('every token offset slices back to its raw text, on messy input', () => {

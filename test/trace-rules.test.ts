@@ -271,6 +271,17 @@ describe('ambiguity', () => {
     expect(only(trace('10', 'x 10²')).status).toBe('untraced')
   })
 
+  it('digits inside an evidence identifier can make an output number unknown, never traced', () => {
+    expect(only(trace('Revenue in 2025 grew.', 'FY2025 revenue grew.'))).toMatchObject({ status: 'unknown', reason: 'ambiguous-reading' })
+    expect(only(trace('Plan 12 applies.', 'Plan B12 applies.')).status).toBe('unknown')
+    expect(only(trace('Version 21.', 'Updated to v2.1')).status).toBe('untraced') // 21 is not 2 or 1
+    expect(only(trace('Updated to 2.', 'Updated to v2.1')).status).toBe('unknown')
+    // The output side stays silent about its own identifiers.
+    expect(trace('Plan B12 applies.', 'x').numbers).toEqual([])
+    // Identifier digits are weak evidence only: a stronger match elsewhere still wins.
+    expect(only(trace('Revenue in 2025.', 'FY2025 and also 2025')).status).toBe('traced')
+  })
+
   it('fractions and inline exponents never trace by their parts', () => {
     expect(trace('3/4', 'x 3 and 4').numbers.map((n) => n.status)).toEqual(['unknown', 'unknown'])
     expect(trace('3/4', 'x 9').verdict).toBe('untraced')

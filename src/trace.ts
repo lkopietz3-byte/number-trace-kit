@@ -43,10 +43,11 @@ import type {
 } from './types.js'
 
 const KINDS: readonly NumberKind[] = ['percent', 'currency', 'count', 'decimal', 'year', 'date-part', 'ordinal']
-const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'too-long']
+const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long']
 const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of']
 const DATE_PARTS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 const MAX_LIST = 8
+const MAX_EVIDENCE_TOTAL = 50_000_000
 const DEFAULT_MAX_CANDIDATES = 5_000
 const WINDOW_BEFORE = 32
 const WINDOW_AFTER = 16
@@ -311,7 +312,7 @@ function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
  */
 function weakPrimary(t: NumberToken): boolean {
   return (
-    t.ambiguous && (t.ambiguity === 'separator' || t.ambiguity === 'fraction') &&
+    t.ambiguous && (t.ambiguity === 'separator' || t.ambiguity === 'fraction' || t.ambiguity === 'identifier') &&
     (t.alternates === undefined || t.alternates.length === 0)
   )
 }
@@ -362,6 +363,14 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     dateUnknown: new Index(), byValue: new Index(), all: [], count: 0,
   }
   let count = 0
+  let textTotal = 0
+  const takeText = (text: string): string => {
+    textTotal += text.length
+    if (textTotal > MAX_EVIDENCE_TOTAL) {
+      throw new RangeError(`evidence has more than ${MAX_EVIDENCE_TOTAL} characters in total.`)
+    }
+    return text
+  }
   const feed = (tokens: readonly NumberToken[], id: string): void => {
     for (const t of tokens) {
       ingest(ev, t, id)
@@ -369,7 +378,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     }
   }
   if (typeof evidence === 'string') {
-    feed(scan(evidence, ctx.evLoc, ctx.parenNeg), 'evidence')
+    feed(scan(takeText(evidence), ctx.evLoc, ctx.parenNeg, true), 'evidence')
   } else {
     const items = snapshotArray(evidence, 'evidence')
     items.forEach((item, index) => {
@@ -377,7 +386,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
       const text = item['text']
       if (text !== undefined) {
         const id = readString(item['id'], `evidence[${index}].id`)
-        feed(scan(readString(text, `evidence[${index}].text`), ctx.evLoc, ctx.parenNeg), id)
+        feed(scan(takeText(readString(text, `evidence[${index}].text`)), ctx.evLoc, ctx.parenNeg, true), id)
       } else {
         const { token, evidenceId } = readToken(item, `evidence[${index}]`)
         feed([token], evidenceId ?? `token:${index}`)

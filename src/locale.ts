@@ -8,6 +8,10 @@ export interface LocaleInfo {
   /** Char code of the decimal mark: 0x2e (.) or 0x2c (,). */
   readonly decimal: number
   readonly order: DateOrder
+  /** Indian digit grouping (12,34,567) as well as groups of three. */
+  readonly indian: boolean
+  /** An apostrophe groups digits (Swiss style 1'234'567). */
+  readonly apostrophe: boolean
 }
 
 const DOT_DECIMAL = new Set(['en', 'ja', 'zh', 'ko', 'he', 'th', 'hi', 'ms', 'fil', 'ga', 'cy'])
@@ -22,7 +26,7 @@ const MDY_REGIONS = new Set(['en-us', 'en', 'en-ph'])
 
 export const SUPPORTED_LANGUAGES: readonly string[] = [...DOT_DECIMAL, ...COMMA_DECIMAL].sort()
 
-const DEFAULT: LocaleInfo = { decimal: 0x2e, order: 'MDY' }
+const DEFAULT: LocaleInfo = { decimal: 0x2e, order: 'MDY', indian: false, apostrophe: false }
 
 export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
   if (locale === undefined) return DEFAULT
@@ -45,5 +49,5 @@ export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
     )
   }
   const order: DateOrder = MDY_REGIONS.has(regional) ? 'MDY' : 'DMY'
-  return { decimal, order }
+  return { decimal, order, indian: region === 'in', apostrophe: region === 'ch' || region === 'li' }
 }

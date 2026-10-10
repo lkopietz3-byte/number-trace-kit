@@ -88,12 +88,15 @@ function isUpper(c: number): boolean {
   return c >= 0x41 && c <= 0x5a
 }
 
-const LETTER = /^\p{L}$/u
-
+/**
+ * Letters that glue a number into an identifier or a unit: the Latin
+ * alphabet. Letters of other scripts end a number instead ("100円", "第3回"),
+ * so a look-alike letter cannot hide a number from the check.
+ */
 function isLetter(c: number): boolean {
   if (c < 0x80) return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)
   if (c < 0xc0) return c === 0xaa || c === 0xb5 || c === 0xba
-  return LETTER.test(String.fromCharCode(c))
+  return (c <= 0x24f && c !== 0xd7 && c !== 0xf7) || (c >= 0x1e00 && c <= 0x1eff)
 }
 
 function isAlnum(c: number): boolean {
@@ -109,10 +112,41 @@ function isSuper(c: number): boolean {
 }
 
 /**
+ * First code point (the digit zero) of every decimal-digit block in the Basic
+ * Multilingual Plane except ASCII and full-width. Sorted, for binary search.
+ */
+const DIGIT_ZEROS: readonly number[] = [
+  0x0660, 0x06f0, 0x07c0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66, 0x0be6, 0x0c66, 0x0ce6,
+  0x0d66, 0x0de6, 0x0e50, 0x0ed0, 0x0f20, 0x1040, 0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0,
+  0x1a80, 0x1a90, 0x1b50, 0x1bb0, 0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0,
+  0xaa50, 0xabf0,
+]
+
+/** The value 0 to 9 of a non-ASCII decimal digit, or -1. */
+function foreignDigit(c: number): number {
+  let lo = 0
+  let hi = DIGIT_ZEROS.length - 1
+  let found = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if ((DIGIT_ZEROS[mid] ?? 0) <= c) {
+      found = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  if (found < 0) return -1
+  const d = c - (DIGIT_ZEROS[found] ?? 0)
+  return d <= 9 ? d : -1
+}
+
+/**
  * Fold code units the way NFKC would for the characters that matter here, one
  * unit to one unit so offsets stay valid in the original text: full-width
- * ASCII, the ideographic space, Arabic-Indic digits and separators, the minus
- * sign and non-breaking hyphens.
+ * ASCII, the ideographic space, the decimal digits of every script in the
+ * Basic Multilingual Plane (Arabic-Indic, Devanagari, Thai and the rest), the
+ * Arabic separators, the minus sign and non-breaking hyphens.
  */
 function fold(text: string): Uint16Array {
   const n = text.length
@@ -122,8 +156,6 @@ function fold(text: string): Uint16Array {
     if (c >= 0x80) {
       if (c >= 0xff01 && c <= 0xff5e) c -= 0xfee0
       else if (c === 0x3000) c = 0x20
-      else if (c >= 0x0660 && c <= 0x0669) c = c - 0x0660 + 0x30
-      else if (c >= 0x06f0 && c <= 0x06f9) c = c - 0x06f0 + 0x30
       else if (c === 0x066b) c = 0x2e
       else if (c === 0x066c) c = 0x2c
       else if (c === 0x066a) c = 0x25
@@ -131,6 +163,10 @@ function fold(text: string): Uint16Array {
       else if (c === 0xffe5) c = 0xa5
       else if (c === 0xffe1) c = 0xa3
       else if (c === 0xffe6) c = 0x20a9
+      else if (c >= 0x0660) {
+        const d = foreignDigit(c)
+        if (d >= 0) c = 0x30 + d
+      }
     }
     f[i] = c
   }
@@ -202,14 +238,20 @@ export function extractNumbers(text: string, options?: ExtractOptions): NumberTo
   return scan(text, info, parenNeg)
 }
 
-/** Internal entry used by traceNumbers with already-validated options. */
-export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberToken[] {
+/**
+ * Internal entry used by traceNumbers with already-validated options. With
+ * `identifiers` set (evidence only), the digits inside skipped identifiers such
+ * as `FY2025` come back as tokens flagged `identifier`, which can only ever
+ * make an output number `unknown`, never `traced`.
+ */
+export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifiers = false): NumberToken[] {
   const n = text.length
   if (n > MAX_TEXT_LENGTH) {
     throw new RangeError(`Text has ${n} characters; the limit is ${MAX_TEXT_LENGTH}.`)
   }
   const f = fold(text)
   const out: Tok[] = []
+  const idTokens: Tok[] = []
   let floor = 0
   let lastMonth: { start: number; end: number } | null = null
   let lastDayEnd = -1
@@ -232,6 +274,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
     }
     return pieces.join('')
   }
+  const isGroupSep = (c: number): boolean =>
+    isGroupSpace(c) || (info.apostrophe && (c === 0x27 || c === 0x2019))
   const lastToken = (): Tok | undefined => out[out.length - 1]
   const lastPlain = (): Tok | undefined => {
     const t = lastToken()
@@ -448,6 +492,24 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
     return text.slice(p, q)
   }
 
+  /** Evidence only: keep the digit runs of a skipped identifier as weak tokens. */
+  const noteIdentifier = (a: number, b: number): void => {
+    if (!identifiers) return
+    let k = a
+    while (k < b) {
+      if (!isDigit(at(k))) {
+        k++
+        continue
+      }
+      const e = runEnd(k)
+      const t = makeToken(text.slice(k, e), k, e, decimalString(false, slice(k, e), '', 0), 0, 'count')
+      t.ambiguous = true
+      t.ambiguity = e - k > MAX_DIGITS ? 'too-long' : 'identifier'
+      idTokens.push(t)
+      k = e
+    }
+  }
+
   const skipIdentifier = (from: number): number => {
     let j = from
     while (j < n) {
@@ -634,6 +696,10 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
         sfx.percent = 'pp'
         return we
       }
+      if (w.length === 3 && CURRENCY_CODES.has(w)) {
+        sfx.currency = w
+        return we
+      }
       const currency = own(CURRENCY_WORDS, lower)
       if (currency !== undefined && (lower.length > 3 || w === w.toUpperCase() || lower === w)) {
         sfx.currency = currency
@@ -694,12 +760,18 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
       const firstLen = partLen(k)
       const groupable = firstLen <= 3 && at(partStart(k)) !== 0x30
       const X = k + 1 < count ? (seps[k] ?? 0) : 0
-      const groupSep = X === 0x2c || X === 0x2e || isGroupSpace(X)
+      const groupSep = X === 0x2c || X === 0x2e || isGroupSep(X)
       let e1 = k
       if (groupable && groupSep) {
         let p = k + 1
         while (p < count && seps[p - 1] === X && partLen(p) === 3) p++
         e1 = p - 1
+        if (info.indian && firstLen <= 2 && X === 0x2c) {
+          // 12,34,567: pairs of digits, then a final group of three.
+          let q = k + 1
+          while (q < count && seps[q - 1] === X && partLen(q) === 2) q++
+          if (q > k + 1 && q < count && seps[q - 1] === X && partLen(q) === 3 && q > e1) e1 = q
+        }
       }
       const groups = e1 - k
       let dec = -1
@@ -787,8 +859,14 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
     // ---- identifiers glued to the number ("X3", "v2.1", "COVID-19") ------------
     if (cur === null) {
       const before = at(i0 - 1)
-      if (i0 - 1 >= floor && (isLetter(before) || before === 0x5f)) return skipIdentifier(i0)
-      if (i0 - 2 >= floor && before === 0x2d && isUpper(at(i0 - 2))) return skipIdentifier(i0)
+      if (
+        (i0 - 1 >= floor && (isLetter(before) || before === 0x5f)) ||
+        (i0 - 2 >= floor && before === 0x2d && isUpper(at(i0 - 2)))
+      ) {
+        const j = skipIdentifier(i0)
+        noteIdentifier(i0, j)
+        return j
+      }
     }
 
     // ---- dates, times, month names -----------------------------------------------
@@ -807,7 +885,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
       const e = runEnd(p)
       parts.push(p, e)
       const s = at(e)
-      if ((s === 0x2c || s === 0x2e || isGroupSpace(s)) && isDigit(at(e + 1))) {
+      if ((s === 0x2c || s === 0x2e || isGroupSep(s)) && isDigit(at(e + 1))) {
         seps.push(s)
         p = e + 1
       } else {
@@ -821,7 +899,11 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
       const count = parts.length / 2
       let grouped = (parts[1] ?? 0) - (parts[0] ?? 0) <= 3 && at(parts[0] ?? 0) !== 0x30
       for (let q = 1; q < count && grouped; q++) grouped = (parts[2 * q + 1] ?? 0) - (parts[2 * q] ?? 0) === 3
-      if (!grouped) return skipIdentifier(p)
+      if (!grouped) {
+        const j = skipIdentifier(p)
+        noteIdentifier(i0, j)
+        return j
+      }
     }
     const chain = interpretChain(parts, seps)
     const tokenCount = chain.tokens.length
@@ -859,6 +941,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
         if (sfx.skipTo >= 0) {
           // The number is glued to an identifier ("3D", "5G"): not a number at all.
           result = Math.max(sfx.skipTo, chainEnd)
+          noteIdentifier(digitsStart, result)
           continue
         }
         tokEnd = sfx.end
@@ -979,5 +1062,22 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean): NumberT
   }
 
   for (const t of out) Object.freeze(t)
-  return out
+  if (idTokens.length === 0) return out
+  // Merge the identifier digits back in, in text order.
+  const merged: Tok[] = []
+  let a = 0
+  let b = 0
+  while (a < out.length || b < idTokens.length) {
+    const x = out[a]
+    const y = idTokens[b]
+    if (y === undefined || (x !== undefined && x.start <= y.start)) {
+      if (x !== undefined) merged.push(x)
+      a++
+    } else {
+      Object.freeze(y)
+      merged.push(y)
+      b++
+    }
+  }
+  return merged
 }

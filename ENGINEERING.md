@@ -58,10 +58,13 @@ source entry is `src/index.ts`; the package export resolves to generated
   propagate unchanged. Unknown option names are a `RangeError`.
 - **No prototype reach.** Lookup tables keyed by text from the caller go
   through `own()`.
-- **Text policy.** ASCII, full-width and Arabic-Indic digits are numbers; other
-  digit systems are not. Numbers glued to letters on the left, or to unknown
-  letters on the right, are identifiers and are skipped. Invisible characters
-  split numbers rather than hiding them.
+- **Text policy.** ASCII, full-width and every BMP script's decimal digits are
+  numbers (folded one code unit to one code unit); digits outside the BMP are
+  not. Numbers glued to Latin letters on the left, or to unknown Latin letters
+  on the right, are identifiers and are skipped in the output (evidence keeps
+  their digits as weak tokens). Letters of other scripts never glue, so a
+  look-alike letter cannot hide a number. Invisible characters split numbers
+  rather than hiding them.
 
 ## Setup and verification
 

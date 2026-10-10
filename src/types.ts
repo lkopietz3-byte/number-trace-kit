@@ -18,6 +18,7 @@ export type AmbiguityReason =
   | 'superscript'
   | 'date-order'
   | 'fraction'
+  | 'identifier'
   | 'too-long'
 
 /** How a negative or explicitly signed number was written. */

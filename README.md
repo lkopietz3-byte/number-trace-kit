@@ -83,7 +83,7 @@ A token is `ambiguous` when the text can be read more than one way. The primary 
 | `12,5` under `en-US`, `3.14` under `de-DE` | the separator does not fit the locale; one reading, but it is a guess about the locale | read as a decimal |
 | `4K`, `2M` | a magnitude letter with no currency: 4,000, or the label "4K" | `4000` (alternate `4`) |
 | `10²`, `10^6` | an exponent that is not expanded | `10` |
-| `3/4`, `1/2/3` | a fraction or ratio, which is not evaluated | each half |
+| `3/4`, `1/2/3` | a fraction or ratio, which is not evaluated; the same fraction written the same way in the evidence still traces | each half |
 | `10/12/2026` | day and month order | no roles |
 | digit runs over 60 digits | too long to compare | the digits |
 
@@ -117,8 +117,9 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 
 ## What gets treated as a number, and what does not
 
-- Digits: ASCII digits, full-width digits and punctuation (U+FF01 to U+FF5E), and Arabic-Indic and Extended Arabic-Indic digits are read, folded to ASCII the way NFKC would, with offsets still pointing into your original text. Other digit systems (Devanagari, mathematical digits, and so on) are not numbers to this library, and number words (`twelve percent`) are not read.
-- Numbers glued to letters are identifiers, not numbers: `X3`, `v2.1`, `H2O`, `COVID-19`, `GPT-4`, `F-16`, `5G`, `A4`, `3D`, `FY2025`, `Q3`, `x86_64`, `iPhone15`. They are skipped. A letter-glued form that is a unit (`5kg`, `10x`), a magnitude (`5bn`), an ordinal (`3rd`) or a currency code (`100USD`) is read as such. Dotted chains like `1.2.3` and `192.168.1.1` are skipped as versions and addresses.
+- Digits: ASCII digits, full-width digits and punctuation (U+FF01 to U+FF5E), and the decimal digits of every script in the Basic Multilingual Plane (Arabic-Indic, Devanagari, Thai and the rest) are read, folded to ASCII the way NFKC folds full-width forms, with offsets still pointing into your original text. Digits outside that plane (mathematical digits) are not numbers to this library, and number words (`twelve percent`) are not read.
+- Numbers glued to Latin letters are identifiers, not numbers: `X3`, `v2.1`, `H2O`, `COVID-19`, `GPT-4`, `F-16`, `5G`, `A4`, `3D`, `FY2025`, `Q3`, `x86_64`, `iPhone15`. They are skipped in the output, so a model name or version string is never asked to trace. A letter-glued form that is a unit (`5kg`, `10x`), a magnitude (`5bn`), an ordinal (`3rd`) or a currency code (`100USD`) is read as such. Dotted chains like `1.2.3` and `192.168.1.1` are skipped as versions and addresses. In the evidence, the digits inside a skipped identifier are kept as weak evidence: an output number equal to them (a `2025` against `FY2025`) is `unknown`, never `traced`.
+- Letters of other scripts do not glue: `100円`, `第3回` and `1,234.50米ドル` contain the numbers 100, 3 and 1,234.50. A look-alike Cyrillic or Greek letter next to a digit therefore cannot hide the number.
 - Invisible characters split a number: `1<ZWSP>234` is two numbers, so a hidden character cannot make a number vanish. NFC and NFD text read the same numbers.
 - A lone surrogate is an ordinary non-digit.
 - Scientific notation (`1.5e3`) is read exactly; an exponent over 30 is `too-long`.
@@ -147,7 +148,7 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 
 `ignorePattern` is tested against a short window only: the number itself (at most its first 64 characters) plus up to 32 characters before it and 16 after. The pattern must overlap the number to ignore it. The pattern is copied into a private global RegExp, so your flags (`g`, `y`) and `lastIndex` are never touched or shared, and empty matches advance by a whole code point under `u`/`v`. The window bounds how much text a pattern can see, so work stays linear in the text; it cannot make a badly written pattern fast, so keep patterns simple (`/Section \d/`, not nested quantifiers).
 
-Supported locale languages: `de`, `fr`, `es`, `it`, `pt`, `nl`, `ru`, `pl`, `sv`, `da`, `nb`, `nn`, `no`, `fi`, `cs`, `sk`, `sl`, `hr`, `ro`, `hu`, `bg`, `tr`, `id`, `vi`, `el`, `uk`, `sr`, `lt`, `lv`, `et` (comma decimal) and `en`, `ja`, `zh`, `ko`, `he`, `th`, `hi`, `ms`, `fil`, `ga`, `cy` (dot decimal), with regional exceptions (`de-CH`, `es-MX`, `es-US` and a few more use a dot; `en-ZA` uses a comma). Numeric dates are month-first for `en-US`, `en` and `en-PH`, day-first otherwise. An unsupported language is a `RangeError`, not a guess.
+Supported locale languages: `de`, `fr`, `es`, `it`, `pt`, `nl`, `ru`, `pl`, `sv`, `da`, `nb`, `nn`, `no`, `fi`, `cs`, `sk`, `sl`, `hr`, `ro`, `hu`, `bg`, `tr`, `id`, `vi`, `el`, `uk`, `sr`, `lt`, `lv`, `et` (comma decimal) and `en`, `ja`, `zh`, `ko`, `he`, `th`, `hi`, `ms`, `fil`, `ga`, `cy` (dot decimal), with regional exceptions (`de-CH`, `es-MX`, `es-US` and a few more use a dot; `en-ZA` uses a comma). Indian digit grouping (`12,34,567`) is read for regions `IN`, and an apostrophe groups digits (`1'234'567`) for regions `CH` and `LI`. Numeric dates are month-first for `en-US`, `en` and `en-PH`, day-first otherwise. An unsupported language is a `RangeError`, not a guess.
 
 ## reconcile
 
@@ -167,7 +168,7 @@ reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '125
 - It does not read the source documents for you. You supply the evidence text; if the evidence is incomplete or wrong, the result is only as good.
 - It does not know whether the evidence is true. `traced` means the number, in that unit, appears in the evidence after normalization. It does not mean the sentence means what the evidence means: a number can match a different figure of the same value.
 - It does not understand sentences. It cannot tell "up 30%" from "down 30%", a revenue figure from a headcount, or which two numbers a derived value is about. Words, negation and context are invisible to it.
-- It does not read number words (`twelve`, `half`), fractions (`3/4` is flagged, not evaluated), scales stated elsewhere (`in thousands`), or numbers in digit systems it does not fold.
+- It does not read number words (`twelve`, `half`), fractions (`3/4` is flagged, not evaluated), scales stated elsewhere (`in thousands`), a percent sign written before the number (`%12`), or currency named in prose other than `dollars`, `euros` and the three-letter codes.
 - It does not infer units that are not written: a percent written as `0.45` does not trace to `45%`, and `1,234` does not trace to `$1,234` unless you set `allowBareEvidence`.
 - It does not truncate: an output that cuts digits off (`12.3%` from `12.39%`) is untraced, because only half-up and half-even rounding are accepted.
 - A derived match is not proof the model derived it; with many evidence numbers, coincidences happen. Treat `derived` with a high `matches` count as weak.
