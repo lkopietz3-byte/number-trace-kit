@@ -90,7 +90,7 @@ A token is `ambiguous` when the text can be read more than one way. The primary 
 | `10/12/2026` | day and month order | no roles |
 | digit runs over 60 digits | too long to compare | the digits |
 
-How an ambiguous number is matched: if its primary reading matches the other side's primary reading, it traces (and the token says `ambiguous: true`). If the only link is through another reading (an exact match, a rounded match, or a derivation using the other reading), the status is `unknown` with reason `ambiguous-reading`. A number whose only reading is a locale guess (`12,5` under `en-US`) can never trace, only be `unknown` or `untraced`. Pass the right `locale` for the output and `evidenceLocale` for the evidence (they are read separately; the evidence locale defaults to the output locale).
+How an ambiguous number is matched: if its primary reading matches the other side's primary reading, it traces (and the token says `ambiguous: true`). If the only link is through another reading (an exact match, a rounded match, or a derivation using the other reading), the status is `unknown` with reason `ambiguous-reading`. A number whose only reading is a locale guess (`12,5` under `en-US`, or `12,5K`) can never trace, only be `unknown` or `untraced`; that holds whatever other readings it also has, and the token says so with `localeGuess: true`. A number in a slash chain (`1.000/2.000`) is judged as the whole chain, whatever else is ambiguous about its parts. Pass the right `locale` for the output and `evidenceLocale` for the evidence (they are read separately; the evidence locale defaults to the output locale).
 
 ### Derivations
 
@@ -126,7 +126,10 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 - Invisible characters split a number: `1<ZWSP>234` is two numbers, so a hidden character cannot make a number vanish. NFC and NFD text read the same numbers.
 - A lone surrogate is an ordinary non-digit.
 - Scientific notation (`1.5e3`) is read exactly and may carry a percent sign, currency or unit (`1e2%`, `1.2e3 kg`); an exponent over 30 is `too-long`, however many digits it has.
+- The micro sign (U+00B5 and U+03BC) is a unit prefix for `m`, `s`, `g` and `L` (`5µm`, `3 μL`); anywhere else it ends the number instead of hiding it.
+- A date part followed by a superscript or exponent (`Oct 5²`, `2026-10-05²`) is flagged like any other number with an exponent.
 - Canonically equivalent letters read the same: the Kelvin sign is `K` and the Angstrom sign is `Å`, so `K3` is an identifier like `K3`.
+- Percent signs after magnitudes are kept (`1 million %`, `5M%`).
 - Combining marks stay with their letter, so `café3` is an identifier whether it is written precomposed or decomposed. A combining mark after a digit does not hide the digit.
 - Numbers handed in as pre-extracted tokens follow the same rules: a value over 60 digits is `too-long` whatever its flags say, and a token whose `ambiguous` flag disagrees with its `ambiguity` reason (or that has alternates without being ambiguous) is a `TypeError`.
 
@@ -170,6 +173,18 @@ reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '125
 - A **non-integer number, `NaN` or `Infinity`** is a `TypeError`: floats are not exact. `allowFloat: true` is the one escape hatch, and it changes the meaning of every JS `number` in the call to a major-unit decimal read from its shortest round-trip text (`0.1` is exactly `0.1`, `12` is `12`). Use it only when you cannot get strings.
 - The result is `{ ok, sum, total, difference, tolerance, rows }` with exact decimal strings. `difference` is `sum - total`; `ok` is `|difference| <= tolerance` (inclusive). Zero prints as `0`.
 - Empty rows, a missing total, a negative tolerance and unknown keys are errors, not passes.
+
+## Known limits
+
+These came out of review and a combinatorial sweep, and are decided, not pending:
+
+- The word list for units, currencies and month names is short and English. Other words are not units (`5 users`, `3 Mio.`), and a month name only counts with a capital letter.
+- `to` and a spaced en dash join two numbers into a range even in prose that is not a range (`9 to 5 job`, `pages 3 – 7`): the only effect is that a unit or percent sign written on one number is also given to the other.
+- `3 x 4` gives the first number the unit of the second (`3 x 4 cm`), including where the first is a count (`2 x 5 kg`).
+- An ordinary space groups digits only under comma-decimal locales and only as `1 234`; `1 234` under `en-US` is two numbers.
+- `1.2.3-rc.1` and `v1.2.3+4` are versions; other hyphenated words after a number (`3.5-inch`) are not.
+- A percent sign written before the number (`%12`), number words, and digits outside the Basic Multilingual Plane are not read.
+- Rounding is half-up and half-even only; truncation is untraced.
 
 ## What it does not do
 

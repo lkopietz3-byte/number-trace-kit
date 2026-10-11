@@ -98,6 +98,17 @@ compares the exported names to `api-surface.json`, runs
 
 ## Tests
 
+- `test/sweep.test.ts`: a seeded combinatorial sweep. A grammar of number forms
+  (locale-printed numbers, percents, currencies, magnitudes, scientific
+  notation, units including the micro sign, ranges, dimensions, dates, signs,
+  versions, fractions, superscripts) is placed in varied contexts and checked
+  against four invariants: an equivalent writing is never untraced; a different
+  value or incompatible unit is never traced; NFC/NFD and full-width/ASCII give
+  the same statuses; and traced/untraced agree with an independent reading of
+  the evidence, where a weak or ambiguous number may only be traced by the same
+  group written the same way. `SWEEP_SEED=n` shifts every seed to hunt with
+  fresh draws.
+
 - `test/verdict-table.test.ts`: the verdict regression table. Honest outputs
   that must be clean, laundering outputs that must be flagged, and hostile
   inputs. Written first.

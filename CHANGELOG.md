@@ -59,6 +59,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also scales alternate readings; `ignorePattern` must be a genuine RegExp
   (checked through the built-in getters); the Kelvin and Angstrom signs read as
   K and Å.
+- Fourth review round (f6fad53) and a seeded combinatorial sweep
+  (`test/sweep.test.ts`): a locale guess stays a guess whatever alternates it
+  gains (`localeGuess`); a slash chain outranks other ambiguity; `%` after a
+  magnitude is kept; a date part followed by an exponent is flagged; the micro
+  sign is a unit prefix or a boundary, not a letter; a measurement no longer
+  vouches for a date's year and identifier digits give `unknown`; a shared
+  loose magnitude keeps the unscaled reading beside other readings; a version
+  with three-digit parts and a prerelease suffix is a version;
+  `ignoreSmallIntegersUpTo` accepts only exact whole values.
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.
