@@ -23,26 +23,26 @@ function parsePrinted(text: string): Dec | null {
   if (text.length === 0 || text.length > 120) return null
   let s = text
   let negative = false
-  if (s.startsWith('(') && s.endsWith(')')) {
+  let signed = false
+  const parentheses = s.startsWith('(') && s.endsWith(')')
+  if (parentheses) {
     negative = true
     s = s.slice(1, -1)
   }
+  // One sign at most, before or after the currency sign, and none inside parentheses.
   const sign = (): boolean => {
     const c = s[0]
-    if (c === '-' || c === '\u2212') {
-      if (negative) return false
-      negative = true
-      s = s.slice(1)
-    } else if (c === '+') {
-      s = s.slice(1)
-    }
+    if (c !== '-' && c !== '\u2212' && c !== '+') return true
+    if (signed || parentheses) return false
+    signed = true
+    if (c !== '+') negative = true
+    s = s.slice(1)
     return true
   }
   if (!sign()) return null
   if (s.length > 0 && CURRENCY_SIGNS.has(s[0] ?? '')) {
     s = s.slice(1)
-    const before = negative
-    if (!sign() || (before && negative !== before)) return null
+    if (!sign()) return null
   }
   const dot = s.indexOf('.')
   const whole = dot < 0 ? s : s.slice(0, dot)
