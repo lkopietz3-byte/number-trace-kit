@@ -237,6 +237,38 @@ function signedKey(value: string): string {
   return `${isNegativeValue(value) ? '-' : ''}${absKey(value)}`
 }
 
+// The built-in getters, captured once. Each throws TypeError for anything that is not a real
+// RegExp (a look-alike, a Proxy, an object that only inherits from RegExp.prototype).
+type Getter = (this: unknown) => unknown
+
+function captureGetter(name: string): Getter | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, name)
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- the getter is only ever called through Reflect.apply
+  return descriptor?.get as Getter | undefined
+}
+
+const FLAG_GETTERS: ReadonlyArray<readonly [string, Getter | undefined]> = [
+  ['d', captureGetter('hasIndices')], ['g', captureGetter('global')], ['i', captureGetter('ignoreCase')],
+  ['m', captureGetter('multiline')], ['s', captureGetter('dotAll')], ['u', captureGetter('unicode')],
+  ['v', captureGetter('unicodeSets')], ['y', captureGetter('sticky')],
+]
+const REGEXP_SOURCE = captureGetter('source')
+
+/** Source and flags of a genuine RegExp, read through the built-in getters, not through its own properties. */
+function regExpParts(value: unknown): { source: string; flags: string } {
+  if (REGEXP_SOURCE === undefined || value === RegExp.prototype) throw new TypeError('ignorePattern must be a RegExp.')
+  try {
+    const source = Reflect.apply(REGEXP_SOURCE, value, []) as string
+    let flags = ''
+    for (const [letter, getter] of FLAG_GETTERS) {
+      if (getter !== undefined && Reflect.apply(getter, value, []) === true) flags += letter
+    }
+    return { source, flags }
+  } catch {
+    throw new TypeError('ignorePattern must be a RegExp.')
+  }
+}
+
 function readContext(options: unknown): Ctx {
   const o = readOptions(
     options,
@@ -295,9 +327,7 @@ function readContext(options: unknown): Ctx {
   let pattern: RegExp | null = null
   if (o.ignorePattern !== undefined) {
     const p = o.ignorePattern
-    if (Object.prototype.toString.call(p) !== '[object RegExp]') throw new TypeError('ignorePattern must be a RegExp.')
-    const source = (p as RegExp).source
-    const flags = (p as RegExp).flags
+    const { source, flags } = regExpParts(p)
     // A private native copy: global (so we can walk matches), never sticky, no shared lastIndex.
     const clean = flags.replace(/[gy]/g, '')
     pattern = new RegExp(source, `${clean}g`)
@@ -479,6 +509,8 @@ interface DerivedHit {
   /** Only the reversed reading matches, so the direction of the change cannot be confirmed. */
   readonly reversedOnly: boolean
   readonly matches: number
+  /** The unit is present on only one side. */
+  readonly unitUnverified: boolean
 }
 
 interface DerivedSlot {
@@ -624,7 +656,7 @@ class Matcher {
             push('difference', keys, ratSub(a, b), B, A, true)
           }
           if (d.has('ratio')) {
-            const keys: Shape[] = [{ cls: 'plain', unit: '' }, { cls: 'plain', unit: 'x' }]
+            const keys: Shape[] = [{ cls: 'ratio', unit: '' }, { cls: 'ratio', unit: 'x' }]
             const q1 = ratDiv(a, b)
             const q2 = ratDiv(b, a)
             if (q1 !== null) push('ratio', keys, q1, A, B)
@@ -687,7 +719,14 @@ class Matcher {
         byMantissa.set(m, slot)
       }
       for (const [m, found] of byMantissa) {
+        // A plain-number candidate is also filed under "*" so an output with a unit the
+        // evidence lacks (or the reverse) can find it; the lookup marks that as unverified.
+        const filed: Shape[] = []
         for (const k of cand.keys) {
+          filed.push(k)
+          if (k.cls === 'plain') filed.push({ cls: 'plain', unit: '*' })
+        }
+        for (const k of filed) {
           const key = `${k.cls}\u0000${k.unit}\u0000${cand.neg ? '-' : '+'}${m}`
           let agg = idx.get(key)
           if (agg === undefined) {
@@ -704,36 +743,60 @@ class Matcher {
     return idx
   }
 
-  findDerived(tok: NumberToken, scale: number, shape: Shape, outNeg: boolean, mantissa: bigint): DerivedHit | null {
+  /**
+   * A derivation that gives this value. A unit on only one side is allowed and
+   * reported as unverified (like a direct match), unless `strict` (bare-evidence
+   * lookups). Operand units must always agree with each other.
+   */
+  findDerived(
+    tok: NumberToken,
+    scale: number,
+    shape: Shape,
+    outNeg: boolean,
+    mantissa: bigint,
+    strict = false,
+  ): DerivedHit | null {
     if (this.candidates.length === 0) return null
     const idx = this.derivedIndex(scale)
-    let count = 0
-    let best: DerivedSlot | undefined
-    let bestAt = 4
-    for (const neg of [outNeg, !outNeg]) {
-      if (!signAllowed(tok, outNeg, neg, this.ctx.signMode)) continue
-      const agg = idx.get(`${shape.cls}\u0000${shape.unit}\u0000${neg ? '-' : '+'}${mantissa.toString()}`)
-      if (agg === undefined) continue
-      count += agg.count
-      for (let k = 0; k < bestAt; k++) {
-        const slot = agg.slots[k]
-        if (slot !== undefined) {
-          best = slot
-          bestAt = k
-          break
+    const tries: { cls: string; unit: string; unverified: boolean }[] = [{ cls: shape.cls, unit: shape.unit, unverified: false }]
+    if (shape.cls === 'plain') {
+      if (!strict) tries.push({ cls: 'plain', unit: shape.unit === '' ? '*' : '', unverified: true })
+      // A ratio has no dimension: it matches a bare number or an x multiple only.
+      if (!strict && (shape.unit === '' || shape.unit === 'x')) tries.push({ cls: 'ratio', unit: shape.unit, unverified: false })
+    }
+    for (const attempt of tries) {
+      let count = 0
+      let best: DerivedSlot | undefined
+      let bestAt = 4
+      for (const neg of [outNeg, !outNeg]) {
+        if (!signAllowed(tok, outNeg, neg, this.ctx.signMode)) continue
+        const agg = idx.get(`${attempt.cls}\u0000${attempt.unit}\u0000${neg ? '-' : '+'}${mantissa.toString()}`)
+        if (agg === undefined) continue
+        count += agg.count
+        for (let k = 0; k < bestAt; k++) {
+          const slot = agg.slots[k]
+          if (slot !== undefined) {
+            best = slot
+            bestAt = k
+            break
+          }
         }
       }
+      if (best === undefined) continue
+      const bothAllowed = this.ctx.modes.length === 2
+      const label: RoundLabel | undefined = best.exact
+        ? undefined
+        : bothAllowed && best.modes.size === 2
+          ? 'either'
+          : best.modes.has('half-up')
+            ? 'half-up'
+            : 'half-even'
+      return {
+        cand: best.cand, exact: best.exact, label, reversedOnly: best.cand.reversed, matches: count,
+        unitUnverified: attempt.unverified,
+      }
     }
-    if (best === undefined) return null
-    const bothAllowed = this.ctx.modes.length === 2
-    const label: RoundLabel | undefined = best.exact
-      ? undefined
-      : bothAllowed && best.modes.size === 2
-        ? 'either'
-        : best.modes.has('half-up')
-          ? 'half-up'
-          : 'half-even'
-    return { cand: best.cand, exact: best.exact, label, reversedOnly: best.cand.reversed, matches: count }
+    return null
   }
 }
 
@@ -886,7 +949,7 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   // 3. A declared derivation of evidence numbers.
   if (ctx.derivations.size > 0 && !matcher.capHit) {
     for (const v of variants) {
-      const hit = matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa)
+      const hit = matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
       if (hit === null) continue
       if (hit.reversedOnly) return unknownTrace(tok, 'derivation-direction')
       const detail: DerivationDetail = {
@@ -896,7 +959,7 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
         matches: hit.matches,
         ...(hit.label !== undefined ? { rounding: hit.label } : {}),
       }
-      return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.bare ? { unitUnverified: true as const } : {}) }
+      return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.bare || hit.unitUnverified ? { unitUnverified: true as const } : {}) }
     }
   }
 
@@ -942,7 +1005,7 @@ function linksVia(
       if (matcher.findRounded(src, tok, scale, v.shape, outNeg, mantissa, v.bare) !== null) return true
     }
     // Another reading that is a derivation of the evidence is no more certain than the other links.
-    if (withDerived && !matcher.capHit && matcher.findDerived(tok, scale, v.shape, outNeg, mantissa) !== null) return true
+    if (withDerived && !matcher.capHit && matcher.findDerived(tok, scale, v.shape, outNeg, mantissa, v.bare) !== null) return true
   }
   return false
 }
