@@ -57,6 +57,8 @@ export interface NumberToken {
   readonly groupRaw?: string
   /** `start` and `end` mark the two numbers of a written range such as `10-12`. */
   readonly range?: 'start' | 'end'
+  /** The separator does not fit the locale, so the primary reading is a guess about the locale. */
+  readonly localeGuess?: true
   /** True when the text can be read more than one way. Never guessed silently. */
   readonly ambiguous: boolean
   readonly ambiguity?: AmbiguityReason

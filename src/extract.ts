@@ -44,7 +44,7 @@ const CURRENCY_WORDS: Record<string, string> = {
 
 // Units written right against the number ("5kg"). Case matters here.
 const GLUED_UNITS: Record<string, string> = {
-  kg: 'kg', g: 'g', mg: 'mg', lb: 'lb', lbs: 'lb', oz: 'oz', km: 'km', m: 'm', cm: 'cm', mm: 'mm',
+  kg: 'kg', g: 'g', mg: 'mg', 'μm': 'μm', 'μs': 'μs', 'μg': 'μg', 'μL': 'μl', 'μl': 'μl', lb: 'lb', lbs: 'lb', oz: 'oz', km: 'km', m: 'm', cm: 'cm', mm: 'mm',
   mi: 'mi', ft: 'ft', ms: 'ms', s: 'second', h: 'hour', hr: 'hour', hrs: 'hour', min: 'minute',
   mins: 'minute', sec: 'second', secs: 'second', yr: 'year', yrs: 'year', KB: 'KB', kB: 'KB',
   MB: 'MB', GB: 'GB', TB: 'TB', ml: 'ml', mL: 'ml', L: 'l', l: 'l', kW: 'kW', kWh: 'kWh', MW: 'MW',
@@ -56,7 +56,7 @@ const SPACED_UNITS: Record<string, string> = {
   year: 'year', years: 'year', yr: 'year', yrs: 'year', hour: 'hour', hours: 'hour', hr: 'hour',
   hrs: 'hour', minute: 'minute', minutes: 'minute', min: 'minute', mins: 'minute', second: 'second',
   seconds: 'second', sec: 'second', secs: 'second', kg: 'kg', kilogram: 'kg', kilograms: 'kg',
-  gram: 'g', grams: 'g', mg: 'mg', lb: 'lb', lbs: 'lb', pound: 'lb', pounds: 'lb', oz: 'oz',
+  gram: 'g', grams: 'g', mg: 'mg', 'μm': 'μm', 'μs': 'μs', 'μg': 'μg', 'μl': 'μl', lb: 'lb', lbs: 'lb', pound: 'lb', pounds: 'lb', oz: 'oz',
   ounce: 'oz', ounces: 'oz', mile: 'mi', miles: 'mi', km: 'km', kilometer: 'km', kilometers: 'km',
   kilometre: 'km', kilometres: 'km', meter: 'm', meters: 'm', metre: 'm', metres: 'm', cm: 'cm',
   mm: 'mm', foot: 'ft', feet: 'ft', ft: 'ft', inch: 'in', inches: 'in', gallon: 'gal',
@@ -95,7 +95,7 @@ function isUpper(c: number): boolean {
  */
 function isLetter(c: number): boolean {
   if (c < 0x80) return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)
-  if (c < 0xc0) return c === 0xaa || c === 0xb5 || c === 0xba
+  if (c < 0xc0) return c === 0xaa || c === 0xba
   return (c <= 0x24f && c !== 0xd7 && c !== 0xf7) || (c >= 0x1e00 && c <= 0x1eff)
 }
 
@@ -168,6 +168,7 @@ function fold(text: string): Uint16Array {
       else if (c === 0x066c) c = 0x2c
       else if (c === 0x066a) c = 0x25
       else if (c === 0x2212 || c === 0x2010 || c === 0x2011) c = 0x2d
+      else if (c === 0xb5) c = 0x3bc // micro sign: the Greek letter mu, as in unit prefixes
       else if (c === 0x212a) c = 0x4b // Kelvin sign: canonically K
       else if (c === 0x212b) c = 0xc5 // Angstrom sign: canonically \u00c5
       else if (c === 0xffe5) c = 0xa5
@@ -385,8 +386,9 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
             const raw = slice(i, after)
             pushDate(i, i + 4, num(i, i + 4), 'year', raw)
             pushDate(r2, r2 + b1, m, 'month', raw)
-            pushDate(r3, after, d, 'day', raw)
-            return after
+            const end = exponentEnd(after)
+            pushDate(r3, end, d, 'day', raw, end > after ? 'superscript' : undefined)
+            return end
           }
         }
       }
@@ -405,10 +407,16 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         }
         if (!isDigit(at(after)) && h <= 24 && mi <= 59 && (sec === null || sec <= 60)) {
           const raw = slice(i, after)
+          const end = exponentEnd(after)
+          const flag = end > after ? ('superscript' as const) : undefined
           pushDate(i, i + a, h, 'hour', raw)
-          pushDate(r2, r2 + 2, mi, 'minute', raw)
-          if (sec !== null) pushDate(r2 + 3, r2 + 5, sec, 'second', raw)
-          return after
+          if (sec === null) {
+            pushDate(r2, end, mi, 'minute', raw, flag)
+          } else {
+            pushDate(r2, r2 + 2, mi, 'minute', raw)
+            pushDate(r2 + 3, end, sec, 'second', raw, flag)
+          }
+          return end
         }
       }
       return -1
@@ -437,8 +445,9 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           const reason = decisive ? undefined : 'date-order'
           pushDate(i, i + a, p, decisive ? (firstIsDay ? 'day' : 'month') : undefined, raw, reason)
           pushDate(r2, r2 + b1, q, decisive ? (firstIsDay ? 'month' : 'day') : undefined, raw, reason)
-          pushDate(r3, after, y, 'year', raw)
-          return after
+          const end = exponentEnd(after)
+          pushDate(r3, end, y, 'year', raw, end > after ? 'superscript' : undefined)
+          return end
         }
       }
     }
@@ -462,11 +471,12 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       let e = e0
       const suf = ordinalSuffixAt(e)
       if (suf > 0) e += suf
-      const day = pushDate(i, e, v, 'day', undefined)
+      const end = exponentEnd(e)
+      const day = pushDate(i, end, v, 'day', undefined, end > e ? 'superscript' : undefined)
       day.range = 'end'
       lastOut.range = 'start'
-      lastDateEnd = e
-      return e
+      lastDateEnd = end
+      return end
     }
     const before = monthWordBefore(i)
     if (before !== null) {
@@ -475,14 +485,16 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         let e = e0
         const suf = ordinalSuffixAt(e)
         if (suf > 0) e += suf
-        pushDate(i, e, v, 'day', undefined)
-        lastDateEnd = e
-        return e
+        const end = exponentEnd(e)
+        pushDate(i, end, v, 'day', undefined, end > e ? 'superscript' : undefined)
+        lastDateEnd = end
+        return end
       }
       if (a === 4) {
         if (before.fresh) pushMonth(before.start, before.end, before.month)
-        pushDate(i, e0, v, 'year', undefined)
-        return e0
+        const end = exponentEnd(e0)
+        pushDate(i, end, v, 'year', undefined, end > e0 ? 'superscript' : undefined)
+        return end
       }
       return -1
     }
@@ -490,8 +502,9 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       const gap = i - lastDateEnd
       if ((gap === 1 && (at(lastDateEnd) === 0x20 || at(lastDateEnd) === 0x2c)) ||
         (gap === 2 && at(lastDateEnd) === 0x2c && at(lastDateEnd + 1) === 0x20)) {
-        pushDate(i, e0, v, 'year', undefined)
-        return e0
+        const end = exponentEnd(e0)
+        pushDate(i, end, v, 'year', undefined, end > e0 ? 'superscript' : undefined)
+        return end
       }
     }
     if (a <= 2 && v >= 1 && v <= 31) {
@@ -515,7 +528,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
             first.part = 'day'
             first.range = 'start'
           }
-          const day = pushDate(i, e, v, 'day', undefined)
+          const end = exponentEnd(e)
+          const day = pushDate(i, end, v, 'day', undefined, end > e ? 'superscript' : undefined)
           if (first?.part === 'day' && first.range === 'start') day.range = 'end'
           pushMonth(p, w.end, w.month)
           lastDateEnd = w.end
@@ -546,7 +560,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
   /** The folded letters at p (a combining mark stays with its letter), up to max + 1 of them. */
   const readWord = (p: number, max: number): string => {
     let q = p
-    while (q < n && q - p <= max && (isLetter(at(q)) || (q > p && isMark(at(q))))) q++
+    while (q < n && q - p <= max && (isLetter(at(q)) || (q > p && isMark(at(q))) || (q === p && at(q) === 0x3bc && isLetter(at(q + 1))))) q++
     return slice(p, q)
   }
 
@@ -608,6 +622,24 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       else break
     }
     return j
+  }
+
+  /**
+   * The end of a superscript or inline exponent ("5\u00b2", "5^-2") starting at `e`, or `e` itself.
+   * A date part followed by one is flagged, not read as a clean part.
+   */
+  const exponentEnd = (e: number): number => {
+    if (isSuper(at(e))) {
+      let j = e
+      while (isSuper(at(j))) j++
+      return j
+    }
+    if (at(e) === 0x5e && (isDigit(at(e + 1)) || (isSignCode(at(e + 1)) && isDigit(at(e + 2))))) {
+      let j = e + 2
+      while (isDigit(at(j))) j++
+      return j
+    }
+    return e
   }
 
   /** After a version core: "+build.5", "-rc.1", "-beta.2+exp.sha" are all part of the identifier. */
@@ -700,7 +732,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       return sfx
     }
     let magnitudeRead = false
-    if (isLetter(at(p))) {
+    if (isLetter(at(p)) || (at(p) === 0x3bc && isLetter(at(p + 1)))) {
       const w = readWord(p, 16)
       const we = p + w.length
       if ((w === 'x' || w === 'X') && isDigit(at(we)) && !isZero) {
@@ -742,7 +774,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       } else {
         const unit = own(GLUED_UNITS, w)
         if (unit === undefined) {
-          sfx.skipTo = skipIdentifier(we)
+          // A micro sign with no known unit is a boundary; any other unknown word is an identifier.
+          if (w.charCodeAt(0) !== 0x3bc) sfx.skipTo = skipIdentifier(we)
           return sfx
         }
         sfx.unit = unit
@@ -753,9 +786,17 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     // Spaced words: "1.2 million", "5 percent", "30 days", "4 dollars".
     const readSpaced = (from: number): number => {
       // Reads one recognized word starting after one space at `from`; returns its end or -1.
+      if (at(from) === 0x25) {
+        sfx.percent = '%'
+        return from + 1
+      }
       if (at(from) !== 0x20 && at(from) !== NBSP) return -1
       const s = from + 1
-      if (!isLetter(at(s))) {
+      if (!(isLetter(at(s)) || (at(s) === 0x3bc && isLetter(at(s + 1))))) {
+        if (at(s) === 0x25) {
+          sfx.percent = '%'
+          return s + 1
+        }
         const sym = CURRENCY_SYMBOLS[at(s)]
         // "5 $6" is a 5 and a $6, not "5 dollars" followed by a bare 6.
         if (sym !== undefined && !startsNumber(s + 1)) {
@@ -1031,7 +1072,9 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       const count = parts.length / 2
       let grouped = (parts[1] ?? 0) - (parts[0] ?? 0) <= 3 && at(parts[0] ?? 0) !== 0x30
       for (let q = 1; q < count && grouped; q++) grouped = (parts[2 * q + 1] ?? 0) - (parts[2 * q] ?? 0) === 3
-      if (!grouped) {
+      // 1.234.567-rc.1 and 1.234.567+4 are versions even though the parts look like groups.
+      const versionSuffix = (at(p) === 0x2d && isLetter(at(p + 1))) || (at(p) === 0x2b && isAlnum(at(p + 1)))
+      if (!grouped || versionSuffix) {
         const j = skipVersionTail(skipIdentifier(p))
         noteIdentifier(i0, j)
         return j
@@ -1153,6 +1196,10 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         tok.ambiguity = ambiguity
         if (alternates.length > 0) tok.alternates = alternates
       }
+      if (sub.ambiguity === 'separator' && sub.alt === undefined && ambiguity !== 'too-long' && ambiguity !== 'superscript') {
+        // The separator does not fit the locale: the reading is a guess, whatever else is later added.
+        tok.localeGuess = true
+      }
       numInfo.set(tok, { neg, int: sub.int, frac: sub.frac, exp: exp10, loose: sfx?.looseMagnitude === true, sci: sfx?.scientific === true })
       if (isFirst && rangeDash >= 0) {
         const prev = lastPlain()
@@ -1170,7 +1217,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           }
           fractionChain.push(tok)
           for (const t of [prev, tok]) {
-            if (!t.ambiguous || t.ambiguity === 'fraction') {
+            // Membership in a slash chain outranks any other reason, except the two that already block comparison.
+            if (t.ambiguity !== 'too-long' && t.ambiguity !== 'superscript') {
               t.ambiguous = true
               t.ambiguity = 'fraction'
             }
@@ -1217,10 +1265,13 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           return { value: decimalString(neg, aInt, aFrac, g.exp), scale: aFrac.length - g.exp }
         })
       }
-      if (g.loose && g.currency === undefined && !m.ambiguous) {
-        m.ambiguous = true
-        m.ambiguity = 'suffix'
-        m.alternates = [{ value: decimalString(inf.neg, inf.int, inf.frac, 0), scale: inf.frac.length }]
+      if (g.loose && g.currency === undefined) {
+        // The unscaled reading joins whatever other readings the number already has.
+        if (!m.ambiguous) {
+          m.ambiguous = true
+          m.ambiguity = 'suffix'
+        }
+        m.alternates = [...(m.alternates ?? []), { value: decimalString(inf.neg, inf.int, inf.frac, 0), scale: inf.frac.length }]
       }
     }
     if (g.kind === 'range' && g.currency !== undefined && m.ambiguity === 'suffix') {
