@@ -1,4 +1,5 @@
 import {
+  MAX_DIGITS,
   absKey,
   isDecimalString,
   isNegativeValue,
@@ -137,7 +138,9 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
   if (ambiguity !== undefined && (typeof ambiguity !== 'string' || !(AMBIGUITIES as readonly string[]).includes(ambiguity))) {
     throw new TypeError(`${name}.ambiguity is not a known reason.`)
   }
-  if (!isDecimalString(value, ambiguity === 'too-long' ? Infinity : 400)) throw new TypeError(`${name}.value must be an exact decimal string.`)
+  if (!isDecimalString(value, MAX_TEXT_LENGTH)) throw new TypeError(`${name}.value must be an exact decimal string.`)
+  // The 60-digit policy holds whatever the caller's flags say.
+  const tooLong = ambiguity === 'too-long' || value.length - (value.startsWith('-') || value.startsWith('+') ? 1 : 0) - (value.includes('.') ? 1 : 0) > MAX_DIGITS
   const unit = readOptionalString(item['unit'], `${name}.unit`)
   const currency = readOptionalString(item['currency'], `${name}.currency`)
   if (kind === 'currency' && currency === undefined) throw new TypeError(`${name}.currency is required for currency tokens.`)
@@ -159,7 +162,7 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
       if (!isRecord(alt)) throw new TypeError(`${name}.alternates[${k}] must be an object.`)
       const altValue = readString(alt['value'], `${name}.alternates[${k}].value`)
       const altScale = alt['scale']
-      if (!isDecimalString(altValue) || typeof altScale !== 'number' || !Number.isInteger(altScale) || altScale < -100 || altScale > 400) {
+      if (!isDecimalString(altValue, MAX_DIGITS + 2) || typeof altScale !== 'number' || !Number.isInteger(altScale) || altScale < -100 || altScale > 400) {
         throw new TypeError(`${name}.alternates[${k}] is not a valid reading.`)
       }
       alternates.push({ value: altValue, scale: altScale })
@@ -167,15 +170,15 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
   }
   const evidenceId = readOptionalString(item['evidenceId'], `${name}.evidenceId`)
   const token: NumberToken = {
-    raw, start, end, value, scale, kind: kind as NumberKind, ambiguous,
-    ...(ambiguity !== undefined ? { ambiguity: ambiguity as AmbiguityReason } : {}),
+    raw, start, end, value, scale, kind: kind as NumberKind, ambiguous: ambiguous || tooLong,
+    ...(tooLong ? { ambiguity: 'too-long' as const } : ambiguity !== undefined ? { ambiguity: ambiguity as AmbiguityReason } : {}),
     ...(unit !== undefined ? { unit } : {}),
     ...(currency !== undefined ? { currency } : {}),
     ...(signStyle !== undefined ? { signStyle } : {}),
     ...(part !== undefined ? { part: part as NonNullable<NumberToken['part']> } : {}),
     ...(groupRaw !== undefined ? { groupRaw } : {}),
     ...(range !== undefined ? { range } : {}),
-    ...(alternates.length > 0 ? { alternates } : {}),
+    ...(alternates.length > 0 && !tooLong ? { alternates } : {}),
   }
   return { token, ...(evidenceId !== undefined ? { evidenceId } : {}) }
 }
@@ -293,13 +296,16 @@ interface Evidence {
   readonly dateUnknown: Index
   readonly byValue: Index
   readonly all: Ent[]
+  readonly weakAll: Ent[]
   readonly count: number
 }
 
 function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
   const target = weak ? ev.weak : ev.strong
   for (const u of regKeys(ent.cls, ent.unit)) target.add(entKey(ent.cls, u, ent.neg, ent.key), ent)
-  if (!weak) {
+  if (weak) {
+    ev.weakAll.push(ent)
+  } else {
     ev.all.push(ent)
     ev.byValue.add(ent.key, ent)
   }
@@ -360,7 +366,7 @@ function makeEnt(token: NumberToken, shape: Shape, value: string, scale: number,
 function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
   const ev: Evidence = {
     strong: new Index(), weak: new Index(), groupRaw: new Index(), dateAny: new Index(),
-    dateUnknown: new Index(), byValue: new Index(), all: [], count: 0,
+    dateUnknown: new Index(), byValue: new Index(), all: [], weakAll: [], count: 0,
   }
   let count = 0
   let textTotal = 0
@@ -460,9 +466,21 @@ interface DerivedHit {
   readonly matches: number
 }
 
+interface DerivedSlot {
+  readonly cand: Candidate
+  readonly modes: Set<RoundingMode>
+  readonly exact: boolean
+}
+
+interface DerivedAgg {
+  count: number
+  /** Index: forward exact, forward rounded, reversed exact, reversed rounded. */
+  slots: (DerivedSlot | undefined)[]
+}
+
 class Matcher {
-  private readonly rounded = new Map<number, Index>()
-  private readonly derivedIdx = new Map<number, Map<string, { cand: Candidate; mode: RoundingMode; exact: boolean }[]>>()
+  private readonly rounded = new Map<string, Index>()
+  private readonly derivedIdx = new Map<number, Map<string, DerivedAgg>>()
   readonly candidates: Candidate[] = []
   capHit = false
 
@@ -472,11 +490,12 @@ class Matcher {
 
   // ---- rounding ------------------------------------------------------------------------------------------
 
-  private roundedIndex(scale: number): Index {
-    let idx = this.rounded.get(scale)
+  private roundedIndex(source: 'strong' | 'weak', scale: number): Index {
+    const cacheKey = `${source}${scale}`
+    let idx = this.rounded.get(cacheKey)
     if (idx !== undefined) return idx
     idx = new Index()
-    for (const ent of this.ev.all) {
+    for (const ent of source === 'strong' ? this.ev.all : this.ev.weakAll) {
       if (ent.cls === 'date' || ent.scale <= scale) continue
       const rat = toRat(ent.dec)
       for (const mode of this.ctx.modes) {
@@ -484,13 +503,24 @@ class Matcher {
         for (const u of regKeys(ent.cls, ent.unit)) idx.add(`${mode}\u0000${entKey(ent.cls, u, ent.neg, r.mantissa.toString())}`, ent)
       }
     }
-    this.rounded.set(scale, idx)
+    this.rounded.set(cacheKey, idx)
     return idx
   }
 
-  findRounded(tok: NumberToken, shape: Shape, outNeg: boolean, mantissa: bigint): { ents: Ent[]; label: RoundLabel } | null {
+  /**
+   * Evidence (strong readings, or weak ones) that rounds to `mantissa` at `scale`.
+   * `signTok` supplies the explicit sign the output wrote, if any.
+   */
+  findRounded(
+    source: 'strong' | 'weak',
+    signTok: NumberToken,
+    scale: number,
+    shape: Shape,
+    outNeg: boolean,
+    mantissa: bigint,
+  ): { ents: Ent[]; label: RoundLabel } | null {
     if (this.ctx.modes.length === 0) return null
-    const idx = this.roundedIndex(tok.scale)
+    const idx = this.roundedIndex(source, scale)
     const hits = new Map<Ent, Set<RoundingMode>>()
     for (const mode of this.ctx.modes) {
       for (const neg of [outNeg, !outNeg]) {
@@ -498,7 +528,7 @@ class Matcher {
           const list = idx.get(`${mode}\u0000${entKey(shape.cls, u, neg, mantissa.toString())}`)
           if (list === undefined) continue
           for (const e of list) {
-            if (!signAllowed(tok, outNeg, e.neg, this.ctx.signMode)) continue
+            if (!signAllowed(signTok, outNeg, e.neg, this.ctx.signMode)) continue
             const modes = hits.get(e) ?? new Set<RoundingMode>()
             modes.add(mode)
             hits.set(e, modes)
@@ -591,7 +621,7 @@ class Matcher {
             if (c1 !== null) push('percent-change', pct, ratMul(c1, HUNDRED), A, B)
             if (c2 !== null) push('percent-change', pct, ratMul(c2, HUNDRED), B, A, true)
           }
-          if (d.has('percent-of') && A.cls !== 'pct' && A.cls !== 'pp') {
+          if (d.has('percent-of')) {
             const pct: Shape[] = [{ cls: 'pct', unit: '' }]
             const q1 = ratDiv(a, b)
             const q2 = ratDiv(b, a)
@@ -616,21 +646,41 @@ class Matcher {
     }
   }
 
-  private derivedIndex(scale: number): Map<string, { cand: Candidate; mode: RoundingMode; exact: boolean }[]> {
+  /**
+   * Candidates indexed by (class, unit, sign, rounded value). Each key keeps a
+   * count and the first candidate of each kind (in evidence order or
+   * reversed, exact or rounded), never a list, so many candidates landing on
+   * one value cost nothing extra to look up.
+   */
+  private derivedIndex(scale: number): Map<string, DerivedAgg> {
     let idx = this.derivedIdx.get(scale)
     if (idx !== undefined) return idx
     idx = new Map()
+    // With rounding turned off only exact values count, but they are still found.
+    const exactOnly = this.ctx.modes.length === 0
+    const modes: readonly RoundingMode[] = exactOnly ? ['half-up'] : this.ctx.modes
     for (const cand of this.candidates) {
-      for (const mode of this.ctx.modes) {
+      const byMantissa = new Map<string, { modes: Set<RoundingMode>; exact: boolean }>()
+      for (const mode of modes) {
         const r = roundRat(cand.abs, scale, mode)
         // Sums and differences are exact arithmetic, so only an exact match counts.
-        if (!r.exact && (cand.kind === 'sum' || cand.kind === 'difference')) continue
+        if (!r.exact && (exactOnly || cand.kind === 'sum' || cand.kind === 'difference')) continue
+        const m = r.mantissa.toString()
+        const slot = byMantissa.get(m) ?? { modes: new Set<RoundingMode>(), exact: r.exact }
+        slot.modes.add(mode)
+        byMantissa.set(m, slot)
+      }
+      for (const [m, found] of byMantissa) {
         for (const k of cand.keys) {
-          const key = `${k.cls}\u0000${k.unit}\u0000${r.mantissa.toString()}`
-          const list = idx.get(key)
-          const entry = { cand, mode, exact: r.exact }
-          if (list === undefined) idx.set(key, [entry])
-          else list.push(entry)
+          const key = `${k.cls}\u0000${k.unit}\u0000${cand.neg ? '-' : '+'}${m}`
+          let agg = idx.get(key)
+          if (agg === undefined) {
+            agg = { count: 0, slots: [undefined, undefined, undefined, undefined] }
+            idx.set(key, agg)
+          }
+          agg.count++
+          const at = (cand.reversed ? 2 : 0) + (found.exact ? 0 : 1)
+          agg.slots[at] ??= { cand, modes: found.modes, exact: found.exact }
         }
       }
     }
@@ -638,37 +688,36 @@ class Matcher {
     return idx
   }
 
-  findDerived(tok: NumberToken, shape: Shape, outNeg: boolean, mantissa: bigint): DerivedHit | null {
-    if (this.candidates.length === 0 || this.ctx.modes.length === 0) return null
-    const idx = this.derivedIndex(tok.scale)
-    const list = idx.get(`${shape.cls}\u0000${shape.unit}\u0000${mantissa.toString()}`)
-    if (list === undefined) return null
-    const per = new Map<Candidate, { modes: Set<RoundingMode>; exact: boolean }>()
-    for (const entry of list) {
-      if (!signAllowed(tok, outNeg, entry.cand.neg, this.ctx.signMode)) continue
-      const slot = per.get(entry.cand) ?? { modes: new Set<RoundingMode>(), exact: entry.exact }
-      slot.modes.add(entry.mode)
-      per.set(entry.cand, slot)
+  findDerived(tok: NumberToken, scale: number, shape: Shape, outNeg: boolean, mantissa: bigint): DerivedHit | null {
+    if (this.candidates.length === 0) return null
+    const idx = this.derivedIndex(scale)
+    let count = 0
+    let best: DerivedSlot | undefined
+    let bestAt = 4
+    for (const neg of [outNeg, !outNeg]) {
+      if (!signAllowed(tok, outNeg, neg, this.ctx.signMode)) continue
+      const agg = idx.get(`${shape.cls}\u0000${shape.unit}\u0000${neg ? '-' : '+'}${mantissa.toString()}`)
+      if (agg === undefined) continue
+      count += agg.count
+      for (let k = 0; k < bestAt; k++) {
+        const slot = agg.slots[k]
+        if (slot !== undefined) {
+          best = slot
+          bestAt = k
+          break
+        }
+      }
     }
-    let chosen: { cand: Candidate; modes: Set<RoundingMode>; exact: boolean } | null = null
-    const better = (x: { cand: Candidate; exact: boolean }, y: { cand: Candidate; exact: boolean }): boolean => {
-      // Operands in evidence order beat reversed ones; then exact beats rounded.
-      if (x.cand.reversed !== y.cand.reversed) return !x.cand.reversed
-      return x.exact && !y.exact
-    }
-    for (const [cand, slot] of per) {
-      if (chosen === null || better({ cand, exact: slot.exact }, chosen)) chosen = { cand, ...slot }
-    }
-    if (chosen === null) return null
+    if (best === undefined) return null
     const bothAllowed = this.ctx.modes.length === 2
-    const label: RoundLabel | undefined = chosen.exact
+    const label: RoundLabel | undefined = best.exact
       ? undefined
-      : bothAllowed && chosen.modes.size === 2
+      : bothAllowed && best.modes.size === 2
         ? 'either'
-        : chosen.modes.has('half-up')
+        : best.modes.has('half-up')
           ? 'half-up'
           : 'half-even'
-    return { cand: chosen.cand, exact: chosen.exact, label, reversedOnly: chosen.cand.reversed, matches: per.size }
+    return { cand: best.cand, exact: best.exact, label, reversedOnly: best.cand.reversed, matches: count }
   }
 }
 
@@ -793,9 +842,15 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   }
   if (weakPrimary(tok)) {
     const allow = (e: Ent): boolean => signAllowed(tok, outNeg, e.neg, ctx.signMode)
-    if (lookup(ev.strong, shape, outNeg, key).some(allow) || lookup(ev.weak, shape, outNeg, key).some(allow)) {
+    if (
+      lookup(ev.strong, shape, outNeg, key).some(allow) || lookup(ev.weak, shape, outNeg, key).some(allow) ||
+      roundsToAny(matcher, tok, tok.scale, shape, outNeg, mantissa) ||
+      (!matcher.capHit && matcher.findDerived(tok, tok.scale, shape, outNeg, mantissa) !== null)
+    ) {
       return unknownTrace(tok, 'ambiguous-reading')
     }
+    // An incomplete derivation search stays unknown.
+    if (ctx.derivations.size > 0 && matcher.capHit) return unknownTrace(tok, 'candidate-cap')
     const near = nearMisses(tok, shape, outNeg, key, ev, ctx)
     return { token: tok, status: 'untraced', evidence: [], ...(near.length > 0 ? { nearMisses: near } : {}) }
   }
@@ -810,12 +865,12 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   }
 
   // 2. The evidence is more precise and rounds to what the output shows.
-  const rounded = matcher.findRounded(tok, shape, outNeg, mantissa)
+  const rounded = matcher.findRounded('strong', tok, tok.scale, shape, outNeg, mantissa)
   if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label)
 
   // 3. A declared derivation of evidence numbers.
   if (ctx.derivations.size > 0 && !matcher.capHit) {
-    const hit = matcher.findDerived(tok, shape, outNeg, mantissa)
+    const hit = matcher.findDerived(tok, tok.scale, shape, outNeg, mantissa)
     if (hit !== null && hit.reversedOnly) return unknownTrace(tok, 'derivation-direction')
     if (hit !== null) {
       const detail: DerivationDetail = {
@@ -830,7 +885,7 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   }
 
   // 4. Matches only under another reading of an ambiguous number: cannot tell.
-  const weak = weakHit(tok, shape, outNeg, key, ev, ctx)
+  const weak = weakHit(tok, shape, outNeg, key, mantissa, ev, matcher, ctx)
   if (weak) return unknownTrace(tok, 'ambiguous-reading')
 
   // 5. The search was too large to run.
@@ -841,14 +896,37 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   return { token: tok, status: 'untraced', evidence: [], ...(near.length > 0 ? { nearMisses: near } : {}) }
 }
 
-function weakHit(tok: NumberToken, shape: Shape, outNeg: boolean, key: string, ev: Evidence, ctx: Ctx): boolean {
+function roundsToAny(matcher: Matcher, signTok: NumberToken, scale: number, shape: Shape, outNeg: boolean, mantissa: bigint): boolean {
+  return (
+    matcher.findRounded('strong', signTok, scale, shape, outNeg, mantissa) !== null ||
+    matcher.findRounded('weak', signTok, scale, shape, outNeg, mantissa) !== null
+  )
+}
+
+/** Does the number match only through another reading, exactly or after rounding? */
+function weakHit(
+  tok: NumberToken,
+  shape: Shape,
+  outNeg: boolean,
+  key: string,
+  mantissa: bigint,
+  ev: Evidence,
+  matcher: Matcher,
+  ctx: Ctx,
+): boolean {
   const allow = (e: Ent): boolean => signAllowed(tok, outNeg, e.neg, ctx.signMode)
   if (lookup(ev.weak, shape, outNeg, key).some(allow)) return true
+  if (matcher.findRounded('weak', tok, tok.scale, shape, outNeg, mantissa) !== null) return true
   for (const alt of tok.alternates ?? []) {
     const altKey = absKey(alt.value)
     const altNeg = isNegativeValue(alt.value)
     if (lookup(ev.strong, shape, altNeg, altKey).some(allow)) return true
     if (lookup(ev.weak, shape, altNeg, altKey).some(allow)) return true
+    const d = parseDecimal(alt.value)
+    const altMantissa = mantissaAt(d.n < 0n ? { n: -d.n, s: d.s } : d, alt.scale)
+    if (altMantissa !== null && roundsToAny(matcher, tok, alt.scale, shape, altNeg, altMantissa)) return true
+    // Another reading that is a derivation of the evidence is no more certain than the other links.
+    if (altMantissa !== null && !matcher.capHit && matcher.findDerived(tok, alt.scale, shape, altNeg, altMantissa) !== null) return true
   }
   return false
 }

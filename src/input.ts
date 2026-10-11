@@ -68,6 +68,8 @@ export function snapshotArray(value: unknown, name: string): unknown[] {
   const out: unknown[] = new Array<unknown>(length)
   const source = value as unknown[]
   for (let i = 0; i < length; i++) {
+    // An absent index must stay absent: a hole may not read an item inherited from the prototype.
+    if (!Object.hasOwn(source, i)) throw new TypeError(`${name}[${i}] is missing (sparse arrays and undefined items are rejected).`)
     const item = source[i]
     if (item === undefined) throw new TypeError(`${name}[${i}] is missing (sparse arrays and undefined items are rejected).`)
     out[i] = item
