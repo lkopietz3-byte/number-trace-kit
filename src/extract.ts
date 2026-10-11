@@ -168,6 +168,8 @@ function fold(text: string): Uint16Array {
       else if (c === 0x066c) c = 0x2c
       else if (c === 0x066a) c = 0x25
       else if (c === 0x2212 || c === 0x2010 || c === 0x2011) c = 0x2d
+      else if (c === 0x212a) c = 0x4b // Kelvin sign: canonically K
+      else if (c === 0x212b) c = 0xc5 // Angstrom sign: canonically \u00c5
       else if (c === 0xffe5) c = 0xa5
       else if (c === 0xffe1) c = 0xa3
       else if (c === 0xffe6) c = 0x20a9
@@ -235,6 +237,8 @@ interface Suffix {
   skipTo: number
   /** An exponent too large to expand ("1e999"). */
   tooLong: boolean
+  /** The scale came from scientific notation, which belongs to this number alone. */
+  scientific: boolean
 }
 
 /** Extract the numbers from a text. Linear time; never throws on odd characters. */
@@ -264,7 +268,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
   let fractionChain: Tok[] = []
   // What each number token was built from, so a magnitude found on one end of a range
   // can be applied to the others.
-  const numInfo = new Map<Tok, { neg: boolean; int: string; frac: string; exp: number; loose: boolean }>()
+  const numInfo = new Map<Tok, { neg: boolean; int: string; frac: string; exp: number; loose: boolean; sci: boolean }>()
   interface Group {
     kind: 'range' | 'dimension'
     members: Tok[]
@@ -606,6 +610,13 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     return j
   }
 
+  /** After a version core: "+build.5", "-rc.1", "-beta.2+exp.sha" are all part of the identifier. */
+  const skipVersionTail = (from: number): number => {
+    let j = from
+    while ((at(j) === 0x2b || at(j) === 0x2d) && isAlnum(at(j + 1))) j = skipIdentifier(j + 1)
+    return j
+  }
+
   const matchCurrencyEnding = (pos: number): { start: number; code: string } | null => {
     let p = pos - 1
     if (p >= floor && (at(p) === 0x20 || at(p) === NBSP)) p--
@@ -637,7 +648,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
 
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean): Suffix => {
     const sfx: Suffix = {
-      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, tooLong: false,
+      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, tooLong: false, scientific: false,
     }
     let p = e
     if (at(p) === 0x5f) {
@@ -675,6 +686,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         sfx.end = q
         p = q
         scientific = true
+        sfx.scientific = true
       }
     }
     if (at(p) === 0x25) {
@@ -972,7 +984,13 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         (i0 - 1 >= floor && ((letterAt(i0 - 1) && !(timesPrev !== undefined && (before === 0x78 || before === 0x58))) || before === 0x5f)) ||
         (i0 - 2 >= floor && before === 0x2d && isUpper(at(i0 - 2)))
       ) {
-        const j = skipIdentifier(i0)
+        let j = skipIdentifier(i0)
+        // v1.2.3+4, v1.2-rc.1: a "v" followed by a dotted number is a version, suffixes included.
+        if (before === 0x76 || before === 0x56) {
+          let dotted = false
+          for (let k = i0; k < j && !dotted; k++) dotted = at(k) === 0x2e
+          if (dotted) j = skipVersionTail(j)
+        }
         noteIdentifier(i0, j)
         return j
       }
@@ -1014,7 +1032,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       let grouped = (parts[1] ?? 0) - (parts[0] ?? 0) <= 3 && at(parts[0] ?? 0) !== 0x30
       for (let q = 1; q < count && grouped; q++) grouped = (parts[2 * q + 1] ?? 0) - (parts[2 * q] ?? 0) === 3
       if (!grouped) {
-        const j = skipIdentifier(p)
+        const j = skipVersionTail(skipIdentifier(p))
         noteIdentifier(i0, j)
         return j
       }
@@ -1135,7 +1153,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         tok.ambiguity = ambiguity
         if (alternates.length > 0) tok.alternates = alternates
       }
-      numInfo.set(tok, { neg, int: sub.int, frac: sub.frac, exp: exp10, loose: sfx?.looseMagnitude === true })
+      numInfo.set(tok, { neg, int: sub.int, frac: sub.frac, exp: exp10, loose: sfx?.looseMagnitude === true, sci: sfx?.scientific === true })
       if (isFirst && rangeDash >= 0) {
         const prev = lastPlain()
         if (prev !== undefined) joinGroup('range', prev, tok)
@@ -1184,10 +1202,21 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       }
     }
     const inf = numInfo.get(m)
-    if (g.kind === 'range' && g.exp !== 0 && inf !== undefined && inf.exp === 0 && m.ambiguity !== 'too-long' && m.ambiguity !== 'superscript') {
+    if (g.kind === 'range' && g.exp !== 0 && inf !== undefined && !inf.sci && inf.exp === 0 && m.ambiguity !== 'too-long' && m.ambiguity !== 'superscript') {
       m.value = decimalString(inf.neg, inf.int, inf.frac, g.exp)
       m.scale = inf.frac.length - g.exp
       inf.exp = g.exp
+      if (m.alternates !== undefined) {
+        // Other readings move with the primary: 1.234 or 1234, both in millions.
+        m.alternates = m.alternates.map((alt) => {
+          const neg = alt.value.startsWith('-')
+          const body = neg ? alt.value.slice(1) : alt.value
+          const dot = body.indexOf('.')
+          const aInt = dot < 0 ? body : body.slice(0, dot)
+          const aFrac = dot < 0 ? '' : body.slice(dot + 1)
+          return { value: decimalString(neg, aInt, aFrac, g.exp), scale: aFrac.length - g.exp }
+        })
+      }
       if (g.loose && g.currency === undefined && !m.ambiguous) {
         m.ambiguous = true
         m.ambiguity = 'suffix'
@@ -1240,7 +1269,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       changed = true
     }
     const inf = numInfo.get(m)
-    if (inf !== undefined && inf.exp !== 0 && g.exp === 0) {
+    if (inf !== undefined && !inf.sci && inf.exp !== 0 && g.exp === 0) {
       g.exp = inf.exp
       g.loose = inf.loose
       changed = true
