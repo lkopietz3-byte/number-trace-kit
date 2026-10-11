@@ -19,7 +19,8 @@ describe('exact matching', () => {
     expect(only(trace('1234', 'x 1,234.00')).status).toBe('traced')
     expect(only(trace('1.5 million', 'x 1,500,000')).status).toBe('traced')
     expect(only(trace('$2K', 'x $2,000')).status).toBe('traced')
-    expect(only(trace('0.50', 'x .5')).status).toBe('untraced') // ".5" has no leading digit: it is the number 5
+    expect(only(trace('0.50', 'x .5')).status).toBe('traced') // ".5" is 0.5
+    expect(only(trace('5', 'x .5')).status).toBe('untraced') // and it is not the number 5
   })
 
   it('cites every document that holds the number', () => {

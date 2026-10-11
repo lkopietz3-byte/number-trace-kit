@@ -73,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   averages and three-figure sums. The candidate cap counts triples and still
   makes every non-direct number `unknown` when exceeded. A call without
   `maxOperands` is unchanged.
+- Fifth review round (34140c5): leading decimals (`.5%`, `$.99`, `-.25`) are read
+  as decimals, with the other locale convention a guess; a year-shaped number
+  that inherits a unit or magnitude is not a year; a derived number that drops
+  its sign is marked `signDiffers`; zero keeps its written sign through
+  rounding. Changed row: `0.50` now traces to `.5` (it was untraced because the
+  dot was dropped).
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.
