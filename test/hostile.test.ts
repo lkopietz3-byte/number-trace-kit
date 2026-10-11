@@ -21,11 +21,13 @@ function cpu(fn: () => void, runs = 3): number {
  * noise on a sub-millisecond run cannot inflate the ratio.
  */
 function ratio(make: (n: number) => () => void): number {
-  const small = make(20_000)
-  const large = make(80_000)
+  // 40k vs 160k characters: at 20k some shapes ran in a few milliseconds, where allocation
+  // and garbage-collection noise alone pushed a linear function past the limit under load.
+  const small = make(40_000)
+  const large = make(160_000)
   small()
   large()
-  return cpu(large, 5) / Math.max(cpu(small, 5), 0.002)
+  return cpu(large, 5) / Math.max(cpu(small, 5), 0.005)
 }
 
 describe('linear time on hostile text', { timeout: 60_000 }, () => {
