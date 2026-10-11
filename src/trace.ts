@@ -543,7 +543,12 @@ function dateTuples(cluster: readonly NumberToken[]): DateTuple[] {
   }
   const shared = [...get('year').slice(0, 1), ...get('month').slice(0, 1)]
   const days = get('day')
-  if (days.length > 0) return days.map((d) => ({ parts: [...shared, d].map(letter), tokens: [...shared, d] }))
+  if (days.length > 0) {
+    // The year and month keys are computed once, not once per day: a part's key costs time
+    // proportional to its length, and a caller token may carry a very long value.
+    const sharedParts = shared.map(letter)
+    return days.map((d) => ({ parts: [...sharedParts, letter(d)], tokens: [...shared, d] }))
+  }
   if (shared.some((t) => t.part === 'month')) return [{ parts: shared.map(letter), tokens: shared }]
   return []
 }

@@ -341,3 +341,19 @@ describe('review of c4338d6', { timeout: 120_000 }, () => {
     expect(ev.slice(seven?.start, seven?.end)).toBe('October 7, 2026')
   })
 })
+
+describe('caller date tokens: shared parts are keyed once', () => {
+  it('a very long year shared by thousands of days stays linear', () => {
+    const year = '0'.repeat(80_000) + '2026'
+    const part = (raw: string, start: number, value: string, p: 'year' | 'day') => ({
+      raw, start, end: start + raw.length, value, scale: 0, kind: 'date-part' as const, part: p, groupRaw: 'G', ambiguous: false,
+    })
+    const tokens = [part(year, 0, year, 'year')]
+    let pos = year.length + 1
+    for (let i = 0; i < 8000; i++) {
+      tokens.push(part('5', pos, '5', 'day'))
+      pos += 2
+    }
+    expect(cpuMs(() => traceNumbers(tokens, 'October 5, 2026'))).toBeLessThan(600)
+  }, 60_000)
+})
