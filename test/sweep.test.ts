@@ -469,6 +469,90 @@ describe('sweep', { timeout: 300_000 }, () => {
     }
   })
 
+  it('(i) sums, differences and means built from the evidence are derived, and nearby values are not', () => {
+    const rnd = lcg(0x5eed09)
+    const fmt = (units: bigint, places: number): string => {
+      const neg = units < 0n
+      const digits = (neg ? -units : units).toString().padStart(places + 1, '0')
+      const body = places === 0 ? digits : `${digits.slice(0, -places)}.${digits.slice(-places)}`
+      return `${neg ? '-' : ''}${body.replace(/\B(?=(\d{3})+(?!\d))(?<!\.\d*)/g, ',')}`
+    }
+    const half = (num: bigint, den: bigint): bigint => (num >= 0n ? (2n * num + den) / (2n * den) : -((-2n * num + den) / (2n * den)))
+    let derived = 0
+    for (let iter = 0; iter < 800; iter++) {
+      const k = 4 + Math.floor(rnd() * 3)
+      const tenths: bigint[] = []
+      while (tenths.length < k) {
+        const v = BigInt(30000 + Math.floor(rnd() * 69000))
+        if (!tenths.includes(v)) tenths.push(v)
+      }
+      const evidence = tenths.map((v, i) => `Item ${String.fromCharCode(97 + i)} was $${fmt(v, 1)}.`).join(' ')
+      const size = rnd() < 0.5 ? 2 : 3
+      const picked = [...tenths].sort(() => rnd() - 0.5).slice(0, size)
+      const total = picked.reduce((x, y) => x + y, 0n)
+      const kind = pick(rnd, ['sum', 'average', 'difference'] as const)
+      let exact: bigint
+      let places: number
+      let value: string
+      if (kind === 'sum') {
+        exact = total
+        places = 1
+        value = fmt(total, 1)
+      } else if (kind === 'average') {
+        // Shown to two decimals; the exact mean may need more.
+        exact = half(total * 10n, BigInt(size))
+        places = 2
+        value = fmt(exact, 2)
+      } else {
+        // The first figure less the other(s), shown as a magnitude.
+        const [first = 0n, ...rest] = picked
+        const diff = rest.reduce((x, y) => x - y, first)
+        exact = diff < 0n ? -diff : diff
+        places = 1
+        value = fmt(exact, 1)
+      }
+      const options = { derivations: [kind], maxOperands: 3 as const, maxCandidates: 5000 }
+      // Check a derived claim against arithmetic done here, from the operands the kit names.
+      const checkClaim = (n: TraceResult['numbers'][number] | undefined, shown: bigint, shownPlaces: number, why: string): void => {
+        const d = n?.derivation
+        if (d === undefined) return
+        const ops = d.operands.map((o) => BigInt(o.raw.replace(/[$,]/g, '').replace('.', '')))
+        expect(d.kind, why).toBe(kind)
+        let calc: bigint
+        if (kind === 'sum') calc = ops.reduce((x, y) => x + y, 0n)
+        else if (kind === 'average') calc = half(ops.reduce((x, y) => x + y, 0n) * 10n, BigInt(ops.length))
+        else {
+          // One operand less the others; any of them may be the one, and the sign is dropped.
+          const sum = ops.reduce((x, y) => x + y, 0n)
+          const candidates = ops.map((m) => {
+            const v = 2n * m - sum
+            return v < 0n ? -v : v
+          })
+          expect(candidates, why).toContain(shown)
+          return
+        }
+        expect(calc, why).toBe(shown)
+        expect(shownPlaces, why).toBe(kind === 'average' ? 2 : 1)
+      }
+      const r = traceNumbers(`The result was $${value}.`, evidence, options)
+      expect(r.candidateCapHit).toBe(false)
+      // The figure may equal an evidence number or another combination; it is never untraced.
+      expect(r.numbers[0]?.status, `${evidence} -> ${value} (${kind})`).not.toBe('untraced')
+      if (r.numbers[0]?.status === 'derived') {
+        derived++
+        checkClaim(r.numbers[0], exact, places, `${evidence} -> ${value} (${kind})`)
+      }
+      // A value shifted by 17.3 is a different number: never traced or rounded from the evidence,
+      // and if derived, the arithmetic of the named operands really gives it.
+      const shifted = exact + (places === 1 ? 173n : 1730n)
+      const wrong = fmt(shifted, places)
+      const w = traceNumbers(`The result was $${wrong}.`, evidence, options)
+      expect(['traced', 'rounded'], `${evidence} -> ${wrong}`).not.toContain(w.numbers[0]?.status)
+      if (w.numbers[0]?.status === 'derived') checkClaim(w.numbers[0], shifted, places, `${evidence} -> ${wrong} (${kind})`)
+    }
+    expect(derived).toBeGreaterThan(300)
+  })
+
   it('(b) a different value, or the same value in an incompatible unit, is never traced', () => {
     const rnd = lcg(0x5eed02)
     const A = ['37', '88', '250', '1234']

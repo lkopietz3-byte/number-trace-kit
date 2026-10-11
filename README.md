@@ -56,7 +56,7 @@ A number in the output is compared to the numbers extracted from the evidence, i
 3. **Dates and times** are compared part by part (year, month, day, hour, minute, second). A part matches an evidence part with the same value and the same role. A numeric date whose day and month cannot be told apart (`10/12/2026` when both are 12 or below and different) has no roles; it traces only to evidence that writes the same date text, and is `unknown` if the same values appear any other way (another date, or a bare month, day or year).
 4. **Traced.** Same class and the same exact value after normalization (see Normalization). Classes are: percent (`%`), percentage points (`pp`), currency (one class per currency code), and plain numbers (counts, decimals, years, ordinals). A percent never matches a plain number or an amount; `$45` never matches `45 EUR`.
 5. **Rounded.** The evidence is more precise than the output, and rounding the evidence value to the number of decimals the output shows gives the output value. The result says which rule produced the match: `half-up` (a tie goes away from zero), `half-even` (a tie goes to the even neighbor) or `either` (not a tie, both agree). `12.34%` rounds to `12.3%` and `12%`, never to `13%`. A magnitude counts as precision: `1.2 million` is precise to the nearest 100,000, so it matches `1,234,567` but not `1,350,000`.
-6. **Derived.** Only for the derivations you list in `options.derivations` (none by default), and only pairwise: two evidence numbers of the same class and unit, one operation. See Derivations.
+6. **Derived.** Only for the derivations you list in `options.derivations` (none by default), and by default only pairwise: two evidence numbers of the same class and unit, one operation (three with `maxOperands: 3`). See Derivations.
 7. **Unknown, another reading.** Nothing above matched, but the number would match if an ambiguous number on either side were read the other way (see Ambiguity). Status `unknown`, reason `ambiguous-reading`.
 8. **Unknown, search too large.** Derivations are on and the candidate cap was hit (see Derivations). Status `unknown`, reason `candidate-cap`.
 9. **Untraced.** Nothing above matched. This is a positive finding: the number, in that unit, is not in the evidence you gave. `nearMisses` lists evidence with the same value but a different unit, kind or sign.
@@ -100,14 +100,15 @@ How an ambiguous number is matched: if its primary reading matches the other sid
 - `difference`: later minus earlier in the order the evidence mentions the numbers; an unsigned output matches either way round. Exact match required. A difference of two percents is a percentage-point number and also matches a `%` output.
 - `ratio`: `a / b`, a plain number or an `x` multiple (`0.8`, `0.8x`).
 - `percent-change`: `(b - a) / a * 100`, a percent.
+- `average`: the mean of two evidence numbers (three with `maxOperands: 3`), in the same class and unit. Matched after display rounding, like a ratio, so the result says `exact: false` and which rounding rule matched when the mean has more digits than the output shows.
 - `percent-of`: `a / b * 100` for two numbers of the same class (what percent is a of b), and `p% * x` when one operand is a percent and the other an amount or count (7.5% of $200.50).
 
 Rules:
 
-- Pairwise only. Operands must be in the same class and unit (percents with percents, amounts of one currency with each other). Two percents give a percent through `percent-of` (`10%` and `20%` give `50%`). Years, dates, ordinals and ambiguous numbers are never operands. A value that appears more than twice counts twice.
+- Pairs by default; `maxOperands: 3` (opt-in) also tries every triple for `sum`, `difference` and `average`. A three-operand `difference` is one figure less the other two (`100 - 30 - 25`); no figure is "earlier", so it has no direction rule, and the sign follows the arithmetic. Direction rules for pairs are unchanged, and nothing changes for a call that does not set `maxOperands`. Operands must be in the same class and unit (percents with percents, amounts of one currency with each other). Two percents give a percent through `percent-of` (`10%` and `20%` give `50%`). Years, dates, ordinals and ambiguous numbers are never operands. A value that appears more than twice counts twice.
 - Sums and differences are exact arithmetic, so only an exact match counts. Ratios and percents are inexact, so they match after rounding to the output's precision, and the result says `exact: false` and which rounding rule matched. A loose match is visible: `derivation.matches` counts how many different candidates produced the number.
 - Direction follows the order the evidence mentions the numbers: the first mentioned is the "from", the second the "to". If a number matches only when the operands are taken the other way round (an unsigned `30%` where the evidence lists the new value first), the status is `unknown` with reason `derivation-direction`, because the direction of a change is in the words, which this library does not read.
-- The search is capped. The number of candidates (pairs times derivations) is counted first. If it is larger than `maxCandidates` (default 5,000, at most 1,000,000), nothing is generated, `candidateCapHit` is true, and every number that is not a direct match is `unknown` with reason `candidate-cap`: never traced, and never called untraced, because the search was not complete. Narrow the evidence or the derivation list, or raise the cap.
+- The search is capped. The number of candidates (pairs times derivations, plus triples times derivations at `maxOperands: 3`) is counted first. If it is larger than `maxCandidates` (default 5,000, at most 1,000,000), nothing is generated, `candidateCapHit` is true, and every number that is not a direct match is `unknown` with reason `candidate-cap`: never traced, and never called untraced, because the search was not complete. Narrow the evidence or the derivation list, or raise the cap.
 - Many candidates make coincidences likely. A derived status says "this number can be built from two evidence numbers", not "the model built it that way". Look at `derivation.operands` and `matches`.
 
 For a table of many rows and a printed total, use `reconcile`; it is exact and not limited to pairs.
@@ -144,7 +145,8 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 | `parenthesesAreNegative` | `true` | read `(1,234)` as negative |
 | `derivations` | none | any of `sum`, `difference`, `ratio`, `percent-change`, `percent-of` |
 | `rounding` | `['half-up', 'half-even']` | accepted rounding modes; `[]` means exact matches only (exact derivations such as a sum still work) |
-| `maxCandidates` | `5000` | derivation search cap, 1 to 1,000,000 |
+| `maxOperands` | `2` | `2` or `3`: how many evidence numbers `sum`, `difference` and `average` may combine |
+| `maxCandidates` | `5000` | derivation search cap, 1 to 1,000,000; the triples count too, so `maxOperands: 3` usually needs a larger cap (about 100,000 for 40 numbers) |
 | `signMode` | `explicit` | `explicit` or `magnitude` |
 | `allowBareEvidence` | `false` | let a percent or amount trace to a unit-less evidence number |
 | `ignore` | none | exact raw strings to skip, and plain numbers (a number skips only unit-less plain numbers of that signed value) |

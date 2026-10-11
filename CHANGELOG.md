@@ -68,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loose magnitude keeps the unscaled reading beside other readings; a version
   with three-digit parts and a prerelease suffix is a version;
   `ignoreSmallIntegersUpTo` accepts only exact whole values.
+- `average` derivation and the opt-in `maxOperands: 3` (three-operand `sum`,
+  `difference` and `average`), from the labeled benchmark: honest reports use
+  averages and three-figure sums. The candidate cap counts triples and still
+  makes every non-direct number `unknown` when exceeded. A call without
+  `maxOperands` is unchanged.
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.
