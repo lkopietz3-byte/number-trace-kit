@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { extractNumbers, reconcile, traceNumbers } from '../src/index.js'
 import type { TraceOptions, TraceResult } from '../src/index.js'
 
+function cpuMs(fn: () => void): number {
+  fn()
+  let best = Infinity
+  for (let i = 0; i < 3; i++) {
+    const before = process.cpuUsage()
+    fn()
+    const used = process.cpuUsage(before)
+    best = Math.min(best, (used.user + used.system) / 1e3)
+  }
+  return best
+}
+
 // Rows from a field trial on real reports and pricing pages. Cases are
 // paraphrased synthetic text, not copied from any source.
 
@@ -195,7 +207,7 @@ describe('D12: reconcile reads the strings reports print', () => {
   })
 
   it('still rejects what it cannot read exactly', () => {
-    for (const bad of ['', '1,23', '12,34,567', '1.234,50', '12.', '1e3', '0x10', 'NaN', '$', '()', '(5', '5)', '1 234', '$-', '--5', '１２']) {
+    for (const bad of ['', '1,23', '12,34,567', '1.234,50', '12.', '1e3', '0x10', 'NaN', '$', '()', '(5', '5)', '1 234', '$-', '--5', '１２', '+$-5', '+$+5', '-$+5', '-$-5', '$--5', '(-5)', '(+5)', '+-5']) {
       expect(() => reconcile({ rows: [{ label: 'a', amount: bad }], total: '0' }), JSON.stringify(bad)).toThrow(TypeError)
     }
     // Integers are still minor units.
@@ -217,5 +229,115 @@ describe('D11: product', () => {
     // Two prices do not multiply into a price.
     expect(t('Total $20.', 'Fee $4 and fee $5', { derivations: ['product'] }).numbers[0]?.status).toBe('untraced')
     expect(t('Total 20.', 'Boxes 4 of 5 items', { derivations: ['product'] }).numbers[0]?.status).toBe('derived')
+  })
+})
+
+describe('review of c4338d6', { timeout: 120_000 }, () => {
+  it('evidence scale applies to bare numbers only, never to one that says its own magnitude', () => {
+    const hint = { evidenceScale: 'thousand' } as const
+    expect(t('3 billion', '3.000000 million', hint).verdict).toBe('untraced')
+    expect(t('3 million', '3.000000 million', hint).verdict).toBe('clean')
+    expect(t('4 thousand', '4.000K', hint).verdict).toBe('clean')
+    expect(t('4 million', '4.000K', hint).verdict).not.toBe('clean') // K may be a label: unknown
+    expect(t('2500000', '2.500000e6', hint).verdict).toBe('clean')
+    expect(t('2500000000', '2.500000e6', hint).verdict).toBe('untraced')
+    expect(t('$1.5 million', '$1.500 million', { evidenceScale: 'million', evidenceCurrency: 'USD' }).verdict).toBe('clean')
+    // A bare cell still scales.
+    expect(t('5.735 million', '5,735', hint).verdict).toBe('clean')
+    expect(extractNumbers('3.000000 million')[0]).toMatchObject({ value: '3000000', scale: 0, magnitude: 6 })
+    expect(extractNumbers('5e-3')[0]?.magnitude).toBe(-3)
+    expect(extractNumbers('1,200')[0]?.magnitude).toBeUndefined()
+    expect(extractNumbers('10-12 million').map((n) => n.magnitude)).toEqual([6, 6])
+  })
+
+  it('a written-out month range is linear to read', () => {
+    const text = 'Oct ' + '1-'.repeat(160_000) + '1'
+    expect(cpuMs(() => extractNumbers(text))).toBeLessThan(1500)
+    const small = 'Oct ' + '1-'.repeat(20_000) + '1'
+    expect(cpuMs(() => extractNumbers(small))).toBeLessThan(300)
+  })
+
+  it('an overlong evidence number is never parsed, with or without hints', () => {
+    const lengths: number[] = []
+    const realBigInt = globalThis.BigInt
+    const spy = Object.assign(
+      (value: string | number | bigint | boolean): bigint => {
+        if (typeof value === 'string') lengths.push(value.length)
+        return realBigInt(value)
+      },
+      realBigInt,
+    )
+    globalThis.BigInt = spy
+    try {
+      for (const options of [{ evidenceScale: 'thousand' }, { evidenceCurrency: 'USD' }, { evidenceScale: 6, evidenceCurrency: 'USD' }, {}] as const) {
+        lengths.length = 0
+        t('5', `${'9'.repeat(1000)} and 5`, options)
+        expect(Math.max(0, ...lengths), JSON.stringify(options)).toBeLessThan(200)
+      }
+    } finally {
+      globalThis.BigInt = realBigInt
+    }
+  })
+
+  it('evidence order changes the direction of a change, not a sum, a product or an average', () => {
+    const o = { evidenceOrder: 'newest-first' } as const
+    expect(t('300', 'a 100 and 200', { ...o, derivations: ['sum'] }).numbers[0]?.status).toBe('derived')
+    expect(t('150', 'a 100 and 200', { ...o, derivations: ['average'] }).numbers[0]?.status).toBe('derived')
+    expect(t('20000', 'a 100 and 200', { ...o, derivations: ['product'] }).numbers[0]?.status).toBe('derived')
+    expect(t('150', 'a 100 and 250 and 300', { ...o, derivations: ['difference'], maxOperands: 3 }).numbers[0]?.status).toBe('derived')
+    expect(t('$18 billion', 'a $12 billion and $30 billion', { ...o, derivations: ['sum'] }).numbers[0]?.status).toBe('untraced')
+    // Direction still matters for a change.
+    expect(t('+100', 'a 150 and 250', { derivations: ['difference'] }).numbers[0]?.status).toBe('derived')
+    expect(t('+100', 'a 150 and 250', { ...o, derivations: ['difference'] }).numbers[0]).toMatchObject({ status: 'unknown', reason: 'derivation-direction' })
+    expect(t('-100', 'a 150 and 250', { ...o, derivations: ['difference'] }).numbers[0]?.status).toBe('derived')
+  })
+
+  it('evidence given as extracted tokens reads dates and flags like the same text', () => {
+    expect(t('2026-06-30', extractNumbers('2026-06-30')).verdict).toBe('clean')
+    expect(t('June 30, 2026', extractNumbers('June 30, 2026')).verdict).toBe('clean')
+    expect(t('June 30, 2025', extractNumbers('June 30, 2026')).verdict).not.toBe('clean')
+    // Tokens that say they come from different documents are not one date.
+    const parts = extractNumbers('June 30, 2026').map((tok, i) => ({ ...tok, evidenceId: i === 0 ? 'a' : 'b' }))
+    expect(t('June 30, 2026', parts).verdict).not.toBe('clean')
+    // The same evidence id keeps them together, and the cited span is the whole date.
+    const same = extractNumbers('June 30, 2026').map((tok) => ({ ...tok, evidenceId: 'doc' }))
+    const r = t('June 30, 2026', same)
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers[1]?.evidence[0]).toMatchObject({ id: 'doc', raw: 'June 30, 2026' })
+    // An accounting negative.
+    expect(t('-557', extractNumbers('(557)')).verdict).toBe('clean')
+    expect(t('-557', '(557)').verdict).toBe('clean')
+  })
+
+  it('caller tokens must keep the new fields honest', () => {
+    const tok = extractNumbers('(557)')[0]
+    expect(tok?.parenthesized).toBe(true)
+    expect(() => t('1', [{ ...tok, parenthesized: false } as never])).toThrow(TypeError)
+    expect(() => t('1', [{ ...tok, value: '-557', signStyle: 'minus' } as never])).toThrow(TypeError)
+    const mil = extractNumbers('3 million')[0]
+    expect(() => t('1', [{ ...mil, magnitude: 0 } as never])).toThrow(TypeError)
+    expect(() => t('1', [{ ...mil, magnitude: 1.5 } as never])).toThrow(TypeError)
+    expect(() => t('1', [{ ...mil, magnitude: '6' } as never])).toThrow(TypeError)
+    expect(t('3 million', [mil as never], { evidenceScale: 'thousand' }).verdict).toBe('clean')
+    expect(t('3 billion', [mil as never], { evidenceScale: 'thousand' }).verdict).toBe('untraced')
+  })
+
+  it('allowBareOutput reaches weak evidence and derivations', () => {
+    expect(t('1234', '$1.234', { allowBareOutput: true }).numbers[0]?.status).toBe('unknown')
+    expect(t('300.75', '$100.25 and $200.50', { allowBareOutput: true, derivations: ['sum'] }).numbers[0]).toMatchObject({ status: 'derived', unitUnverified: true })
+    expect(t('300.75', '$100.25 and $200.50', { derivations: ['sum'] }).numbers[0]?.status).toBe('untraced')
+    expect(t('150.375', '$100.25 and $200.50', { allowBareOutput: true, derivations: ['average'] }).numbers[0]?.status).toBe('derived')
+    expect(t('301.75', '$100.25 and $200.50', { allowBareOutput: true, derivations: ['sum'] }).numbers[0]?.status).toBe('untraced')
+  })
+
+  it('a traced date part cites the date it belongs to', () => {
+    const r = t('Oct 5-7, 2026', 'The first was October 5, 2026 and the second October 7, 2026.')
+    expect(r.verdict).toBe('clean')
+    const byRaw = new Map(r.numbers.map((n) => [n.token.raw, n]))
+    expect(byRaw.get('7')?.evidence[0]?.raw).toBe('October 7, 2026')
+    expect(byRaw.get('5')?.evidence[0]?.raw).toBe('October 5, 2026')
+    const ev = 'The first was October 5, 2026 and the second October 7, 2026.'
+    const seven = byRaw.get('7')?.evidence[0]
+    expect(ev.slice(seven?.start, seven?.end)).toBe('October 7, 2026')
   })
 })

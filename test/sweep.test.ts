@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { scan } from '../src/extract.js'
 import { extractNumbers, traceNumbers } from '../src/index.js'
-import type { NumberToken, TraceResult } from '../src/index.js'
+import { resolveLocale } from '../src/locale.js'
+import type { NumberToken, TraceOptions, TraceResult } from '../src/index.js'
 
 // A seeded combinatorial sweep. Numbers are generated from a grammar of forms
 // (integers, decimals, locale-printed numbers, percents, currencies, magnitudes,
@@ -88,6 +90,11 @@ const FORMS: ReadonlyArray<(rnd: Rng) => Variant[]> = [
   (r) => {
     const n = pick(r, ['5', '12'])
     return [{ text: `${n} thousand` }, { text: `${n},000` }, { text: `${n}000` }]
+  },
+  (r) => {
+    // A magnitude written with zeros after the point still says its own scale (scale 0, magnitude 6).
+    const n = pick(r, ['3', '12', '7'])
+    return [{ text: `${n}.000000 million` }, { text: `${n} million` }, { text: `${n}000000` }, { text: `${n},000,000` }]
   },
   (r) => {
     const n = pick(r, ['1.5e3', '2e4', '6.25e2'])
@@ -721,5 +728,58 @@ describe('sweep', { timeout: 300_000 }, () => {
       }
     }
     expect(compared).toBeGreaterThan(500)
+  })
+
+  it('(h) evidence given as extracted tokens behaves like the same evidence as text', () => {
+    const rnd = lcg(0x5eed21)
+    const OPTIONS: readonly TraceOptions[] = [
+      {}, { derivations: ['sum', 'difference', 'average'] }, { allowBareEvidence: true, allowBareOutput: true },
+      { preset: 'report' }, { evidenceScale: 'thousand', evidenceCurrency: 'USD' }, { evidenceOrder: 'newest-first', derivations: ['sum', 'difference', 'product'] },
+    ]
+    let compared = 0
+    for (let iter = 0; iter < 2500; iter++) {
+      const outForms = formsFor(rnd, 1 + Math.floor(rnd() * 3), true)
+      const evForms = formsFor(rnd, 1 + Math.floor(rnd() * 3), true)
+      const outV = outForms.map((f) => pick(rnd, f))
+      const evV = [...outForms.map((f) => pick(rnd, f)), ...evForms.map((f) => pick(rnd, f))]
+      const mixed = (vs: Variant[]): boolean => new Set(vs.map((v) => v.locale ?? 'en-US')).size > 1
+      if (mixed(outV) || mixed(evV)) continue
+      const output = compose(rnd, outV.map((v) => v.text))
+      const evidence = compose(rnd, evV.map((v) => v.text))
+      const options = { ...pick(rnd, OPTIONS), locale: localeOf(outV), evidenceLocale: localeOf(evV) }
+      const asText = traceNumbers(output, evidence, options)
+      // The tokens as the kit itself reads evidence text (identifier digits included).
+      const asTokens = traceNumbers(output, scan(evidence, resolveLocale(options.evidenceLocale), true, true), options)
+      expect(statuses(asTokens), `${describeCase(output, evidence)} ${JSON.stringify(options)}`).toEqual(statuses(asText))
+      expect(asTokens.verdict).toBe(asText.verdict)
+      compared++
+    }
+    expect(compared).toBeGreaterThan(800)
+  })
+
+  it('(i) evidence hints never touch a number that carries its own magnitude, unit or kind', () => {
+    const rnd = lcg(0x5eed22)
+    let compared = 0
+    for (let iter = 0; iter < 3000; iter++) {
+      const outForms = formsFor(rnd, 1 + Math.floor(rnd() * 3), true)
+      const evForms = formsFor(rnd, 1 + Math.floor(rnd() * 3), true)
+      const outV = outForms.map((f) => pick(rnd, f))
+      const evV = [...outForms.map((f) => pick(rnd, f)), ...evForms.map((f) => pick(rnd, f))]
+      const mixed = (vs: Variant[]): boolean => new Set(vs.map((v) => v.locale ?? 'en-US')).size > 1
+      if (mixed(outV) || mixed(evV)) continue
+      const output = compose(rnd, outV.map((v) => v.text))
+      const evidence = compose(rnd, evV.map((v) => v.text))
+      const evTokens = extractNumbers(evidence, { locale: localeOf(evV) })
+      // Only evidence made entirely of numbers the hints must leave alone.
+      const bare = (n: NumberToken): boolean => (n.kind === 'count' || n.kind === 'decimal') && n.unit === undefined && n.magnitude === undefined
+      if (evTokens.some(bare)) continue
+      const options = { locale: localeOf(outV), evidenceLocale: localeOf(evV) }
+      const hint = pick(rnd, [{ evidenceScale: 'thousand' }, { evidenceScale: 6, evidenceCurrency: 'USD' }, { evidenceCurrency: 'EUR' }] as const)
+      const plain = statuses(traceNumbers(output, evidence, options))
+      const hinted = statuses(traceNumbers(output, evidence, { ...options, ...hint }))
+      expect(hinted, `${describeCase(output, evidence)} ${JSON.stringify(hint)}`).toEqual(plain)
+      compared++
+    }
+    expect(compared).toBeGreaterThan(300)
   })
 })
