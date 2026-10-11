@@ -187,6 +187,10 @@ const FORMS: ReadonlyArray<(rnd: Rng) => Variant[]> = [
   () => [{ text: '(.5%)' }, { text: '-0.5%' }, { text: '-.5%' }],
   () => [{ text: '.5 kg' }, { text: '0.5 kg' }, { text: '.5kg' }],
   () => [{ text: '-0.00%' }, { text: '-0.00 %' }],
+  () => [{ text: '.5\u2013.7%' }, { text: '.5-.7%' }, { text: '.5 to .7%' }, { text: '0.5% and 0.7%' }],
+  () => [{ text: '5 $.99' }, { text: '5 $0.99' }],
+  () => [{ text: '.5 x .7 cm' }, { text: '0.5 x 0.7 cm' }, { text: '.5x.7 cm' }, { text: '0.5 cm by 0.7 cm' }],
+  () => [{ text: '$.5-.7M' }, { text: '$0.5 million and $0.7 million' }, { text: '$500,000 to $700,000' }],
   // Identifiers, versions and other things that are not claims.
   (r) => {
     const id = pick(r, ['v1.2.3', 'v1.2.3+4', '1.2.3-rc.1', '2.0.0-beta.2+build.5', '1.234.567-rc.1', 'X3', 'COVID-19', 'GPT-4', 'FY2025', 'Q3', 'H2O', 'iPhone15', '5G', 'A4', 'x86_64', '0x1F', '192.168.1.1'])
@@ -288,6 +292,9 @@ const TEMPTING: ReadonlyArray<readonly string[]> = [
   ['35%', '-30%', '-40%', '-35%', '70%'],
   ['.5', '0.5', '5', 'a .5', 'x.5', 'wait...5'],
   ['2000 x 3000 cm', '3000 cm', '2000 cm', '2000'],
+  ['.5\u2013.7%', '0.5 and 7%', '0.5% and 0.7%', '.5 and .7', '5-7%'],
+  ['5 $.99', '$5 and 0.99', '5 and 0.99', '5 and $0.99'],
+  ['.5 x .7 cm', '.5 cm', '.7 cm', '5 x 7 cm', '0.5 x 0.7'],
   ['7', '3 and 4', '7', '3 + 4'],
   ['5 g', '5 kg', '5 mg', '5', '5 grams'],
   ['3 months', '3 min', '3 mins', '3 minutes', '3'],

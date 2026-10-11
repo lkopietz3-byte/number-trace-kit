@@ -79,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its sign is marked `signDiffers`; zero keeps its written sign through
   rounding. Changed row: `0.50` now traces to `.5` (it was untraced because the
   dot was dropped).
+- Sixth review round (8b4e8cf): a range separator (hyphen, en dash, "to") before a
+  leading decimal joins the endpoints; `5 $.99` and `.5 x .7 cm` keep their
+  currency prefix and dimension operator; an exactly zero derivation matches a
+  written `-0` while a tiny value that only rounds to zero does not; `0` and `-0`
+  are one operand value; `signDiffers` is suppressed only for an exactly zero
+  derivation.
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.
