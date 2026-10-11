@@ -81,7 +81,8 @@ describe('units and kinds must match', () => {
     const r = only(trace('45%', 'x $45 and 45 pp'))
     expect(r.nearMisses?.map((m) => m.reason)).toEqual(['unit-differs', 'unit-differs'])
     expect(only(trace('-5', 'x 5')).nearMisses?.[0]?.reason).toBe('sign-differs')
-    expect(trace('2026-10-10', 'x 2026').numbers.map((n) => n.status)).toEqual(['traced', 'untraced', 'untraced'])
+    // A date traces as a whole date; its year alone is only a weak link.
+    expect(trace('2026-10-10', 'x 2026').numbers.map((n) => n.status)).toEqual(['unknown', 'untraced', 'untraced'])
   })
 
   it('measurement units must agree when both sides have one', () => {
@@ -105,7 +106,7 @@ describe('units and kinds must match', () => {
 
   it('a year in a date traces a bare year, and a bare year traces a date year', () => {
     expect(only(trace('in 2026', 'due 2026-10-10')).status).toBe('traced')
-    expect(trace('due 2026-10-10', 'in 2026').numbers.map((n) => n.status)).toEqual(['traced', 'untraced', 'untraced'])
+    expect(trace('due 2026-10-10', 'in 2026').numbers.map((n) => n.status)).toEqual(['unknown', 'untraced', 'untraced'])
   })
 })
 
@@ -237,7 +238,8 @@ describe('derivations', () => {
   })
 
   it('ignores ambiguous, year and date operands', () => {
-    expect(only(trace('2.5', 'a 1.250 b 1.250', { derivations: ['sum'] })).status).not.toBe('derived')
+    // A number whose only doubt is thousands-versus-decimal still takes part with its primary reading.
+    expect(only(trace('2.5', 'a 1.250 b 1.250', { derivations: ['sum'] })).status).toBe('derived')
     expect(only(trace('4000', 'x 2000 and 2000', { derivations: ['sum'] })).status).toBe('untraced')
   })
 
@@ -248,7 +250,7 @@ describe('derivations', () => {
   })
 
   it('validates the option values', () => {
-    expect(() => trace('1', 'x', { derivations: ['product' as never] })).toThrow(RangeError)
+    expect(() => trace('1', 'x', { derivations: ['mean' as never] })).toThrow(RangeError)
     expect(() => trace('1', 'x', { derivations: 'sum' as never })).toThrow(TypeError)
     expect(() => trace('1', 'x', { maxCandidates: 0 })).toThrow(RangeError)
     expect(() => trace('1', 'x', { maxCandidates: 1_000_001 })).toThrow(RangeError)

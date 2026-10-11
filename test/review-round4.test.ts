@@ -71,9 +71,11 @@ describe('the micro sign', () => {
 
 describe('date years and other evidence', () => {
   it('a measurement does not vouch for a year, weak identifier digits do not fail it', () => {
-    expect(t('2026-10-05', 'October 5;2026 kg').numbers.map((n) => n.status)).toEqual(['untraced', 'traced', 'traced'])
-    expect(t('2026-10-05', 'October 5;FY2026').numbers.map((n) => n.status)).toEqual(['unknown', 'traced', 'traced'])
-    expect(t('2026-10-05', 'October 5; in 2026').verdict).toBe('clean')
+    // A date traces as a whole date, so its parts found elsewhere are only weak support.
+    expect(t('2026-10-05', 'October 5;2026 kg').numbers.map((n) => n.status)).toEqual(['untraced', 'unknown', 'unknown'])
+    expect(t('2026-10-05', 'October 5;FY2026').numbers.map((n) => n.status)).toEqual(['unknown', 'unknown', 'unknown'])
+    expect(t('2026-10-05', 'October 5; in 2026').verdict).toBe('unknown')
+    expect(t('2026-10-05', 'October 5, 2026').verdict).toBe('clean')
     expect(t('2026-10-05', 'October 5').numbers[0]?.status).toBe('untraced')
   })
 })

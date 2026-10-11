@@ -56,7 +56,7 @@ describe('reconcile: amount types', () => {
   })
 
   it('rejects strings that are not exact decimals', () => {
-    for (const bad of ['', '1,234.50', '$5', '12.', '.5', '1e3', ' 5', '5 ', '0x10', 'NaN', '１２']) {
+    for (const bad of ['', '12.', '1e3', ' 5', '5 ', '0x10', 'NaN', '１２', '1,23', '1.234,50']) {
       expect(() => reconcile({ rows: [{ label: 'a', amount: bad }], total: '0' }), JSON.stringify(bad)).toThrow(TypeError)
     }
     expect(() => reconcile({ rows: [{ label: 'a', amount: null as never }], total: '0' })).toThrow(TypeError)

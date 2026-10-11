@@ -51,8 +51,10 @@ assert.equal(capped.verdict, 'unknown');
 assert.equal(capped.candidateCapHit, true);
 
 // Misuse is an error, not a quiet pass.
-assert.throws(() => traceNumbers('5', 'x', { derivations: ['product'] }), RangeError);
+assert.throws(() => traceNumbers('5', 'x', { derivations: ['mean'] }), RangeError);
 assert.throws(() => traceNumbers(5, 'x'), TypeError);
+assert.equal(traceNumbers('Total $300.75.', sums, { preset: 'report' }).numbers[0]?.status, 'derived');
+assert.equal(traceNumbers('Total $300.75.', sums, { preset: 'strict' }).numbers[0]?.status, 'untraced');
 assert.throws(() => extractNumbers('5', { locale: 'xx-YY' }), RangeError);
 
 // reconcile: exact, one cent matters, floats are rejected.

@@ -81,7 +81,7 @@ describe('derivation lookups', { timeout: 60_000 }, () => {
     const output = '1.0x '.repeat(1200)
     let result: TraceResult | undefined
     const ms = cpuMs(() => {
-      result = t(output, evidence, { derivations: ['ratio'] })
+      result = t(output, evidence, { derivations: ['ratio'], maxDerivationMatches: 1_000_000, maxDerivationDensity: 1_000_000 })
     })
     expect(result?.numbers).toHaveLength(1200)
     expect(result?.numbers[0]?.derivation?.matches).toBeGreaterThan(100)

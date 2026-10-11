@@ -191,6 +191,16 @@ const FORMS: ReadonlyArray<(rnd: Rng) => Variant[]> = [
   () => [{ text: '5 $.99' }, { text: '5 $0.99' }],
   () => [{ text: '.5 x .7 cm' }, { text: '0.5 x 0.7 cm' }, { text: '.5x.7 cm' }, { text: '0.5 cm by 0.7 cm' }],
   () => [{ text: '$.5-.7M' }, { text: '$0.5 million and $0.7 million' }, { text: '$500,000 to $700,000' }],
+  () => [{ text: 'June 30, 2026' }, { text: '2026-06-30' }, { text: '30 June 2026' }, { text: '06/30/2026' }, { text: 'Jun 30 2026' }],
+  () => [{ text: 'March 2026' }, { text: 'March 2026' }],
+  (r) => {
+    const n = pick(r, ['1.9', '0.5', '12'])
+    return [{ text: `${n}c` }, { text: `${n} cents` }, { text: `${n}\u00a2` }]
+  },
+  () => [{ text: '(557)' }, { text: '-557' }],
+  () => [{ text: '$(557)' }, { text: '-$557' }, { text: '($557)' }],
+  () => [{ text: '10mo' }, { text: '10 months' }, { text: '10 month' }],
+  () => [{ text: '2.4pts' }, { text: '2.4 pts' }, { text: '2.4pt' }],
   // Identifiers, versions and other things that are not claims.
   (r) => {
     const id = pick(r, ['v1.2.3', 'v1.2.3+4', '1.2.3-rc.1', '2.0.0-beta.2+build.5', '1.234.567-rc.1', 'X3', 'COVID-19', 'GPT-4', 'FY2025', 'Q3', 'H2O', 'iPhone15', '5G', 'A4', 'x86_64', '0x1F', '192.168.1.1'])
@@ -295,6 +305,12 @@ const TEMPTING: ReadonlyArray<readonly string[]> = [
   ['.5\u2013.7%', '0.5 and 7%', '0.5% and 0.7%', '.5 and .7', '5-7%'],
   ['5 $.99', '$5 and 0.99', '5 and 0.99', '5 and $0.99'],
   ['.5 x .7 cm', '.5 cm', '.7 cm', '5 x 7 cm', '0.5 x 0.7'],
+  ['June 30, 2025', 'June 30, 2026', '2025-06-30', 'Sept 2025', '30 June 2026', 'June 30', '2025'],
+  ['March 2026', 'March 2025', '2026', 'March 5, 2026'],
+  ['1.9c', '1.7c', '1.9', '1.9 cents', '19c', '1.9\u00a2'],
+  ['Llama-3.3-70B-Instruct', '70', '3.3', 'gpt-5.4-nano-2026-03-17', '2026', 'Qwen3-8B', '8'],
+  ['(557)', '-557', '557', '$(557)', '-$557', '(558)'],
+  ['10mo', '10 months', '10', '10 days', '10 mos'],
   ['7', '3 and 4', '7', '3 + 4'],
   ['5 g', '5 kg', '5 mg', '5', '5 grams'],
   ['3 months', '3 min', '3 mins', '3 minutes', '3'],
@@ -360,7 +376,8 @@ function appears(out: NumberToken, evidence: readonly NumberToken[]): boolean {
   const oc = classOf(out)
   for (const e of evidence) {
     if (canon(e.value) !== canon(out.value)) continue
-    if (out.signStyle === 'minus' && isNeg(out.value) !== isNeg(e.value)) continue
+    // A bare "(557)" may be an accounting negative, so it answers to a minus sign too.
+    if (out.signStyle === 'minus' && isNeg(out.value) !== isNeg(e.value) && e.parenthesized !== true) continue
     if (out.signStyle === 'plus' && isNeg(e.value)) continue
     const ec = classOf(e)
     if (oc === 'date' && ec === 'date') {
@@ -595,6 +612,34 @@ describe('sweep', { timeout: 300_000 }, () => {
         expect(t.ambiguous, why).toBe(false)
       }
     }
+  })
+
+  it('(k) a count times a price is derived, and nearby values are not', () => {
+    const rnd = lcg(0x5eed0b)
+    let derived = 0
+    for (let iter = 0; iter < 600; iter++) {
+      const count = 2 + Math.floor(rnd() * 998)
+      const price = 100 + Math.floor(rnd() * 9900) // cents
+      const product = BigInt(count) * BigInt(price)
+      const fmt = (cents: bigint): string => `${(cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${(cents % 100n).toString().padStart(2, '0')}`
+      const evidence = `Usage was ${count} events at $${fmt(BigInt(price))} each.`
+      const options = { derivations: ['product' as const], maxCandidates: 5000 }
+      const r = traceNumbers(`That costs $${fmt(product)}.`, evidence, options)
+      expect(r.numbers[0]?.status, `${evidence} -> ${fmt(product)}`).not.toBe('untraced')
+      if (r.numbers[0]?.status === 'derived') {
+        derived++
+        const ops = r.numbers[0].derivation?.operands.map((o) => o.raw.replace(/[$,]/g, '')) ?? []
+        expect(ops.map(Number).sort((x, y) => x - y)).toEqual([count, price / 100].sort((x, y) => x - y))
+      }
+      const wrong = traceNumbers(`That costs $${fmt(product + 1730n)}.`, evidence, options)
+      expect(['traced', 'rounded'], `${evidence} -> ${fmt(product + 1730n)}`).not.toContain(wrong.numbers[0]?.status)
+      if (wrong.numbers[0]?.status === 'derived') {
+        // A coincidence with the other reading; the operands named must really give it.
+        const ops = wrong.numbers[0].derivation?.operands.map((o) => Number(o.raw.replace(/[$,]/g, ''))) ?? []
+        expect(Math.abs(ops.reduce((x, y) => x * y, 1) - Number(product + 1730n) / 100)).toBeLessThan(0.006)
+      }
+    }
+    expect(derived).toBeGreaterThan(500)
   })
 
   it('(b) a different value, or the same value in an incompatible unit, is never traced', () => {
