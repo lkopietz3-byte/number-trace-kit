@@ -67,6 +67,24 @@ interface Ent {
   readonly token: NumberToken
 }
 
+/** Two-level index for whole-group keys, so a long slash chain's text is hashed once, not per member. */
+class GroupIndex {
+  private readonly map = new Map<string, Map<string, Ent[]>>()
+  add(group: string, key: string, ent: Ent): void {
+    let inner = this.map.get(group)
+    if (inner === undefined) {
+      inner = new Map()
+      this.map.set(group, inner)
+    }
+    const list = inner.get(key)
+    if (list === undefined) inner.set(key, [ent])
+    else if (list.length < MAX_LIST) list.push(ent)
+  }
+  get(group: string, key: string): Ent[] | undefined {
+    return this.map.get(group)?.get(key)
+  }
+}
+
 class Index {
   private readonly map = new Map<string, Ent[]>()
   add(key: string, ent: Ent): void {
@@ -139,6 +157,10 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
     throw new TypeError(`${name}.ambiguity is not a known reason.`)
   }
   if (!isDecimalString(value, MAX_TEXT_LENGTH)) throw new TypeError(`${name}.value must be an exact decimal string.`)
+  // The flags must agree with each other: an ambiguity reason is what makes a token ambiguous.
+  if (ambiguous !== (ambiguity !== undefined)) {
+    throw new TypeError(`${name}: ambiguous (${String(ambiguous)}) and ambiguity (${String(ambiguity)}) disagree.`)
+  }
   // The 60-digit policy holds whatever the caller's flags say.
   const tooLong = ambiguity === 'too-long' || value.length - (value.startsWith('-') || value.startsWith('+') ? 1 : 0) - (value.includes('.') ? 1 : 0) > MAX_DIGITS
   const unit = readOptionalString(item['unit'], `${name}.unit`)
@@ -168,6 +190,7 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
       alternates.push({ value: altValue, scale: altScale })
     })
   }
+  if (alternates.length > 0 && !ambiguous) throw new TypeError(`${name}: alternates need ambiguous: true.`)
   const evidenceId = readOptionalString(item['evidenceId'], `${name}.evidenceId`)
   const token: NumberToken = {
     raw, start, end, value, scale, kind: kind as NumberKind, ambiguous: ambiguous || tooLong,
@@ -291,7 +314,7 @@ interface Evidence {
   readonly strong: Index
   readonly weak: Index
   /** Date parts with a known role, by role and value. Lives in `strong`. */
-  readonly groupRaw: Index
+  readonly groupRaw: GroupIndex
   readonly dateAny: Index
   readonly dateUnknown: Index
   readonly byValue: Index
@@ -333,12 +356,12 @@ function ingest(ev: Evidence, token: NumberToken, id: string): void {
       // Day/month order unknown: only an identical date text can vouch for it.
       ev.dateAny.add(primary.key, primary)
       ev.dateUnknown.add(primary.key, primary)
-      if (token.groupRaw !== undefined) ev.groupRaw.add(`${token.groupRaw}\u0000${primary.key}`, primary)
+      if (token.groupRaw !== undefined) ev.groupRaw.add(token.groupRaw, primary.key, primary)
       return
     }
     ev.dateAny.add(primary.key, primary)
     addEnt(ev, primary, false)
-    if (token.groupRaw !== undefined) ev.groupRaw.add(`${token.groupRaw}\u0000${primary.key}`, primary)
+    if (token.groupRaw !== undefined) ev.groupRaw.add(token.groupRaw, primary.key, primary)
     if (token.part === 'year') {
       // A year inside a date can vouch for a bare year elsewhere.
       const asPlain = makeEnt({ ...token, kind: 'year' }, { cls: 'plain', unit: '' }, token.value, token.scale, id)
@@ -347,7 +370,7 @@ function ingest(ev: Evidence, token: NumberToken, id: string): void {
     return
   }
   addEnt(ev, primary, weakPrimary(token))
-  if (token.groupRaw !== undefined) ev.groupRaw.add(`${token.groupRaw}\u0000${primary.key}`, primary)
+  if (token.groupRaw !== undefined) ev.groupRaw.add(token.groupRaw, primary.key, primary)
   for (const alt of token.alternates ?? []) {
     const ent = makeEnt(token, shape, alt.value, alt.scale, id)
     if (ent !== null) addEnt(ev, ent, true)
@@ -365,7 +388,7 @@ function makeEnt(token: NumberToken, shape: Shape, value: string, scale: number,
 
 function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
   const ev: Evidence = {
-    strong: new Index(), weak: new Index(), groupRaw: new Index(), dateAny: new Index(),
+    strong: new Index(), weak: new Index(), groupRaw: new GroupIndex(), dateAny: new Index(),
     dateUnknown: new Index(), byValue: new Index(), all: [], weakAll: [], count: 0,
   }
   let count = 0
@@ -411,22 +434,14 @@ function signAllowed(tok: NumberToken, outNeg: boolean, entNeg: boolean, mode: S
   return true
 }
 
-function lookup(index: Index, shape: Shape, outNeg: boolean, key: string): Ent[] {
+function lookup(index: Index, shape: Shape, outNeg: boolean, key: string, bare = false): Ent[] {
   const found: Ent[] = []
   for (const neg of [outNeg, !outNeg]) {
-    for (const u of lookupKeys(shape.cls, shape.unit)) {
+    // A bare lookup finds only evidence that has no unit at all.
+    for (const u of bare ? [''] : lookupKeys(shape.cls, shape.unit)) {
       const list = index.get(entKey(shape.cls, u, neg, key))
       if (list !== undefined) for (const e of list) found.push(e)
     }
-  }
-  return found
-}
-
-function lookupBare(index: Index, outNeg: boolean, key: string): Ent[] {
-  const found: Ent[] = []
-  for (const neg of [outNeg, !outNeg]) {
-    const list = index.get(entKey('plain', '', neg, key))
-    if (list !== undefined) for (const e of list) if (e.unit === '' && e.token.kind !== 'date-part') found.push(e)
   }
   return found
 }
@@ -518,13 +533,14 @@ class Matcher {
     shape: Shape,
     outNeg: boolean,
     mantissa: bigint,
+    bare = false,
   ): { ents: Ent[]; label: RoundLabel } | null {
     if (this.ctx.modes.length === 0) return null
     const idx = this.roundedIndex(source, scale)
     const hits = new Map<Ent, Set<RoundingMode>>()
     for (const mode of this.ctx.modes) {
       for (const neg of [outNeg, !outNeg]) {
-        for (const u of lookupKeys(shape.cls, shape.unit)) {
+        for (const u of bare ? [''] : lookupKeys(shape.cls, shape.unit)) {
           const list = idx.get(`${mode}\u0000${entKey(shape.cls, u, neg, mantissa.toString())}`)
           if (list === undefined) continue
           for (const e of list) {
@@ -837,16 +853,16 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
 
   if (tok.ambiguity === 'fraction' && tok.groupRaw !== undefined) {
     // The same fraction written the same way vouches for both halves.
-    const same = ev.groupRaw.get(`${tok.groupRaw}\u0000${key}`)
+    const same = ev.groupRaw.get(tok.groupRaw, key)
     if (same !== undefined && same.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(same) }
   }
+  // The number as written, and (with allowBareEvidence) as a unit-less number.
+  const variants: Variant[] = [{ shape, bare: false }]
+  if (ctx.allowBare && shape.cls !== 'plain') variants.push({ shape: BARE_SHAPE, bare: true })
+  const allow = (e: Ent): boolean => signAllowed(tok, outNeg, e.neg, ctx.signMode)
+
   if (weakPrimary(tok)) {
-    const allow = (e: Ent): boolean => signAllowed(tok, outNeg, e.neg, ctx.signMode)
-    if (
-      lookup(ev.strong, shape, outNeg, key).some(allow) || lookup(ev.weak, shape, outNeg, key).some(allow) ||
-      roundsToAny(matcher, tok, tok.scale, shape, outNeg, mantissa) ||
-      (!matcher.capHit && matcher.findDerived(tok, tok.scale, shape, outNeg, mantissa) !== null)
-    ) {
+    if (linksVia(tok, tok.scale, outNeg, mantissa, key, ['strong', 'weak'], true, variants, ev, matcher, ctx)) {
       return unknownTrace(tok, 'ambiguous-reading')
     }
     // An incomplete derivation search stays unknown.
@@ -856,23 +872,23 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   }
 
   // 1. Exact match after normalization.
-  const exact = lookup(ev.strong, shape, outNeg, key).filter((e) => signAllowed(tok, outNeg, e.neg, ctx.signMode))
-  if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined)
-
-  if (ctx.allowBare && shape.cls !== 'plain') {
-    const bare = lookupBare(ev.strong, outNeg, key).filter((e) => signAllowed(tok, outNeg, e.neg, ctx.signMode))
-    if (bare.length > 0) return { ...matched(tok, 'traced', bare, outNeg, undefined), unitUnverified: true as const }
+  for (const v of variants) {
+    const exact = lookup(ev.strong, v.shape, outNeg, key, v.bare).filter(allow)
+    if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined, v.bare)
   }
 
   // 2. The evidence is more precise and rounds to what the output shows.
-  const rounded = matcher.findRounded('strong', tok, tok.scale, shape, outNeg, mantissa)
-  if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label)
+  for (const v of variants) {
+    const rounded = matcher.findRounded('strong', tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
+    if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, v.bare)
+  }
 
   // 3. A declared derivation of evidence numbers.
   if (ctx.derivations.size > 0 && !matcher.capHit) {
-    const hit = matcher.findDerived(tok, tok.scale, shape, outNeg, mantissa)
-    if (hit !== null && hit.reversedOnly) return unknownTrace(tok, 'derivation-direction')
-    if (hit !== null) {
+    for (const v of variants) {
+      const hit = matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa)
+      if (hit === null) continue
+      if (hit.reversedOnly) return unknownTrace(tok, 'derivation-direction')
       const detail: DerivationDetail = {
         kind: hit.cand.kind,
         operands: [hit.cand.a.ref, hit.cand.b.ref],
@@ -880,53 +896,75 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
         matches: hit.matches,
         ...(hit.label !== undefined ? { rounding: hit.label } : {}),
       }
-      return { token: tok, status: 'derived', evidence: [], derivation: detail }
+      return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.bare ? { unitUnverified: true as const } : {}) }
     }
   }
 
   // 4. Matches only under another reading of an ambiguous number: cannot tell.
-  const weak = weakHit(tok, shape, outNeg, key, mantissa, ev, matcher, ctx)
-  if (weak) return unknownTrace(tok, 'ambiguous-reading')
+  if (weakHit(tok, outNeg, key, mantissa, variants, ev, matcher, ctx)) return unknownTrace(tok, 'ambiguous-reading')
 
   // 5. The search was too large to run.
-  if (ctx.derivations.size > 0 && matcher.capHit ) return unknownTrace(tok, 'candidate-cap')
+  if (ctx.derivations.size > 0 && matcher.capHit) return unknownTrace(tok, 'candidate-cap')
 
   // 6. Positive finding: not in the evidence.
   const near = nearMisses(tok, shape, outNeg, key, ev, ctx)
   return { token: tok, status: 'untraced', evidence: [], ...(near.length > 0 ? { nearMisses: near } : {}) }
 }
 
-function roundsToAny(matcher: Matcher, signTok: NumberToken, scale: number, shape: Shape, outNeg: boolean, mantissa: bigint): boolean {
-  return (
-    matcher.findRounded('strong', signTok, scale, shape, outNeg, mantissa) !== null ||
-    matcher.findRounded('weak', signTok, scale, shape, outNeg, mantissa) !== null
-  )
+interface Variant {
+  readonly shape: Shape
+  readonly bare: boolean
 }
 
-/** Does the number match only through another reading, exactly or after rounding? */
-function weakHit(
+const BARE_SHAPE: Shape = { cls: 'plain', unit: '' }
+
+/**
+ * Is there a link to the evidence for this reading of the number: an exact match, a
+ * rounded match, or (when asked) a derivation, in any of the given sources and unit variants?
+ */
+function linksVia(
   tok: NumberToken,
-  shape: Shape,
+  scale: number,
   outNeg: boolean,
-  key: string,
   mantissa: bigint,
+  key: string,
+  sources: readonly ('strong' | 'weak')[],
+  withDerived: boolean,
+  variants: readonly Variant[],
   ev: Evidence,
   matcher: Matcher,
   ctx: Ctx,
 ): boolean {
   const allow = (e: Ent): boolean => signAllowed(tok, outNeg, e.neg, ctx.signMode)
-  if (lookup(ev.weak, shape, outNeg, key).some(allow)) return true
-  if (matcher.findRounded('weak', tok, tok.scale, shape, outNeg, mantissa) !== null) return true
+  for (const v of variants) {
+    for (const src of sources) {
+      if (lookup(src === 'strong' ? ev.strong : ev.weak, v.shape, outNeg, key, v.bare).some(allow)) return true
+      if (matcher.findRounded(src, tok, scale, v.shape, outNeg, mantissa, v.bare) !== null) return true
+    }
+    // Another reading that is a derivation of the evidence is no more certain than the other links.
+    if (withDerived && !matcher.capHit && matcher.findDerived(tok, scale, v.shape, outNeg, mantissa) !== null) return true
+  }
+  return false
+}
+
+/** Does the number match only through another reading, exactly, after rounding, or by derivation? */
+function weakHit(
+  tok: NumberToken,
+  outNeg: boolean,
+  key: string,
+  mantissa: bigint,
+  variants: readonly Variant[],
+  ev: Evidence,
+  matcher: Matcher,
+  ctx: Ctx,
+): boolean {
+  if (linksVia(tok, tok.scale, outNeg, mantissa, key, ['weak'], false, variants, ev, matcher, ctx)) return true
   for (const alt of tok.alternates ?? []) {
-    const altKey = absKey(alt.value)
-    const altNeg = isNegativeValue(alt.value)
-    if (lookup(ev.strong, shape, altNeg, altKey).some(allow)) return true
-    if (lookup(ev.weak, shape, altNeg, altKey).some(allow)) return true
     const d = parseDecimal(alt.value)
     const altMantissa = mantissaAt(d.n < 0n ? { n: -d.n, s: d.s } : d, alt.scale)
-    if (altMantissa !== null && roundsToAny(matcher, tok, alt.scale, shape, altNeg, altMantissa)) return true
-    // Another reading that is a derivation of the evidence is no more certain than the other links.
-    if (altMantissa !== null && !matcher.capHit && matcher.findDerived(tok, alt.scale, shape, altNeg, altMantissa) !== null) return true
+    if (altMantissa === null) continue
+    const altNeg = isNegativeValue(alt.value)
+    if (linksVia(tok, alt.scale, altNeg, altMantissa, absKey(alt.value), ['strong', 'weak'], true, variants, ev, matcher, ctx)) return true
   }
   return false
 }
@@ -937,13 +975,14 @@ function matched(
   ents: readonly Ent[],
   outNeg: boolean,
   rounding: RoundLabel | undefined,
+  bare = false,
 ): NumberTrace {
   const ordered = [...ents.filter((e) => e.neg === outNeg), ...ents.filter((e) => e.neg !== outNeg)]
   const first = ordered[0]
   const best = first === undefined ? [] : ordered.filter((e) => e.neg === first.neg)
   const signDiffers = first !== undefined && first.neg !== outNeg
   const shape = shapeOf(tok)
-  const unitUnverified = best.length > 0 && shape.cls === 'plain' && best.every((e) => e.unit !== shape.unit)
+  const unitUnverified = bare || (best.length > 0 && shape.cls === 'plain' && best.every((e) => e.unit !== shape.unit))
   return {
     token: tok,
     status,
@@ -959,10 +998,11 @@ function traceDate(tok: NumberToken, ev: Evidence): NumberTrace {
   if (tok.part === undefined) {
     // Day/month order unknown. An identical date text vouches for it; anything else cannot.
     if (tok.groupRaw !== undefined) {
-      const same = ev.groupRaw.get(`${tok.groupRaw}\u0000${key}`)
+      const same = ev.groupRaw.get(tok.groupRaw, key)
       if (same !== undefined && same.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(same) }
     }
-    if (ev.dateAny.get(key) !== undefined) return unknownTrace(tok, 'ambiguous-date-order')
+    // The same values written another way (a date elsewhere, a bare month or year) leave it unknown.
+    if (ev.dateAny.get(key) !== undefined || ev.byValue.get(key) !== undefined) return unknownTrace(tok, 'ambiguous-date-order')
     return untracedDate(tok, key, ev)
   }
   const shape: Shape = { cls: 'date', unit: tok.part }
