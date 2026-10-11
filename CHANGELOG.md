@@ -85,6 +85,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written `-0` while a tiny value that only rounds to zero does not; `0` and `-0`
   are one operand value; `signDiffers` is suppressed only for an exactly zero
   derivation.
+- Field-trial round (b788dfd): whole-date matching (a date traces as day, month and
+  year together; its parts elsewhere are only `unknown`); cents, months and points as
+  units; hyphenated model names as identifiers; thousands-versus-decimal operands in
+  derivations; the coincidence guard (`maxDerivationMatches`, default 3, and `maxDerivationDensity`, default 0.5; reason
+  `derivation-too-likely`) and the `strict` and `report` presets; evidence `scale` and
+  `currency` hints; `roundSums`; `evidenceOrder`; `allowBareOutput`; the `product`
+  derivation; bare `(557)` answers to a minus sign and `$(557)` is negative;
+  `reconcile` reads printed amounts (`"38,400"`, `"$600.00"`, `"(557)"`).
+  Changed rows: `trace('2026-10-10', 'x 2026')` and similar partial-date rows are now
+  `unknown` (they were `traced`); `1.250 + 1.250` now derives; the collision-scan row
+  needs `maxDerivationMatches` to keep reading `derived`; reconcile strings with commas,
+  a `$` or parentheses are accepted.
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.

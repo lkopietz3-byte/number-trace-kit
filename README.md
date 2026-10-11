@@ -14,6 +14,21 @@ Status: version 0.1.0, private and unreleased. The package is marked `"private":
 
 It does not call a model, read a network, or use the clock or randomness. Same input, same options, same result.
 
+## Start with a preset
+
+Real reports and pricing pages need more than the defaults. Pick a preset, then override what your evidence needs.
+
+```ts
+traceNumbers(output, evidence, { preset: 'strict' }) // the default: direct matches and rounding only, no derivations
+traceNumbers(output, evidence, { preset: 'report' }) // for financial tables and pricing pages (below)
+traceNumbers(output, evidence, { preset: 'report', maxCandidates: 200_000, evidenceOrder: 'newest-first' })
+```
+
+- **`strict`**: no derivations, no unit leniency. A number is traced, rounded, untraced or unknown. Use it when the evidence states every figure the output may use.
+- **`report`**: every derivation (`sum`, `difference`, `ratio`, `percent-change`, `percent-of`, `average`, `product`), rounded sums and differences (`roundSums`), a bare number matching a currency figure in either direction (`allowBareEvidence`, `allowBareOutput`), a candidate cap of 50,000, and the coincidence guard (`maxDerivationMatches: 3`, `maxDerivationDensity: 0.5`): a derived number that can be built in more than three ways, or that sits in a crowded neighborhood of buildable values, is `unknown` (`derivation-too-likely`), not `derived`. On a page with a hundred numbers almost any percent can be built from two of them; the guard keeps that from reading as support.
+
+The pattern for tables: set `scale` and `currency` on the evidence document that holds the table (`{ id, text, scale: 'thousand', currency: 'USD' }`), or `evidenceScale` and `evidenceCurrency` for string evidence. The kit never guesses a scale from a header such as "(in thousands)"; you say it. See Options.
+
 ## Worked example
 
 ```ts
@@ -53,7 +68,7 @@ A number in the output is compared to the numbers extracted from the evidence, i
 
 1. **Ignored.** If the number is covered by one of your ignore options (see Options), its status is `ignored` and nothing else is checked. Nothing is ignored by default.
 2. **Cannot be compared.** A number glued to a superscript or an inline exponent (`10²`, `10^6`) or longer than 60 digits is `unknown`.
-3. **Dates and times** are compared part by part (year, month, day, hour, minute, second). A part matches an evidence part with the same value and the same role. A numeric date whose day and month cannot be told apart (`10/12/2026` when both are 12 or below and different) has no roles; it traces only to evidence that writes the same date text, and is `unknown` if the same values appear any other way (another date, or a bare month, day or year).
+3. **Dates and times** trace as whole dates: the day, month and year written together must appear together in one evidence date (in any format: `June 30, 2026`, `2026-06-30`, `30 June 2026` and `06/30/2026` are the same date). A date with fewer parts than the evidence date matches it (`June 30` against `June 30, 2026`); one with more parts does not. A date whose parts only appear in other dates (`June 30, 2025` against `June 30, 2026` and `Sept 2025`) is `unknown`, because its parts weakly support it, and `untraced` if some part is nowhere. A range (`Oct 5-7, 2026`) is checked day by day. A numeric date whose day and month cannot be told apart (`10/12/2026` when both are 12 or below and different) has no roles; it traces only to evidence that writes the same date text, and is `unknown` if the same values appear any other way (another date, or a bare month, day or year).
 4. **Traced.** Same class and the same exact value after normalization (see Normalization). Classes are: percent (`%`), percentage points (`pp`), currency (one class per currency code), and plain numbers (counts, decimals, years, ordinals). A percent never matches a plain number or an amount; `$45` never matches `45 EUR`.
 5. **Rounded.** The evidence is more precise than the output, and rounding the evidence value to the number of decimals the output shows gives the output value. The result says which rule produced the match: `half-up` (a tie goes away from zero), `half-even` (a tie goes to the even neighbor) or `either` (not a tie, both agree). `12.34%` rounds to `12.3%` and `12%`, never to `13%`. A magnitude counts as precision: `1.2 million` is precise to the nearest 100,000, so it matches `1,234,567` but not `1,350,000`.
 6. **Derived.** Only for the derivations you list in `options.derivations` (none by default), and by default only pairwise: two evidence numbers of the same class and unit, one operation (three with `maxOperands: 3`). See Derivations.
@@ -75,7 +90,10 @@ A number in the output is compared to the numbers extracted from the evidence, i
 - Units: a recognized measurement unit (`kg`, `km`, `days`, `hours`, `MB`, `x` and a short list of others, glued or as the next word, after any numeric form including `1.2e3 kg`) must agree when both sides have one. If only one side has a recognized unit, the number still traces and the result is marked `unitUnverified`; the same holds for a derived number (`7 kg` from `3` and `4`), but never for operands in different units, and a ratio takes no unit. Words that are not in the list (`users`, `orders`) are not units.
 - `allowBareEvidence: true` lets a percent or amount in the output match an evidence number with no unit at all (a table cell that prints `1,234.50`), marked `unitUnverified`. It applies on every path: exact, rounded, derived, and the weaker links that give `unknown`. Default off.
 - A number that inherits a unit, a percent sign, a currency or a magnitude from a range or a dimension (`1950-2200 kg`) is not a year, so `ignoreYears` does not skip it.
-- A year inside a date also vouches for a bare year elsewhere, and a bare year vouches for the year of a date.
+- A bare year elsewhere is only a weak link for the year of a date (the date as a whole must appear), while a date's year vouches for a bare year in the output.
+- Accounting negatives: `(557)`, `-557`, `$(557)` and `-$557` are one figure. A bare `(557)` is read as positive (it could be a list marker), but it also answers to a minus sign, so `-557` traces to it; an unsigned `557` traces to either.
+- Cents (`1.9c`, `1.9¢`, `12 cents`), months (`10mo`) and points (`2.4pts`) are units. A lone `c` after a space is a label, not cents.
+- Hyphenated model and product names with letters on both sides of their numbers (`Llama-3.3-70B-Instruct`, `gpt-5.4-nano-2026-03-17`, `claude-3-5-sonnet`, `Qwen3-8B`) are identifiers: their digits are weak evidence. `gpt-4` and `pre-2020` are not names and keep their numbers.
 
 ### Ambiguity: never guessed
 
@@ -103,15 +121,18 @@ How an ambiguous number is matched: if its primary reading matches the other sid
 - `ratio`: `a / b`, a plain number or an `x` multiple (`0.8`, `0.8x`).
 - `percent-change`: `(b - a) / a * 100`, a percent.
 - `average`: the mean of two evidence numbers (three with `maxOperands: 3`), in the same class and unit. Matched after display rounding, like a ratio, so the result says `exact: false` and which rounding rule matched when the mean has more digits than the output shows.
+- `product`: `a * b`, for a count times a price or quantity (`3,000,000 events at $0.0000343` gives `$102.90`), or two counts. One operand is a unit-less number; the result takes the other's class and unit. Matched after display rounding.
 - `percent-of`: `a / b * 100` for two numbers of the same class (what percent is a of b), and `p% * x` when one operand is a percent and the other an amount or count (7.5% of $200.50).
 
 Rules:
 
 - Pairs by default; `maxOperands: 3` (opt-in) also tries every triple for `sum`, `difference` and `average`. A three-operand `difference` is one figure less the other two (`100 - 30 - 25`); no figure is "earlier", so it has no direction rule, and the sign follows the arithmetic. Direction rules for pairs are unchanged, and nothing changes for a call that does not set `maxOperands`. Operands must be in the same class and unit (percents with percents, amounts of one currency with each other). Two percents give a percent through `percent-of` (`10%` and `20%` give `50%`). Years, dates, ordinals and ambiguous numbers are never operands. A value that appears more than twice counts twice.
-- Sums and differences are exact arithmetic, so only an exact match counts. Ratios and percents are inexact, so they match after rounding to the output's precision, and the result says `exact: false` and which rounding rule matched. A loose match is visible: `derivation.matches` counts how many different candidates produced the number.
+- Sums and differences are exact arithmetic, so only an exact match counts, unless `roundSums: true` (or the `report` preset) lets them match after display rounding (`$17.6 million` from `$83.692 million` less `$66.128 million`). Ratios, percents, averages and products are inexact, so they match after rounding to the output's precision, and the result says `exact: false` and which rounding rule matched. A loose match is visible: `derivation.matches` counts how many different candidates produced the number.
 - Direction follows the order the evidence mentions the numbers: the first mentioned is the "from", the second the "to". If a number matches only when the operands are taken the other way round (an unsigned `30%` where the evidence lists the new value first), the status is `unknown` with reason `derivation-direction`, because the direction of a change is in the words, which this library does not read.
 - The search is capped. The number of candidates (pairs times derivations, plus triples times derivations at `maxOperands: 3`) is counted first. If it is larger than `maxCandidates` (default 5,000, at most 1,000,000), nothing is generated, `candidateCapHit` is true, and every number that is not a direct match is `unknown` with reason `candidate-cap`: never traced, and never called untraced, because the search was not complete. Narrow the evidence or the derivation list, or raise the cap.
-- Many candidates make coincidences likely. A derived status says "this number can be built from two evidence numbers", not "the model built it that way". Look at `derivation.operands` and `matches`.
+- Many candidates make coincidences likely, so there is a guard. `derivation.matches` counts how many candidates produce the displayed value (its rounding window). When that is more than `maxDerivationMatches` (default 3), the status is `unknown` with reason `derivation-too-likely`: with that many ways to build the number, a match says little. On evidence with a hundred numbers, random wrong percents are often buildable; the guard turns most of those from `derived` into `unknown`. A second test looks at crowding: `maxDerivationDensity` (default 0.5) is the average number of candidates per displayed value within 25 units of the last digit, which is roughly the chance that a random wrong number lands on a candidate. At or above it the status is also `unknown`. On dense pages this is the test that does the work. Raise either limit only if you accept looser matches.
+- A number whose only doubt is thousands-versus-decimal (`1.250`) still takes part in a derivation, with its primary reading.
+- Evidence tables that list the later period first (newest first) read a percent change against the order of mention; set `evidenceOrder: 'newest-first'` so that the direction rule follows the table.
 
 For a table of many rows and a printed total, use `reconcile`; it is exact and not limited to pairs.
 
@@ -145,7 +166,14 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 | `locale` | `en-US` | locale of the output text |
 | `evidenceLocale` | same as `locale` | locale of the evidence text |
 | `parenthesesAreNegative` | `true` | read `(1,234)` as negative |
-| `derivations` | none | any of `sum`, `difference`, `ratio`, `percent-change`, `percent-of` |
+| `preset` | `strict` | `strict` or `report`; the other options override it |
+| `derivations` | none | any of `sum`, `difference`, `ratio`, `percent-change`, `percent-of`, `average`, `product` |
+| `maxDerivationMatches` | `3` | a derived number buildable in more ways than this is `unknown` (`derivation-too-likely`) |
+| `maxDerivationDensity` | `0.5` | a derived number whose neighborhood has this many candidates per displayed value, or more, is `unknown` (`derivation-too-likely`) |
+| `roundSums` | `false` | let `sum` and `difference` match after display rounding |
+| `evidenceOrder` | `oldest-first` | `newest-first` for tables that list the later period first |
+| `evidenceScale`, `evidenceCurrency` | none | scale (`thousand`, `million`, `billion`, `trillion` or an exponent of ten) and currency code of the bare numbers in string evidence; a document can set its own `scale` and `currency` |
+| `allowBareOutput` | `false` | let a bare output number match an evidence amount that has a currency (`5,829 million` against `$5,829 million`), marked `unitUnverified` |
 | `rounding` | `['half-up', 'half-even']` | accepted rounding modes; `[]` means exact matches only (exact derivations such as a sum still work) |
 | `maxOperands` | `2` | `2` or `3`: how many evidence numbers `sum`, `difference` and `average` may combine |
 | `maxCandidates` | `5000` | derivation search cap, 1 to 1,000,000; the triples count too, so `maxOperands: 3` usually needs a larger cap (about 100,000 for 40 numbers) |
@@ -157,7 +185,9 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 | `ignoreSmallIntegersUpTo` | off | skip unit-less whole numbers from 0 to this value |
 | `ignorePattern` | none | a `RegExp`; see below |
 
-`evidence` is one string, or an array whose items are `{ id, text }` documents and/or pre-extracted tokens (`NumberToken`, optionally with `evidenceId`). Tokens are validated; a malformed one is a `TypeError`.
+Scale and currency hints apply to the bare numbers of a document: counts and decimals with no unit, percent sign or magnitude of their own. Percents, years, dates and numbers like `$3 million` are left alone. `{ id: 'tbl', text: 'Revenue (in thousands)\n2019 | 5,735', scale: 'thousand', currency: 'USD' }` makes `5,735` read as `$5,735,000`, so `$5,735 thousand` traces and `$5.7 million` rounds from it. A table that prints `$` on its first row only is the same pattern with `currency: 'USD'`.
+
+`evidence` is one string, or an array whose items are `{ id, text, scale?, currency? }` documents and/or pre-extracted tokens (`NumberToken`, optionally with `evidenceId`). Tokens are validated; a malformed one is a `TypeError`.
 
 Common ignores: citation markers and reference numbers that are not claims. `ignorePattern: /\[\d+\]|Section \d/` skips `[3]` and `Section 4`; `ignoreSmallIntegersUpTo: 10` skips small unit-less counts; `ignoreYears: true` skips years.
 
@@ -172,7 +202,7 @@ reconcile({ rows: [{ label, amount }, ...], total, tolerance = '0' }, { minorUni
 reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '1250.50' })
 ```
 
-- A **string** amount is an exact decimal in major units (`"12.34"`): digits, optional sign, optional fraction. No spaces, separators, exponents or currency symbols.
+- A **string** amount is an exact decimal in major units, written plain (`"12.34"`) or as a report prints it: comma thousands in groups of exactly three (`"38,400"`), one currency sign (`$ € £ ¥ ₹`, `"$600.00"`), accounting parentheses (`"(557)"`) or a minus sign, and a leading decimal (`".5"`). Spaces, a decimal comma, other digit systems, exponents and misplaced commas are a `TypeError`.
 - An **integer `number` or `bigint`** is in minor units: `1234` is `12.34` at the default two minor-unit digits. Use `minorUnitDigits: 0` for currencies without a minor unit.
 - A **non-integer number, `NaN` or `Infinity`** is a `TypeError`: floats are not exact. `allowFloat: true` is the one escape hatch, and it changes the meaning of every JS `number` in the call to a major-unit decimal read from its shortest round-trip text (`0.1` is exactly `0.1`, `12` is `12`). Use it only when you cannot get strings.
 - The result is `{ ok, sum, total, difference, tolerance, rows }` with exact decimal strings. `difference` is `sum - total`; `ok` is `|difference| <= tolerance` (inclusive). Zero prints as `0`.
@@ -189,6 +219,11 @@ These came out of review and a combinatorial sweep, and are decided, not pending
 - `1.2.3-rc.1` and `v1.2.3+4` are versions; other hyphenated words after a number (`3.5-inch`) are not.
 - A percent sign written before the number (`%12`), number words, and digits outside the Basic Multilingual Plane are not read.
 - Rounding is half-up and half-even only; truncation is untraced.
+- An output with no numbers is `clean`: check `numbers.length` if you expect some. A letter-glued form the kit does not know as a unit (`10x4g`) is skipped, with no list of what was skipped.
+- A derivation is not scoped to a document, row or sentence: any two numbers of the same class in the evidence can combine. The coincidence guard (`maxDerivationMatches`, `maxDerivationDensity`) is the protection, and the cost is that some honest derived numbers on dense pages are `unknown`.
+- Derived values do not chain: a figure computed in the output and then used in a second computation is not an operand.
+- Operands of one derivation need the same class and unit. A table that prints `$` on its first row only needs the `currency` hint, not a mixed derivation.
+- The kit checks numbers, not sentences: right numbers in the wrong place, a direction flip (`rose` for `fell`) and swapped fields pass.
 
 ## What it does not do
 
