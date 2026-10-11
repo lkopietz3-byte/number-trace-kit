@@ -45,7 +45,7 @@ import type {
 
 const KINDS: readonly NumberKind[] = ['percent', 'currency', 'count', 'decimal', 'year', 'date-part', 'ordinal']
 const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long']
-const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of']
+const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average']
 const DATE_PARTS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 const MAX_LIST = 8
 const MAX_EVIDENCE_TOTAL = 50_000_000
@@ -219,6 +219,7 @@ interface Ctx {
   readonly derivations: ReadonlySet<Derivation>
   readonly modes: readonly RoundingMode[]
   readonly maxCandidates: number
+  readonly maxOperands: 2 | 3
   readonly signMode: SignMode
   readonly allowBare: boolean
   readonly ignoreRaw: ReadonlySet<string>
@@ -277,7 +278,7 @@ function readContext(options: unknown): Ctx {
   const o = readOptions(
     options,
     [
-      'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates',
+      'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates', 'maxOperands',
       'allowBareEvidence', 'signMode', 'ignore', 'ignoreKinds', 'ignoreYears', 'ignoreSmallIntegersUpTo', 'ignorePattern',
     ] as const,
     'traceNumbers',
@@ -305,6 +306,7 @@ function readContext(options: unknown): Ctx {
     modes = [...picked]
   }
   const maxCandidates = readInteger(o.maxCandidates, 'maxCandidates', 1, 1_000_000, DEFAULT_MAX_CANDIDATES)
+  const maxOperands = readInteger(o.maxOperands, 'maxOperands', 2, 3, 2) as 2 | 3
   const signMode = o.signMode === undefined ? 'explicit' : o.signMode
   if (signMode !== 'explicit' && signMode !== 'magnitude') throw new RangeError('signMode must be "explicit" or "magnitude".')
 
@@ -337,7 +339,7 @@ function readContext(options: unknown): Ctx {
     pattern = new RegExp(source, `${clean}g`)
   }
   return {
-    loc, evLoc, parenNeg, derivations, modes, maxCandidates, signMode, allowBare,
+    loc, evLoc, parenNeg, derivations, modes, maxCandidates, maxOperands, signMode, allowBare,
     ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, pattern,
   }
 }
@@ -501,8 +503,8 @@ interface Candidate {
   readonly keys: readonly Shape[]
   readonly abs: Rat
   readonly neg: boolean
-  readonly a: Ent
-  readonly b: Ent
+  /** The evidence numbers the value is built from, in evidence order. */
+  readonly operands: readonly Ent[]
   /** True when the operands are taken against the order the evidence mentions them. */
   readonly reversed: boolean
 }
@@ -629,7 +631,16 @@ class Matcher {
     if (d.has('ratio')) per += 2
     if (d.has('percent-change')) per += 2
     if (d.has('percent-of')) per += 2
-    const total = (m * (m - 1)) / 2 * per
+    if (d.has('average')) per += 1
+    // Three-operand candidates: a sum, a difference (each figure less the other two) and a mean.
+    let perTriple = 0
+    if (this.ctx.maxOperands === 3) {
+      if (d.has('sum')) perTriple += 1
+      if (d.has('difference')) perTriple += 3
+      if (d.has('average')) perTriple += 1
+    }
+    const triples = m >= 3 ? (m * (m - 1) * (m - 2)) / 6 : 0
+    const total = (m * (m - 1)) / 2 * per + triples * perTriple
     if (total > this.ctx.maxCandidates) {
       this.capHit = true
       return
@@ -638,9 +649,9 @@ class Matcher {
       const r = toRat(e.dec)
       return e.neg ? { p: -r.p, q: r.q } : r
     }
-    const push = (kind: Derivation, keys: Shape[], r: Rat, a: Ent, b: Ent, reversed = false): void => {
+    const push = (kind: Derivation, keys: Shape[], r: Rat, operands: Ent[], reversed = false): void => {
       const neg = r.p < 0n
-      this.candidates.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, a, b, reversed })
+      this.candidates.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed })
     }
     const HUNDRED: Rat = { p: 100n, q: 1n }
     for (let i = 0; i < m; i++) {
@@ -654,32 +665,33 @@ class Matcher {
         const b = signed(B)
         const own: Shape[] = [{ cls: A.cls, unit: A.unit }]
         if (same) {
-          if (d.has('sum')) push('sum', own, ratAdd(a, b), A, B)
+          if (d.has('sum')) push('sum', own, ratAdd(a, b), [A, B])
+          if (d.has('average')) push('average', own, ratDiv(ratAdd(a, b), { p: 2n, q: 1n }) ?? a, [A, B])
           if (d.has('difference')) {
             const keys = A.cls === 'pct' ? [{ cls: 'pct', unit: '' }, { cls: 'pp', unit: '' }] : own
-            push('difference', keys, ratSub(b, a), A, B)
-            push('difference', keys, ratSub(a, b), B, A, true)
+            push('difference', keys, ratSub(b, a), [A, B])
+            push('difference', keys, ratSub(a, b), [B, A], true)
           }
           if (d.has('ratio')) {
             const keys: Shape[] = [{ cls: 'ratio', unit: '' }, { cls: 'ratio', unit: 'x' }]
             const q1 = ratDiv(a, b)
             const q2 = ratDiv(b, a)
-            if (q1 !== null) push('ratio', keys, q1, A, B)
-            if (q2 !== null) push('ratio', keys, q2, B, A, true)
+            if (q1 !== null) push('ratio', keys, q1, [A, B])
+            if (q2 !== null) push('ratio', keys, q2, [B, A], true)
           }
           if (d.has('percent-change')) {
             const pct: Shape[] = [{ cls: 'pct', unit: '' }]
             const c1 = ratDiv(ratSub(b, a), a)
             const c2 = ratDiv(ratSub(a, b), b)
-            if (c1 !== null) push('percent-change', pct, ratMul(c1, HUNDRED), A, B)
-            if (c2 !== null) push('percent-change', pct, ratMul(c2, HUNDRED), B, A, true)
+            if (c1 !== null) push('percent-change', pct, ratMul(c1, HUNDRED), [A, B])
+            if (c2 !== null) push('percent-change', pct, ratMul(c2, HUNDRED), [B, A], true)
           }
           if (d.has('percent-of')) {
             const pct: Shape[] = [{ cls: 'pct', unit: '' }]
             const q1 = ratDiv(a, b)
             const q2 = ratDiv(b, a)
-            if (q1 !== null) push('percent-of', pct, ratMul(q1, HUNDRED), A, B)
-            if (q2 !== null) push('percent-of', pct, ratMul(q2, HUNDRED), B, A, true)
+            if (q1 !== null) push('percent-of', pct, ratMul(q1, HUNDRED), [A, B])
+            if (q2 !== null) push('percent-of', pct, ratMul(q2, HUNDRED), [B, A], true)
           }
         } else if (d.has('percent-of')) {
           // "7.5% of $200": a percent applied to an amount.
@@ -690,15 +702,40 @@ class Matcher {
               'percent-of',
               [{ cls: other.cls, unit: other.unit }],
               ratMul(ratDiv(signed(pctSide), HUNDRED) ?? { p: 0n, q: 1n }, signed(other)),
-              pctSide,
-              other,
+              [pctSide, other],
             )
           }
         }
       }
     }
+    if (perTriple > 0) {
+      for (let i = 0; i < m; i++) {
+        const A = ops[i]
+        if (A === undefined) continue
+        for (let j = i + 1; j < m; j++) {
+          const B = ops[j]
+          if (B === undefined || B.cls !== A.cls || B.unit !== A.unit) continue
+          for (let k = j + 1; k < m; k++) {
+            const C = ops[k]
+            if (C === undefined || C.cls !== A.cls || C.unit !== A.unit) continue
+            const a = signed(A)
+            const b = signed(B)
+            const c = signed(C)
+            const own: Shape[] = [{ cls: A.cls, unit: A.unit }]
+            if (d.has('sum')) push('sum', own, ratAdd(ratAdd(a, b), c), [A, B, C])
+            if (d.has('average')) push('average', own, ratDiv(ratAdd(ratAdd(a, b), c), { p: 3n, q: 1n }) ?? a, [A, B, C])
+            if (d.has('difference')) {
+              // Each figure less the other two. No figure is "earlier", so none is reversed.
+              const keys = A.cls === 'pct' ? [{ cls: 'pct', unit: '' }, { cls: 'pp', unit: '' }] : own
+              push('difference', keys, ratSub(ratSub(a, b), c), [A, B, C])
+              push('difference', keys, ratSub(ratSub(b, a), c), [B, A, C])
+              push('difference', keys, ratSub(ratSub(c, a), b), [C, A, B])
+            }
+          }
+        }
+      }
+    }
   }
-
   /**
    * Candidates indexed by (class, unit, sign, rounded value). Each key keeps a
    * count and the first candidate of each kind (in evidence order or
@@ -972,7 +1009,7 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
       if (hit.reversedOnly) return unknownTrace(tok, 'derivation-direction')
       const detail: DerivationDetail = {
         kind: hit.cand.kind,
-        operands: [hit.cand.a.ref, hit.cand.b.ref],
+        operands: hit.cand.operands.map((o) => o.ref),
         exact: hit.exact,
         matches: hit.matches,
         ...(hit.label !== undefined ? { rounding: hit.label } : {}),

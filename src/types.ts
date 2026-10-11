@@ -76,7 +76,7 @@ export interface ExtractOptions {
   readonly parenthesesAreNegative?: boolean
 }
 
-export type Derivation = 'sum' | 'difference' | 'ratio' | 'percent-change' | 'percent-of'
+export type Derivation = 'sum' | 'difference' | 'ratio' | 'percent-change' | 'percent-of' | 'average'
 export type RoundingMode = 'half-up' | 'half-even'
 
 /** A piece of evidence text with the id you want cited. */
@@ -104,6 +104,12 @@ export interface TraceOptions {
   readonly derivations?: readonly Derivation[]
   /** Rounding modes accepted when the output shows fewer decimals. Default both. */
   readonly rounding?: readonly RoundingMode[]
+  /**
+   * Most evidence numbers one derivation may combine: 2 (the default, pairs) or 3. At 3,
+   * `sum`, `difference` (one figure less the other two) and `average` also try every
+   * triple. The candidate cap counts the triples too.
+   */
+  readonly maxOperands?: 2 | 3
   /** Hard cap on derivation candidates for one call. Default 5000, maximum 1000000. */
   readonly maxCandidates?: number
   /**
