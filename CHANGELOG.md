@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derived and weak matches; an ambiguous date is `unknown` against the same
   values written as bare month, day or year; tokens whose ambiguity flags
   contradict each other are a `TypeError`.
+- Third review round (c9684f4): version identifiers are consumed whole, build
+  and prerelease suffixes included; a scientific exponent is never shared across
+  a range; derived numbers follow the one-sided unit policy; a shared magnitude
+  also scales alternate readings; `ignorePattern` must be a genuine RegExp
+  (checked through the built-in getters); the Kelvin and Angstrom signs read as
+  K and Å.
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.
