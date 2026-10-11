@@ -540,6 +540,8 @@ interface DerivedAgg {
   count: number
   /** Index: forward exact, forward rounded, reversed exact, reversed rounded. */
   slots: (DerivedSlot | undefined)[]
+  /** The first candidate that is exactly zero: zero has no sign to disagree about. */
+  zero?: DerivedSlot
 }
 
 class Matcher {
@@ -626,7 +628,8 @@ class Matcher {
       if (t.ambiguous || t.kind === 'date-part' || t.kind === 'year' || t.kind === 'ordinal') continue
       // Two occurrences of the same value can still add up (two rows of 7.5%);
       // a third adds nothing new, and repeats must not inflate the search.
-      const k = `${e.cls}\u0000${e.unit}\u0000${e.neg ? '-' : '+'}${e.key}`
+      // Zero is zero whatever sign it was written with.
+      const k = `${e.cls}\u0000${e.unit}\u0000${e.neg && e.key !== '0' ? '-' : '+'}${e.key}`
       const seenCount = seen.get(k) ?? 0
       if (seenCount >= 2) continue
       seen.set(k, seenCount + 1)
@@ -788,6 +791,7 @@ class Matcher {
           agg.count++
           const at = (cand.reversed ? 2 : 0) + (found.exact ? 0 : 1)
           agg.slots[at] ??= { cand, modes: found.modes, exact: found.exact }
+          if (cand.abs.p === 0n) agg.zero ??= { cand, modes: found.modes, exact: found.exact }
         }
       }
     }
@@ -821,9 +825,18 @@ class Matcher {
       let best: DerivedSlot | undefined
       let bestAt = 4
       for (const neg of [outNeg, !outNeg]) {
-        if (!signAllowed(tok, outNeg, neg, this.ctx.signMode)) continue
         const agg = idx.get(`${attempt.cls}\u0000${attempt.unit}\u0000${neg ? '-' : '+'}${mantissa.toString()}`)
         if (agg === undefined) continue
+        if (!signAllowed(tok, outNeg, neg, this.ctx.signMode)) {
+          // An exactly zero derivation matches whatever sign was written; a tiny value that only
+          // rounds to zero does not.
+          if (mantissa === 0n && agg.zero !== undefined && bestAt > 0) {
+            count += 1
+            best = agg.zero
+            bestAt = Math.min(bestAt, agg.zero.cand.reversed ? 2 : 0)
+          }
+          continue
+        }
         count += agg.count
         for (let k = 0; k < bestAt; k++) {
           const slot = agg.slots[k]
@@ -847,7 +860,7 @@ class Matcher {
       return {
         cand: best.cand, exact: best.exact, label, reversedOnly: best.cand.reversed, matches: count,
         unitUnverified: attempt.unverified,
-        signDiffers: best.cand.neg !== outNeg && !sameSignExists && mantissa !== 0n,
+        signDiffers: best.cand.neg !== outNeg && !sameSignExists && best.cand.abs.p !== 0n,
       }
     }
     return null
