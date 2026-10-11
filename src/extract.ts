@@ -985,7 +985,24 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     i = handle(i)
   }
 
-  function handle(i0: number): number {
+  /** True when a decimal mark at `m + 1` has nothing but a boundary before it: ".5", "$.99", "-.25". */
+  function leadingMarkBoundary(m: number, mark: number): boolean {
+    const c = at(m)
+    if (c === -1) return true
+    if (c === 0x20 || c === NBSP || c === 0x28) return true
+    if (mark === 0x2c) return false
+    return (
+      c === 0x5b || c === 0x7b || c === 0x3c || c === 0x3e || c === 0x22 || c === 0x27 || c === 0x2d || c === 0x2b ||
+      c === 0x3a || c === 0x3b || c === 0x3d || c === 0x2f || c === 0x2a || CURRENCY_SYMBOLS[c] !== undefined
+    )
+  }
+
+  function handle(d0: number): number {
+    // A decimal mark right before the digits, with nothing numeric before it, belongs to the number.
+    const mark = at(d0 - 1)
+    const lead = (mark === 0x2e || mark === 0x2c) && d0 - 1 >= floor && leadingMarkBoundary(d0 - 2, mark)
+    // `i0` is where the number's own text starts, the mark included.
+    const i0 = lead ? d0 - 1 : d0
     // ---- prefix: sign, currency, opening parenthesis --------------------------
     let signPos = -1
     let cur: { start: number; code: string } | null
@@ -1039,16 +1056,16 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
 
     // ---- dates, times, month names -----------------------------------------------
     if (cur === null && !signValid) {
-      const d = rangeDash < 0 ? tryDate(i0) : -1
+      const d = rangeDash < 0 && !lead ? tryDate(i0) : -1
       if (d >= 0) return d
-      const m = tryMonthName(i0)
+      const m = lead ? -1 : tryMonthName(i0)
       if (m >= 0) return m
     }
 
     // ---- the digit chain ----------------------------------------------------------
     const parts: number[] = []
     const seps: number[] = []
-    let p = i0
+    let p = d0
     for (;;) {
       const e = runEnd(p)
       parts.push(p, e)
@@ -1089,7 +1106,14 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       if (sub === undefined) continue
       const isFirst = ti === 0
       const isLast = ti === tokenCount - 1 && !chain.skippedRest
-      const digitsStart = parts[2 * sub.first] ?? i0
+      // ".5" is 0.5. When the chain is more than the one run (".5.3", ".5,000") the mark is
+      // kept as a guess instead of being dropped.
+      const leadSingle = lead && isFirst && parts.length === 2
+      if (leadSingle) {
+        sub.frac = sub.int
+        sub.int = '0'
+      }
+      const digitsStart = parts[2 * sub.first] ?? d0
       const digitsEnd = parts[2 * sub.last + 1] ?? chainEnd
       let tokStart = digitsStart
       let tokEnd = digitsEnd
@@ -1196,6 +1220,12 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         tok.ambiguity = ambiguity
         if (alternates.length > 0) tok.alternates = alternates
       }
+      const leadGuess = lead && isFirst && (mark !== info.decimal || !leadSingle)
+      if (leadGuess && ambiguity !== 'too-long' && ambiguity !== 'superscript') {
+        tok.ambiguous = true
+        tok.ambiguity = tok.ambiguity ?? 'separator'
+        tok.localeGuess = true
+      }
       if (sub.ambiguity === 'separator' && sub.alt === undefined && ambiguity !== 'too-long' && ambiguity !== 'superscript') {
         // The separator does not fit the locale: the reading is a guess, whatever else is later added.
         tok.localeGuess = true
@@ -1274,6 +1304,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         m.alternates = [...(m.alternates ?? []), { value: decimalString(inf.neg, inf.int, inf.frac, 0), scale: inf.frac.length }]
       }
     }
+    // Anything that now has a unit, a currency, a percent sign or a magnitude is not a year.
+    if (m.kind === 'year' && (m.unit !== undefined || (inf !== undefined && inf.exp !== 0))) m.kind = 'count'
     if (g.kind === 'range' && g.currency !== undefined && m.ambiguity === 'suffix') {
       // Money settles what a bare magnitude letter meant.
       m.ambiguous = false
