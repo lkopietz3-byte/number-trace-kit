@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   locales; same-class `percent-of`; sparse arrays no longer read inherited
   items; combining marks stay with their letter; slash chains are one group;
   supplied tokens obey the 60-digit policy.
+- Second review round (edc9c99): slash chains and Indian grouping are scanned
+  once (were quadratic); units survive magnitude words (`1 million kg`); a
+  date-shaped tail cannot escape a slash chain; a sign, magnitude, percent,
+  currency or unit written on one end of a range, or one side of a dimension
+  (`3 x 4 cm`), reaches every member; ranges also join with a spaced en dash
+  and "to", and date ranges share their month; `x` before a number is a
+  multiplication sign, not a unit; `allowBareEvidence` applies to rounded,
+  derived and weak matches; an ambiguous date is `unknown` against the same
+  values written as bare month, day or year; tokens whose ambiguity flags
+  contradict each other are a `TypeError`.
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.

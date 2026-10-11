@@ -53,7 +53,7 @@ A number in the output is compared to the numbers extracted from the evidence, i
 
 1. **Ignored.** If the number is covered by one of your ignore options (see Options), its status is `ignored` and nothing else is checked. Nothing is ignored by default.
 2. **Cannot be compared.** A number glued to a superscript or an inline exponent (`10²`, `10^6`) or longer than 60 digits is `unknown`.
-3. **Dates and times** are compared part by part (year, month, day, hour, minute, second). A part matches an evidence part with the same value and the same role. A numeric date whose day and month cannot be told apart (`10/12/2026` when both are 12 or below and different) has no roles; it traces only to evidence that writes the same date text, and is `unknown` if the same values appear any other way.
+3. **Dates and times** are compared part by part (year, month, day, hour, minute, second). A part matches an evidence part with the same value and the same role. A numeric date whose day and month cannot be told apart (`10/12/2026` when both are 12 or below and different) has no roles; it traces only to evidence that writes the same date text, and is `unknown` if the same values appear any other way (another date, or a bare month, day or year).
 4. **Traced.** Same class and the same exact value after normalization (see Normalization). Classes are: percent (`%`), percentage points (`pp`), currency (one class per currency code), and plain numbers (counts, decimals, years, ordinals). A percent never matches a plain number or an amount; `$45` never matches `45 EUR`.
 5. **Rounded.** The evidence is more precise than the output, and rounding the evidence value to the number of decimals the output shows gives the output value. The result says which rule produced the match: `half-up` (a tie goes away from zero), `half-even` (a tie goes to the even neighbor) or `either` (not a tie, both agree). `12.34%` rounds to `12.3%` and `12%`, never to `13%`. A magnitude counts as precision: `1.2 million` is precise to the nearest 100,000, so it matches `1,234,567` but not `1,350,000`.
 6. **Derived.** Only for the derivations you list in `options.derivations` (none by default), and only pairwise: two evidence numbers of the same class and unit, one operation. See Derivations.
@@ -67,11 +67,12 @@ A number in the output is compared to the numbers extracted from the evidence, i
 - `1.2 million`, `1.2M` after a currency symbol, `$3.4M`, `5 bn` and `7 thousand` are scaled exactly (`1200000`).
 - Currency: `$` is read as USD (the symbol is also used for other dollars; use `US$`, `CA$`, `A$`, a code, or a word to be explicit). `USD 5`, `5 USD`, `$5`, `US$5` and `5 dollars` are the same amount. `¥` stays `¥`; it is not guessed to be JPY or CNY.
 - Percent: `45%`, `45 %`, `45 percent` and `45 per cent` are the same. `0.5 pp` and `0.5 percentage points` are percentage points, a different class from percent.
-- A range such as `10-12` is two numbers, and a unit written once covers both (`10-12%`, `$10-12`, `5-10 days`).
+- A range such as `10-12` is two numbers (written `10-12`, `10–12`, `10 – 12` or `10 to 12`), and what is written once covers all of them: a unit, a percent sign, a currency, a magnitude and its precision (`10-12%`, `$10-12`, `5-10 days`, `$1-2M`, `1.5-2.5 million`, `-5–-3%`). A date range shares its month (`Oct 5-7`, `5-7 October`). A hyphen with spaces around it is arithmetic, not a range.
+- A dimension such as `3 x 4 cm`, `3x4 cm` or `2 × 4` is two numbers with an operator between, and a unit written once covers both. A standalone multiple (`10 x faster`, `3x`) is a number with the unit `x`.
 - Signs: a leading `-`, `−` (U+2212) or `+` is an explicit sign. `(1,234)`, `($5)` and `(12.5%)` are negative when the number has a separator, a decimal, a currency or a percent sign; a bare `(2)` or `(2024)` is left alone. Turn parentheses off with `parenthesesAreNegative: false`.
 - Sign matching (`signMode: 'explicit'`, the default): an explicit sign in the output must agree with the evidence, so `-5%` does not trace to `5%`. An unsigned output may drop a sign the evidence has, and the result is marked `signDiffers`. `signMode: 'magnitude'` ignores signs entirely.
 - Units: a recognized measurement unit (`kg`, `km`, `days`, `hours`, `MB`, `x` and a short list of others, glued or as the next word, after any numeric form including `1.2e3 kg`) must agree when both sides have one. If only one side has a recognized unit, the number still traces and the result is marked `unitUnverified`. Words that are not in the list (`users`, `orders`) are not units.
-- `allowBareEvidence: true` lets a percent or amount in the output trace to an evidence number with no unit at all (a table cell that prints `1,234.50`), marked `unitUnverified`. Default off.
+- `allowBareEvidence: true` lets a percent or amount in the output match an evidence number with no unit at all (a table cell that prints `1,234.50`), marked `unitUnverified`. It applies on every path: exact, rounded, derived, and the weaker links that give `unknown`. Default off.
 - A year inside a date also vouches for a bare year elsewhere, and a bare year vouches for the year of a date.
 
 ### Ambiguity: never guessed
@@ -126,7 +127,7 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 - A lone surrogate is an ordinary non-digit.
 - Scientific notation (`1.5e3`) is read exactly and may carry a percent sign, currency or unit (`1e2%`, `1.2e3 kg`); an exponent over 30 is `too-long`, however many digits it has.
 - Combining marks stay with their letter, so `café3` is an identifier whether it is written precomposed or decomposed. A combining mark after a digit does not hide the digit.
-- Numbers handed in as pre-extracted tokens follow the same rules: a value over 60 digits is `too-long` whatever its flags say.
+- Numbers handed in as pre-extracted tokens follow the same rules: a value over 60 digits is `too-long` whatever its flags say, and a token whose `ambiguous` flag disagrees with its `ambiguity` reason (or that has alternates without being ambiguous) is a `TypeError`.
 
 ## Options
 

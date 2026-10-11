@@ -53,6 +53,15 @@ source entry is `src/index.ts`; the package export resolves to generated
   copied into a private global RegExp and tested only on a window around each
   number (at most 64 characters of the number, 32 before, 16 after). Empty
   matches advance by a whole code point under `u`/`v`.
+- **Groups share their modifiers.** A range, a dimension and a slash chain are
+  groups. What one member says (unit, percent sign, currency, magnitude and its
+  precision, the whole fraction text) applies to every member; a group is
+  re-applied only when it learns something new, so long chains stay linear.
+  Chain and grouping scans compute their boundaries once and never restart
+  from the next element.
+- **Every option applies on every path.** `allowBareEvidence`, `rounding`,
+  `signMode` and `derivations` are honored by the exact, rounded, derived and
+  weak (`unknown`) paths alike.
 - **Read once.** Option bags, evidence documents, tokens, rows and parts are
   read one time each into local snapshots; the snapshot is what is validated
   and used. Sparse arrays and `undefined` items are rejected; array length is
