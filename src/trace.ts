@@ -230,6 +230,14 @@ interface Ctx {
   readonly pattern: RegExp | null
 }
 
+/**
+ * Is the number written as negative? Zero keeps the sign it was written with, so
+ * "-0.00%" is negative and rounds from "-0.004%" and not from "0.004%".
+ */
+function writtenNegative(value: string, signStyle: NumberToken['signStyle']): boolean {
+  return isNegativeValue(value) || signStyle === 'minus' || signStyle === 'parentheses'
+}
+
 function numberToDecimalString(n: number): string {
   if (!Number.isFinite(n)) throw new RangeError('ignore: numbers must be finite.')
   const text = String(n)
@@ -418,7 +426,7 @@ function makeEnt(token: NumberToken, shape: Shape, value: string, scale: number,
   const dec = parseDecimal(value)
   const abs = dec.n < 0n ? { n: -dec.n, s: dec.s } : dec
   return {
-    cls: shape.cls, unit: shape.unit, neg: isNegativeValue(value), key: absKey(value), dec: abs, scale,
+    cls: shape.cls, unit: shape.unit, neg: writtenNegative(value, token.signStyle), key: absKey(value), dec: abs, scale,
     ref: refOf(id, token), token,
   }
 }
@@ -518,6 +526,8 @@ interface DerivedHit {
   readonly matches: number
   /** The unit is present on only one side. */
   readonly unitUnverified: boolean
+  /** The derivation's value has a sign the output does not show, and no derivation matches the output's sign. */
+  readonly signDiffers: boolean
 }
 
 interface DerivedSlot {
@@ -833,9 +843,11 @@ class Matcher {
           : best.modes.has('half-up')
             ? 'half-up'
             : 'half-even'
+      const sameSignExists = idx.has(`${attempt.cls}\u0000${attempt.unit}\u0000${outNeg ? '-' : '+'}${mantissa.toString()}`)
       return {
         cand: best.cand, exact: best.exact, label, reversedOnly: best.cand.reversed, matches: count,
         unitUnverified: attempt.unverified,
+        signDiffers: best.cand.neg !== outNeg && !sameSignExists && mantissa !== 0n,
       }
     }
     return null
@@ -961,7 +973,7 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
 
   const shape = shapeOf(tok)
   const dec = parseDecimal(tok.value)
-  const outNeg = isNegativeValue(tok.value)
+  const outNeg = writtenNegative(tok.value, tok.signStyle)
   const key = absKey(tok.value)
   const mantissa = mantissaAt(dec.n < 0n ? { n: -dec.n, s: dec.s } : dec, tok.scale)
   if (mantissa === null) return unknownTrace(tok, 'unrepresentable')
@@ -974,7 +986,8 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   // The number as written, and (with allowBareEvidence) as a unit-less number.
   const variants: Variant[] = [{ shape, bare: false }]
   if (ctx.allowBare && shape.cls !== 'plain') variants.push({ shape: BARE_SHAPE, bare: true })
-  const allow = (e: Ent): boolean => signAllowed(tok, outNeg, e.neg, ctx.signMode)
+  // An exact zero has no sign to disagree about.
+  const allow = (e: Ent): boolean => key === '0' || signAllowed(tok, outNeg, e.neg, ctx.signMode)
 
   if (weakPrimary(tok)) {
     if (
@@ -1014,7 +1027,7 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
         matches: hit.matches,
         ...(hit.label !== undefined ? { rounding: hit.label } : {}),
       }
-      return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.bare || hit.unitUnverified ? { unitUnverified: true as const } : {}) }
+      return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.bare || hit.unitUnverified ? { unitUnverified: true as const } : {}), ...(hit.signDiffers ? { signDiffers: true as const } : {}) }
     }
   }
 
@@ -1053,7 +1066,7 @@ function linksVia(
   matcher: Matcher,
   ctx: Ctx,
 ): boolean {
-  const allow = (e: Ent): boolean => signAllowed(tok, outNeg, e.neg, ctx.signMode)
+  const allow = (e: Ent): boolean => key === '0' || signAllowed(tok, outNeg, e.neg, ctx.signMode)
   for (const v of variants) {
     for (const src of sources) {
       if (lookup(src === 'strong' ? ev.strong : ev.weak, v.shape, outNeg, key, v.bare).some(allow)) return true
@@ -1092,7 +1105,7 @@ function alternateLinks(
     const d = parseDecimal(alt.value)
     const altMantissa = mantissaAt(d.n < 0n ? { n: -d.n, s: d.s } : d, alt.scale)
     if (altMantissa === null) continue
-    const altNeg = isNegativeValue(alt.value)
+    const altNeg = writtenNegative(alt.value, tok.signStyle)
     if (linksVia(tok, alt.scale, altNeg, altMantissa, absKey(alt.value), ['strong', 'weak'], true, variants, ev, matcher, ctx)) return true
   }
   return false
@@ -1109,7 +1122,7 @@ function matched(
   const ordered = [...ents.filter((e) => e.neg === outNeg), ...ents.filter((e) => e.neg !== outNeg)]
   const first = ordered[0]
   const best = first === undefined ? [] : ordered.filter((e) => e.neg === first.neg)
-  const signDiffers = first !== undefined && first.neg !== outNeg
+  const signDiffers = first !== undefined && first.neg !== outNeg && first.key !== '0'
   const shape = shapeOf(tok)
   const unitUnverified = bare || (best.length > 0 && shape.cls === 'plain' && best.every((e) => e.unit !== shape.unit))
   return {
