@@ -10,19 +10,77 @@ import type {
 
 const FLOAT_WITH_EXPONENT = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/
 
+const CURRENCY_SIGNS = new Set(['$', '\u20ac', '\u00a3', '\u00a5', '\u20b9'])
+
+/**
+ * An amount as a report prints it: an optional minus or plus, an optional currency sign, digits
+ * with comma thousands groups (exactly three digits per group) and an optional decimal part, all
+ * of it optionally inside accounting parentheses. "38,400", "$600.00", "(557)", "-$557.50",
+ * ".5". Anything it cannot read exactly (a comma in the wrong place, a decimal comma,
+ * spaces, an exponent, other digit systems) is null.
+ */
+function parsePrinted(text: string): Dec | null {
+  if (text.length === 0 || text.length > 120) return null
+  let s = text
+  let negative = false
+  if (s.startsWith('(') && s.endsWith(')')) {
+    negative = true
+    s = s.slice(1, -1)
+  }
+  const sign = (): boolean => {
+    const c = s[0]
+    if (c === '-' || c === '\u2212') {
+      if (negative) return false
+      negative = true
+      s = s.slice(1)
+    } else if (c === '+') {
+      s = s.slice(1)
+    }
+    return true
+  }
+  if (!sign()) return null
+  if (s.length > 0 && CURRENCY_SIGNS.has(s[0] ?? '')) {
+    s = s.slice(1)
+    const before = negative
+    if (!sign() || (before && negative !== before)) return null
+  }
+  const dot = s.indexOf('.')
+  const whole = dot < 0 ? s : s.slice(0, dot)
+  const fraction = dot < 0 ? '' : s.slice(dot + 1)
+  if (dot >= 0 && fraction.length === 0) return null
+  if (!/^[0-9]*$/.test(fraction)) return null
+  let digits: string
+  if (whole.includes(',')) {
+    const groups = whole.split(',')
+    const first = groups[0] ?? ''
+    if (first.length < 1 || first.length > 3 || !/^[0-9]+$/.test(first)) return null
+    for (const g of groups.slice(1)) if (g.length !== 3 || !/^[0-9]{3}$/.test(g)) return null
+    digits = groups.join('')
+  } else {
+    if (!/^[0-9]*$/.test(whole)) return null
+    digits = whole
+  }
+  if (digits === '' && fraction === '') return null
+  return parseDecimal(`${negative ? '-' : ''}${digits === '' ? '0' : digits}${fraction === '' ? '' : `.${fraction}`}`)
+}
+
 /**
  * Turn one caller amount into an exact decimal. Strings are major units
- * ("12.34"); integer numbers and bigints are minor units (1234 is 12.34 at two
+ * ("12.34", or as a report prints them: "38,400", "$600.00", "(557)"); integer numbers and bigints are minor units (1234 is 12.34 at two
  * minor-unit digits). A non-integer number is a TypeError unless `allowFloat`
  * is set, and then every number is read as a major-unit decimal through its
  * shortest round-trip text.
  */
 function readAmount(value: unknown, name: string, minorDigits: number, allowFloat: boolean): Dec {
   if (typeof value === 'string') {
-    if (!isDecimalString(value, 120)) {
-      throw new TypeError(`${name} must be an exact decimal string such as "12.34", got ${JSON.stringify(value.slice(0, 40))}.`)
+    if (isDecimalString(value, 120)) return parseDecimal(value)
+    const printed = parsePrinted(value)
+    if (printed === null) {
+      throw new TypeError(
+        `${name} must be an exact amount such as "12.34", "38,400", "$600.00" or "(557)", got ${JSON.stringify(value.slice(0, 40))}.`,
+      )
     }
-    return parseDecimal(value)
+    return printed
   }
   if (typeof value === 'bigint') return { n: value, s: minorDigits }
   if (typeof value === 'number') {
