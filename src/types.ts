@@ -53,6 +53,11 @@ export interface NumberToken {
   readonly signStyle?: SignStyle
   /** For `date-part` tokens: which part of the date or time this is, when known. */
   readonly part?: DatePart
+  /**
+   * The power of ten the text itself applies: 6 for `3 million` and `3.000000 million`, 3 for `4K`, -3 for `5e-3`.
+   * Absent when the number is written out. An evidence `scale` hint is never applied to a number that has one.
+   */
+  readonly magnitude?: number
   /** Written in parentheses ("(557)") but read as positive because it is a bare number; it may be an accounting negative. */
   readonly parenthesized?: true
   /** For date parts and fraction halves: the whole text this part came from, such as `10/12/2026` or `3/4`. */

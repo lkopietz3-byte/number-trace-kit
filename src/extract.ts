@@ -484,7 +484,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       const day = pushDate(i, end, v, 'day', undefined, end > e ? 'superscript' : undefined)
       day.range = 'end'
       lastOut.range = 'start'
-      if (dateCluster?.includes(lastOut) === true) dateCluster.push(day)
+      if (dateCluster !== null && dateCluster[dateCluster.length - 1] === lastOut) dateCluster.push(day)
       lastDateEnd = end
       return end
     }
@@ -1272,6 +1272,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       // ---- value ----------------------------------------------------------------------
       tok.value = decimalString(neg, sub.int, sub.frac, exp10)
       tok.scale = sub.frac.length - exp10
+      if (exp10 !== 0) tok.magnitude = exp10
       const alternates: Reading[] = []
       if (ambiguity !== 'too-long') {
         if (sub.alt !== undefined) {
@@ -1377,6 +1378,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     if (g.kind === 'range' && g.exp !== 0 && inf !== undefined && !inf.sci && inf.exp === 0 && m.ambiguity !== 'too-long' && m.ambiguity !== 'superscript') {
       m.value = decimalString(inf.neg, inf.int, inf.frac, g.exp)
       m.scale = inf.frac.length - g.exp
+      m.magnitude = g.exp
       inf.exp = g.exp
       if (m.alternates !== undefined) {
         // Other readings move with the primary: 1.234 or 1234, both in millions.

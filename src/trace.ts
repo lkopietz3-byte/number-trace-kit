@@ -196,6 +196,15 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
   const localeGuess = item['localeGuess']
   if (localeGuess !== undefined && localeGuess !== true) throw new TypeError(`${name}.localeGuess must be true when present.`)
   if (localeGuess === true && !ambiguous) throw new TypeError(`${name}: localeGuess needs ambiguous: true.`)
+  const parenthesized = item['parenthesized']
+  if (parenthesized !== undefined && parenthesized !== true) throw new TypeError(`${name}.parenthesized must be true when present.`)
+  if (parenthesized === true && (signStyle !== undefined || value.startsWith('-'))) {
+    throw new TypeError(`${name}: parenthesized is for a bare number read as positive; it cannot also be signed.`)
+  }
+  const magnitude = item['magnitude']
+  if (magnitude !== undefined && (typeof magnitude !== 'number' || !Number.isInteger(magnitude) || magnitude === 0 || magnitude < -400 || magnitude > 400)) {
+    throw new TypeError(`${name}.magnitude must be a non-zero integer.`)
+  }
   const evidenceId = readOptionalString(item['evidenceId'], `${name}.evidenceId`)
   const token: NumberToken = {
     raw, start, end, value, scale, kind: kind as NumberKind, ambiguous: ambiguous || tooLong,
@@ -204,6 +213,8 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
     ...(currency !== undefined ? { currency } : {}),
     ...(signStyle !== undefined ? { signStyle } : {}),
     ...(part !== undefined ? { part: part as NonNullable<NumberToken['part']> } : {}),
+    ...(parenthesized === true ? { parenthesized: true as const } : {}),
+    ...(magnitude !== undefined ? { magnitude } : {}),
     ...(groupRaw !== undefined ? { groupRaw } : {}),
     ...(range !== undefined ? { range } : {}),
     ...(localeGuess === true ? { localeGuess: true as const } : {}),
@@ -441,13 +452,13 @@ interface Evidence {
 function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
   const target = weak ? ev.weak : ev.strong
   for (const u of regKeys(ent.cls, ent.unit)) target.add(entKey(ent.cls, u, ent.neg, ent.key), ent)
+  // For allowBareOutput: a bare output number may match an amount in any currency.
+  if (ent.cls.startsWith('cur:')) target.add(entKey('curany', '', ent.neg, ent.key), ent)
   if (weak) {
     ev.weakAll.push(ent)
   } else {
     ev.all.push(ent)
     ev.byValue.add(ent.key, ent)
-    // For allowBareOutput: a bare output number may match an amount in any currency.
-    if (ent.cls.startsWith('cur:')) ev.strong.add(entKey('curany', '', ent.neg, ent.key), ent)
     // A bare "(557)" is read as positive but may be an accounting negative: it also answers to a minus sign.
     if (ent.token.parenthesized === true && !ent.neg) {
       for (const u of regKeys(ent.cls, ent.unit)) ev.strong.add(entKey(ent.cls, u, true, ent.key), { ...ent, neg: true })
@@ -512,22 +523,28 @@ function makeEnt(token: NumberToken, shape: Shape, value: string, scale: number,
 
 const DATE_LETTER: Readonly<Record<string, string>> = { year: 'y', month: 'm', day: 'd', hour: 'H', minute: 'M', second: 'S' }
 
+/** One whole date or time: its parts as strings such as `y2025|m6|d30`, and the tokens they were read from. */
+interface DateTuple {
+  readonly parts: readonly string[]
+  readonly tokens: readonly NumberToken[]
+}
+
 /**
  * The whole dates and times in a run of date-part tokens written together (one `groupRaw`):
- * one tuple per day (or one for the month, or for the time), as strings such as `y2025|m6|d30`.
+ * one tuple per day (or one for the month, or for the time).
  */
-function dateTuples(cluster: readonly NumberToken[]): string[][] {
-  const get = (part: string): string[] => cluster.filter((t) => t.part === part).map((t) => `${DATE_LETTER[part] ?? '?'}${absKey(t.value)}`)
+function dateTuples(cluster: readonly NumberToken[]): DateTuple[] {
+  const get = (part: string): NumberToken[] => cluster.filter((t) => t.part === part)
+  const letter = (t: NumberToken): string => `${DATE_LETTER[t.part ?? ''] ?? '?'}${absKey(t.value)}`
   const hours = get('hour')
   if (hours.length > 0) {
-    const tuple = [hours[0] ?? '', ...get('minute').slice(0, 1), ...get('second').slice(0, 1)]
-    return [tuple]
+    const used = [hours[0], ...get('minute').slice(0, 1), ...get('second').slice(0, 1)].filter((t): t is NumberToken => t !== undefined)
+    return [{ parts: used.map(letter), tokens: used }]
   }
-  const years = get('year').slice(0, 1)
-  const months = get('month').slice(0, 1)
+  const shared = [...get('year').slice(0, 1), ...get('month').slice(0, 1)]
   const days = get('day')
-  if (days.length > 0) return days.map((d) => [...years, ...months, d])
-  if (months.length > 0) return [[...years, ...months]]
+  if (days.length > 0) return days.map((d) => ({ parts: [...shared, d].map(letter), tokens: [...shared, d] }))
+  if (shared.some((t) => t.part === 'month')) return [{ parts: shared.map(letter), tokens: shared }]
   return []
 }
 
@@ -568,8 +585,13 @@ function addDateKeys(store: Map<string, EvidenceRef[]>, tuple: readonly string[]
 
 /** An evidence number with the document's declared scale and currency applied to a bare table cell. */
 function applyHints(token: NumberToken, exp: number, currency: string | undefined): NumberToken {
-  const bare = (token.kind === 'count' || token.kind === 'decimal') && token.unit === undefined && token.scale >= 0 && !weakPrimary(token)
-  if (!bare || (exp === 0 && currency === undefined)) return token
+  // Nothing is parsed for a token that is excluded, or for one that says its own magnitude (3 million, 4K, 5e-3).
+  if (exp === 0 && currency === undefined) return token
+  if (token.ambiguity === 'too-long' || token.ambiguity === 'superscript') return token
+  const bare =
+    (token.kind === 'count' || token.kind === 'decimal') && token.unit === undefined && token.scale >= 0 &&
+    token.magnitude === undefined && !weakPrimary(token)
+  if (!bare) return token
   const shift = (v: string): string => {
     const d = parseDecimal(v)
     return formatDec({ n: d.n * 10n ** BigInt(exp), s: d.s })
@@ -594,42 +616,86 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     }
     return text
   }
-  const feed = (tokens: readonly NumberToken[], id: string, exp = ctx.evScale, currency = ctx.evCurrency): void => {
+  const feed = (
+    tokens: readonly NumberToken[],
+    idOf: (t: NumberToken) => string,
+    text: string | null,
+    exp = ctx.evScale,
+    currency = ctx.evCurrency,
+  ): void => {
     for (const t of tokens) {
-      ingest(ev, applyHints(t, exp, currency), id)
+      ingest(ev, applyHints(t, exp, currency), idOf(t))
       count++
     }
     for (const cluster of dateClusters(tokens)) {
       // A date with a part that is itself in doubt (an exponent after the day) cannot vouch for a whole date.
       if (cluster.some((t) => t.ambiguous)) continue
       for (const tuple of dateTuples(cluster)) {
-        const first = cluster[0]
-        if (first !== undefined) addDateKeys(ev.dateKeys, tuple, refOf(id, first))
+        const first = tuple.tokens[0]
+        if (first === undefined) continue
+        // The reference covers the whole date: from its first part to its last.
+        let lo = first
+        let hi = first
+        for (const t of tuple.tokens) {
+          if (t.start < lo.start) lo = t
+          if (t.end > hi.end) hi = t
+        }
+        // Caller tokens carry no text; the group's own text is the date when the span covers it.
+        const written = first.groupRaw
+        const raw =
+          text !== null ? text.slice(lo.start, hi.end)
+          : lo === hi ? lo.raw
+          : written !== undefined && written.length === hi.end - lo.start ? written
+          : tuple.tokens.map((t) => t.raw).join(' ')
+        addDateKeys(ev.dateKeys, tuple.parts, { id: idOf(first), raw, start: lo.start, end: hi.end })
       }
     }
   }
   if (typeof evidence === 'string') {
-    feed(scan(takeText(evidence), ctx.evLoc, ctx.parenNeg, true), 'evidence')
+    const whole = takeText(evidence)
+    feed(scan(whole, ctx.evLoc, ctx.parenNeg, true), () => 'evidence', whole)
   } else {
     const items = snapshotArray(evidence, 'evidence')
+    // Tokens a caller extracted come one by one; the ones that follow each other in one
+    // document are fed together so a date written as several tokens is one date.
+    let batch: NumberToken[] = []
+    let batchIds = new Map<NumberToken, string>()
+    let batchDoc: string | undefined
+    const flush = (): void => {
+      if (batch.length > 0) {
+        const ids = batchIds
+        feed(batch, (t) => ids.get(t) ?? 'evidence', null)
+      }
+      batch = []
+      batchIds = new Map()
+      batchDoc = undefined
+    }
     items.forEach((item, index) => {
       if (!isRecord(item)) throw new TypeError(`evidence[${index}] must be a { id, text } object or a number token.`)
       const text = item['text']
       if (text !== undefined) {
+        flush()
         const id = readString(item['id'], `evidence[${index}].id`)
         const docScale = item['scale']
         const docCurrency = item['currency']
+        const body = takeText(readString(text, `evidence[${index}].text`))
         feed(
-          scan(takeText(readString(text, `evidence[${index}].text`)), ctx.evLoc, ctx.parenNeg, true),
-          id,
+          scan(body, ctx.evLoc, ctx.parenNeg, true),
+          () => id,
+          body,
           docScale === undefined ? ctx.evScale : scaleExponent(docScale, `evidence[${index}].scale`),
           docCurrency === undefined ? ctx.evCurrency : currencyCode(docCurrency, `evidence[${index}].currency`),
         )
       } else {
         const { token, evidenceId } = readToken(item, `evidence[${index}]`)
-        feed([token], evidenceId ?? `token:${index}`)
+        const prev = batch[batch.length - 1]
+        if (prev !== undefined && (batchDoc !== evidenceId || token.start < prev.end)) flush()
+        batchDoc = evidenceId
+        batch.push(token)
+        batchIds.set(token, evidenceId ?? `token:${index}`)
       }
     })
+    flush()
   }
   return { ...ev, count }
 }
@@ -679,6 +745,8 @@ interface Candidate {
   readonly operands: readonly Ent[]
   /** True when the operands are taken against the order the evidence mentions them. */
   readonly reversed: boolean
+  /** The value depends on which operand came first (a change, a ratio). Sums, products and averages do not. */
+  readonly ordered: boolean
 }
 
 interface DerivedHit {
@@ -832,9 +900,10 @@ class Matcher {
       const r = toRat(e.dec)
       return e.neg ? { p: -r.p, q: r.q } : r
     }
-    const push = (kind: Derivation, keys: Shape[], r: Rat, operands: Ent[], reversed = false): void => {
+    // `reversed` is given only for derivations whose value depends on the order of the operands.
+    const push = (kind: Derivation, keys: Shape[], r: Rat, operands: Ent[], reversed?: boolean): void => {
       const neg = r.p < 0n
-      this.candidates.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed })
+      this.candidates.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed: reversed === true, ordered: reversed !== undefined })
     }
     const HUNDRED: Rat = { p: 100n, q: 1n }
     for (let i = 0; i < m; i++) {
@@ -853,28 +922,28 @@ class Matcher {
           if (d.has('product') && A.cls === 'plain' && A.unit === '') push('product', own, ratMul(a, b), [A, B])
           if (d.has('difference')) {
             const keys = A.cls === 'pct' ? [{ cls: 'pct', unit: '' }, { cls: 'pp', unit: '' }] : own
-            push('difference', keys, ratSub(b, a), [A, B])
+            push('difference', keys, ratSub(b, a), [A, B], false)
             push('difference', keys, ratSub(a, b), [B, A], true)
           }
           if (d.has('ratio')) {
             const keys: Shape[] = [{ cls: 'ratio', unit: '' }, { cls: 'ratio', unit: 'x' }]
             const q1 = ratDiv(a, b)
             const q2 = ratDiv(b, a)
-            if (q1 !== null) push('ratio', keys, q1, [A, B])
+            if (q1 !== null) push('ratio', keys, q1, [A, B], false)
             if (q2 !== null) push('ratio', keys, q2, [B, A], true)
           }
           if (d.has('percent-change')) {
             const pct: Shape[] = [{ cls: 'pct', unit: '' }]
             const c1 = ratDiv(ratSub(b, a), a)
             const c2 = ratDiv(ratSub(a, b), b)
-            if (c1 !== null) push('percent-change', pct, ratMul(c1, HUNDRED), [A, B])
+            if (c1 !== null) push('percent-change', pct, ratMul(c1, HUNDRED), [A, B], false)
             if (c2 !== null) push('percent-change', pct, ratMul(c2, HUNDRED), [B, A], true)
           }
           if (d.has('percent-of')) {
             const pct: Shape[] = [{ cls: 'pct', unit: '' }]
             const q1 = ratDiv(a, b)
             const q2 = ratDiv(b, a)
-            if (q1 !== null) push('percent-of', pct, ratMul(q1, HUNDRED), [A, B])
+            if (q1 !== null) push('percent-of', pct, ratMul(q1, HUNDRED), [A, B], false)
             if (q2 !== null) push('percent-of', pct, ratMul(q2, HUNDRED), [B, A], true)
           }
         } else if (d.has('product') && (isCount(A) || isCount(B)) && A.cls !== 'pct' && A.cls !== 'pp' && B.cls !== 'pct' && B.cls !== 'pp') {
@@ -956,6 +1025,8 @@ class Matcher {
         for (const k of cand.keys) {
           filed.push(k)
           if (k.cls === 'plain') filed.push({ cls: 'plain', unit: '*' })
+          // allowBareOutput: a bare output number may match an amount in any currency.
+          if (k.cls.startsWith('cur:')) filed.push({ cls: 'curany', unit: '' })
         }
         for (const k of filed) {
           const key = `${k.cls}\u0000${k.unit}\u0000${cand.neg ? '-' : '+'}${m}`
@@ -965,7 +1036,7 @@ class Matcher {
             idx.set(key, agg)
           }
           agg.count++
-          const at = (cand.reversed !== this.ctx.newestFirst ? 2 : 0) + (found.exact ? 0 : 1)
+          const at = (this.against(cand) ? 2 : 0) + (found.exact ? 0 : 1)
           agg.slots[at] ??= { cand, modes: found.modes, exact: found.exact }
           if (cand.abs.p === 0n) agg.zero ??= { cand, modes: found.modes, exact: found.exact }
         }
@@ -985,6 +1056,11 @@ class Matcher {
    * per distinct displayed value within 25 units of the last digit on either side. A random
    * wrong number lands on a candidate with about this probability.
    */
+  /** The candidate takes its operands against the order the caller says the evidence is in. */
+  private against(cand: Candidate): boolean {
+    return cand.ordered && cand.reversed !== this.ctx.newestFirst
+  }
+
   private density(idx: Map<string, DerivedAgg>, cls: string, unit: string, mantissa: bigint): number {
     const K = 25n
     let total = 0
@@ -1025,7 +1101,7 @@ class Matcher {
           if (mantissa === 0n && agg.zero !== undefined && bestAt > 0) {
             count += 1
             best = agg.zero
-            bestAt = Math.min(bestAt, agg.zero.cand.reversed !== this.ctx.newestFirst ? 2 : 0)
+            bestAt = Math.min(bestAt, this.against(agg.zero.cand) ? 2 : 0)
           }
           continue
         }
@@ -1050,7 +1126,7 @@ class Matcher {
             : 'half-even'
       const sameSignExists = idx.has(`${attempt.cls}\u0000${attempt.unit}\u0000${outNeg ? '-' : '+'}${mantissa.toString()}`)
       return {
-        cand: best.cand, exact: best.exact, label, reversedOnly: best.cand.reversed !== this.ctx.newestFirst, matches: count,
+        cand: best.cand, exact: best.exact, label, reversedOnly: this.against(best.cand), matches: count,
         unitUnverified: attempt.unverified,
         signDiffers: best.cand.neg !== outNeg && !sameSignExists && best.cand.abs.p !== 0n,
         density: this.density(idx, attempt.cls, attempt.unit, mantissa),
@@ -1150,7 +1226,10 @@ export function traceNumbers(
   const matcher = new Matcher(ev, ctx)
   const dates = new Map<NumberToken, DateInfo>()
   for (const cluster of dateClusters(tokens)) {
-    const info: DateInfo = { tuples: dateTuples(cluster), ok: undefined }
+    const tuples = dateTuples(cluster)
+    const owner = new Map<NumberToken, DateTuple>()
+    for (const tuple of tuples) for (const t of tuple.tokens) if (!owner.has(t)) owner.set(t, tuple)
+    const info: DateInfo = { tuples, owner, ok: undefined }
     for (const t of cluster) dates.set(t, info)
   }
   const numbers: NumberTrace[] = []
@@ -1177,7 +1256,9 @@ function unknownTrace(tok: NumberToken, reason: string): NumberTrace {
 
 /** The whole dates written in one run of date parts in the output, and whether the evidence has them all. */
 interface DateInfo {
-  readonly tuples: string[][]
+  readonly tuples: readonly DateTuple[]
+  /** The date each token belongs to (the first, for a month or year shared by several days). */
+  readonly owner: ReadonlyMap<NumberToken, DateTuple>
   ok: boolean | undefined
 }
 
@@ -1371,10 +1452,11 @@ function traceDate(tok: NumberToken, ev: Evidence, info: DateInfo | undefined): 
   if (tok.part !== undefined && info !== undefined && info.tuples.length > 0) {
     // A date traces as a whole date: day, month and year together. Its parts appearing in
     // other dates only weakly support it.
-    info.ok ??= info.tuples.every((t) => ev.dateKeys.has(tupleKey(t)))
+    info.ok ??= info.tuples.every((t) => ev.dateKeys.has(tupleKey(t.parts)))
     if (info.ok) {
-      const first = info.tuples[0]
-      return { token: tok, status: 'traced', evidence: (first === undefined ? [] : ev.dateKeys.get(tupleKey(first)) ?? []).slice(0, MAX_LIST) }
+      // The evidence dates that contain this token's own date, not the first date of the cluster.
+      const mine = info.owner.get(tok) ?? info.tuples[0]
+      return { token: tok, status: 'traced', evidence: (mine === undefined ? [] : ev.dateKeys.get(tupleKey(mine.parts)) ?? []).slice(0, MAX_LIST) }
     }
     const byParts = traceDateParts(tok, ev)
     return byParts.status === 'untraced' ? byParts : unknownTrace(tok, 'date-not-in-evidence')
