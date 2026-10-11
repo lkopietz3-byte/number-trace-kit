@@ -260,7 +260,22 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
   const f = fold(text)
   const out: Tok[] = []
   const idTokens: Tok[] = []
+  const fractionChains: Tok[][] = []
   let fractionChain: Tok[] = []
+  // What each number token was built from, so a magnitude found on one end of a range
+  // can be applied to the others.
+  const numInfo = new Map<Tok, { neg: boolean; int: string; frac: string; exp: number; loose: boolean }>()
+  interface Group {
+    kind: 'range' | 'dimension'
+    members: Tok[]
+    percent?: string
+    currency?: string
+    unit?: string
+    exp: number
+    loose: boolean
+  }
+  let rangeGroup: Group | null = null
+  let dimensionGroup: Group | null = null
   let floor = 0
   let lastMonth: { start: number; end: number } | null = null
   let lastDateEnd = -1
@@ -346,6 +361,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
 
   /** ISO dates, times of day and numeric D/M/Y dates. Returns the end index or -1. */
   const tryDate = (i: number): number => {
+    // The tail of a longer slash chain ("1/2/3/45") is part of that chain, not a date of its own.
+    if (at(i - 1) === 0x2f && isDigit(at(i - 2))) return -1
     const a = runEnd(i) - i
     if (a === 0 || a > 4) return -1
     const sep = at(i + a)
@@ -432,6 +449,21 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     // A digit run that continues as 1,234 or 1.5 is a number, not a date part.
     if ((at(e0) === 0x2c || at(e0) === 0x2e) && isDigit(at(e0 + 1))) return -1
     const v = Number(slice(i, e0))
+    // "Oct 5-7": the second day of a range inside one date.
+    const lastOut = out[out.length - 1]
+    if (
+      lastOut !== undefined && lastOut.part === 'day' && lastDateEnd === lastOut.end && a <= 2 && v >= 1 && v <= 31 &&
+      rangeGap(lastOut.end, i)
+    ) {
+      let e = e0
+      const suf = ordinalSuffixAt(e)
+      if (suf > 0) e += suf
+      const day = pushDate(i, e, v, 'day', undefined)
+      day.range = 'end'
+      lastOut.range = 'start'
+      lastDateEnd = e
+      return e
+    }
     const before = monthWordBefore(i)
     if (before !== null) {
       if (a <= 2 && v >= 1 && v <= 31) {
@@ -468,7 +500,19 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         if ((at(p) === 0x6f || at(p) === 0x4f) && (at(p + 1) === 0x66 || at(p + 1) === 0x46) && at(p + 2) === 0x20) p += 3
         const w = monthWordAt(p)
         if (w !== null) {
-          pushDate(i, e, v, 'day', undefined)
+          // "5-7 October": the first day of a range was read as a plain number before the month appeared.
+          const first = out[out.length - 1]
+          if (
+            first !== undefined && first.kind === 'count' && first.unit === undefined && !first.ambiguous &&
+            first.signStyle === undefined && rangeGap(first.end, i) &&
+            Number(first.value) >= 1 && Number(first.value) <= 31
+          ) {
+            first.kind = 'date-part'
+            first.part = 'day'
+            first.range = 'start'
+          }
+          const day = pushDate(i, e, v, 'day', undefined)
+          if (first?.part === 'day' && first.range === 'start') day.range = 'end'
           pushMonth(p, w.end, w.month)
           lastDateEnd = w.end
           return w.end
@@ -500,6 +544,30 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     let q = p
     while (q < n && q - p <= max && (isLetter(at(q)) || (q > p && isMark(at(q))))) q++
     return slice(p, q)
+  }
+
+  /** True when only a range separator ("-", "\u2013", " \u2013 ", " to ") lies between `end` and `start`. */
+  const rangeGap = (end: number, start: number): boolean => {
+    const gap = start - end
+    const g0 = at(end)
+    if (gap === 1) return g0 === 0x2d || g0 === 0x2013
+    if (gap === 3) return g0 === 0x20 && at(end + 1) === 0x2013 && at(end + 2) === 0x20
+    return gap === 4 && g0 === 0x20 && (at(end + 1) | 0x20) === 0x74 && (at(end + 2) | 0x20) === 0x6f && at(end + 3) === 0x20
+  }
+
+  /**
+   * The previous number when only an x, X or \u00d7 (and spaces) separates it from `pos`:
+   * "3 x 4", "3x4", "2 \u00d7 4".
+   */
+  const operatorBefore = (pos: number): Tok | undefined => {
+    let j = pos - 1
+    for (let guard = 0; guard < 8 && (at(j) === 0x20 || at(j) === NBSP); guard++) j--
+    const c = at(j)
+    if (c !== 0x78 && c !== 0x58 && c !== 0xd7) return undefined
+    j--
+    for (let guard = 0; guard < 8 && (at(j) === 0x20 || at(j) === NBSP); guard++) j--
+    const prev = lastPlain()
+    return prev !== undefined && prev.end === j + 1 ? prev : undefined
   }
 
   /** True when the character at k is a Latin letter, or a mark on one. */
@@ -567,7 +635,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
 
   const isSignCode = (c: number): boolean => c === 0x2d || c === 0x2b
 
-  const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean): Suffix => {
+  const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean): Suffix => {
     const sfx: Suffix = {
       end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, tooLong: false,
     }
@@ -623,6 +691,10 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     if (isLetter(at(p))) {
       const w = readWord(p, 16)
       const we = p + w.length
+      if ((w === 'x' || w === 'X') && isDigit(at(we)) && !isZero) {
+        // 3x4: a multiplication sign, so the 3 has no suffix.
+        return sfx
+      }
       if (w.length > 16 || isDigit(at(we)) || isLetter(at(we))) {
         sfx.skipTo = skipIdentifier(we)
         return sfx
@@ -726,8 +798,9 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         sfx.currency = currency
         return we
       }
+      if ((w === 'x' || w === 'X') && startsNumber(we)) return -1
       const unit = own(SPACED_UNITS, lower) ?? own(GLUED_UNITS, w)
-      if (unit !== undefined && !magnitudeRead) {
+      if (unit !== undefined) {
         sfx.unit = unit
         return we
       }
@@ -776,6 +849,21 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     const partEnd = (k: number): number => parts[2 * k + 1] ?? 0
     const partLen = (k: number): number => partEnd(k) - partStart(k)
     const D = info.decimal
+    // For Indian grouping: the first index at or after q that is not a two-digit group
+    // joined by a comma. Built once per chain so a long run of pairs is not rescanned.
+    let nextNonPair: Int32Array | null = null
+    const pairRunEnd = (q: number): number => {
+      if (nextNonPair === null) {
+        const table = new Int32Array(count + 1)
+        table[count] = count
+        for (let i = count - 1; i >= 0; i--) {
+          const isPair = i >= 1 && partLen(i) === 2 && seps[i - 1] === 0x2c
+          table[i] = isPair ? (table[i + 1] ?? count) : i
+        }
+        nextNonPair = table
+      }
+      return nextNonPair[q] ?? count
+    }
     let k = 0
     while (k < count) {
       const firstLen = partLen(k)
@@ -789,8 +877,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         e1 = p - 1
         if (info.indian && firstLen <= 2 && X === 0x2c) {
           // 12,34,567: pairs of digits, then a final group of three.
-          let q = k + 1
-          while (q < count && seps[q - 1] === X && partLen(q) === 2) q++
+          const q = pairRunEnd(k + 1)
           if (q > k + 1 && q < count && seps[q - 1] === X && partLen(q) === 3 && q > e1) e1 = q
         }
       }
@@ -868,20 +955,21 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     if (cur !== null) start = cur.start
     if (signValid && signPos < start) start = signPos
     // The dash that is not a sign: a range separator between two numbers.
+    // The second endpoint may carry its own sign ("-5\u2013-3%"), so this is decided apart from the sign.
     let rangeDash = -1
-    if (!signValid) {
-      const dc = at(start - 1)
+    {
+      // "10-12", "10\u201312", "10 \u2013 12" and "10 to 12" join two numbers into a range.
       const prev = lastPlain()
-      if ((dc === 0x2d || dc === 0x2013) && start - 1 >= floor && prev !== undefined && prev.end === start - 1) {
-        rangeDash = start - 1
-      }
+      if (prev !== undefined && prev.end >= floor && rangeGap(prev.end, start)) rangeDash = prev.end
     }
+    // "3 x 4", "3x4", "2 \u00d7 4": a multiplication sign between two numbers, not a letter glued on.
+    const timesPrev = operatorBefore(start)
 
     // ---- identifiers glued to the number ("X3", "v2.1", "COVID-19") ------------
     if (cur === null) {
       const before = at(i0 - 1)
       if (
-        (i0 - 1 >= floor && (letterAt(i0 - 1) || before === 0x5f)) ||
+        (i0 - 1 >= floor && ((letterAt(i0 - 1) && !(timesPrev !== undefined && (before === 0x78 || before === 0x58))) || before === 0x5f)) ||
         (i0 - 2 >= floor && before === 0x2d && isUpper(at(i0 - 2)))
       ) {
         const j = skipIdentifier(i0)
@@ -891,8 +979,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     }
 
     // ---- dates, times, month names -----------------------------------------------
-    if (cur === null && !signValid && rangeDash < 0) {
-      const d = tryDate(i0)
+    if (cur === null && !signValid) {
+      const d = rangeDash < 0 ? tryDate(i0) : -1
       if (d >= 0) return d
       const m = tryMonthName(i0)
       if (m >= 0) return m
@@ -963,7 +1051,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       let sfx: Suffix | undefined
       if (isLast) {
         const intDigits = sub.frac === ''
-        sfx = readSuffix(digitsEnd, hasPrefixCurrency, intDigits && sub.alt === undefined)
+        sfx = readSuffix(digitsEnd, hasPrefixCurrency, intDigits && sub.alt === undefined, sub.int === '0' && intDigits)
         if (sfx.skipTo >= 0) {
           // The number is glued to an identifier ("3D", "5G"): not a number at all.
           result = Math.max(sfx.skipTo, chainEnd)
@@ -1047,25 +1135,26 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         tok.ambiguity = ambiguity
         if (alternates.length > 0) tok.alternates = alternates
       }
+      numInfo.set(tok, { neg, int: sub.int, frac: sub.frac, exp: exp10, loose: sfx?.looseMagnitude === true })
       if (isFirst && rangeDash >= 0) {
         const prev = lastPlain()
-        if (prev !== undefined) linkRange(prev, tok, cur !== null)
+        if (prev !== undefined) joinGroup('range', prev, tok)
       }
+      if (isFirst && timesPrev !== undefined && rangeDash < 0) joinGroup('dimension', timesPrev, tok)
       if (isFirst && at(i0 - 1) === 0x2f && start === i0) {
         // 3/4: a fraction or a ratio, which this kit does not evaluate. Both parts are flagged.
         const prev = lastPlain()
         if (prev !== undefined && prev.end === i0 - 1) {
-          // 1/2/3 is one group: every member carries the whole slash chain.
-          const chain = fractionChain[fractionChain.length - 1] === prev ? fractionChain : [prev]
-          chain.push(tok)
-          fractionChain = chain
-          const first = chain[0]
-          const whole = first === undefined ? '' : slice(first.start, tok.end)
-          for (const t of chain) {
+          // 1/2/3 is one group: every member carries the whole slash chain, set once at the end.
+          if (fractionChain[fractionChain.length - 1] !== prev) {
+            fractionChain = [prev]
+            fractionChains.push(fractionChain)
+          }
+          fractionChain.push(tok)
+          for (const t of [prev, tok]) {
             if (!t.ambiguous || t.ambiguity === 'fraction') {
               t.ambiguous = true
               t.ambiguity = 'fraction'
-              t.groupRaw = whole
             }
           }
         }
@@ -1077,24 +1166,95 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     return result
   }
 
-  function linkRange(prev: Tok, tok: Tok, secondHasCurrencySymbol: boolean): void {
-    prev.range = 'start'
-    tok.range = 'end'
-    const plain = (t: Tok): boolean => t.kind === 'count' || t.kind === 'decimal' || t.kind === 'year'
-    if (tok.kind === 'percent' && plain(prev) && prev.unit === undefined) {
-      prev.kind = 'percent'
-      if (tok.unit !== undefined) prev.unit = tok.unit
-    } else if (tok.kind === 'currency' && plain(prev) && prev.unit === undefined) {
-      prev.kind = 'currency'
-      if (tok.currency !== undefined) prev.currency = tok.currency
-    } else if (prev.kind === 'currency' && plain(tok) && tok.unit === undefined && !secondHasCurrencySymbol) {
-      tok.kind = 'currency'
-      if (prev.currency !== undefined) tok.currency = prev.currency
-    } else if (tok.unit !== undefined && plain(prev) && prev.unit === undefined && tok.kind !== 'percent') {
-      prev.unit = tok.unit
+  function isPlainKind(t: Tok): boolean {
+    return t.kind === 'count' || t.kind === 'decimal' || t.kind === 'year'
+  }
+
+  /** Give a member what the rest of its group says: percent, currency, unit and magnitude. */
+  function applyGroup(g: Group, m: Tok): void {
+    if (isPlainKind(m) && m.unit === undefined) {
+      if (g.kind === 'range' && g.percent !== undefined) {
+        m.kind = 'percent'
+        m.unit = g.percent
+      } else if (g.kind === 'range' && g.currency !== undefined) {
+        m.kind = 'currency'
+        m.currency = g.currency
+      } else if (g.unit !== undefined) {
+        m.unit = g.unit
+      }
+    }
+    const inf = numInfo.get(m)
+    if (g.kind === 'range' && g.exp !== 0 && inf !== undefined && inf.exp === 0 && m.ambiguity !== 'too-long' && m.ambiguity !== 'superscript') {
+      m.value = decimalString(inf.neg, inf.int, inf.frac, g.exp)
+      m.scale = inf.frac.length - g.exp
+      inf.exp = g.exp
+      if (g.loose && g.currency === undefined && !m.ambiguous) {
+        m.ambiguous = true
+        m.ambiguity = 'suffix'
+        m.alternates = [{ value: decimalString(inf.neg, inf.int, inf.frac, 0), scale: inf.frac.length }]
+      }
+    }
+    if (g.kind === 'range' && g.currency !== undefined && m.ambiguity === 'suffix') {
+      // Money settles what a bare magnitude letter meant.
+      m.ambiguous = false
+      delete m.ambiguity
+      delete m.alternates
     }
   }
 
+  /**
+   * Put `tok` in the range ("10-12%") or dimension ("3 x 4 cm") that `prev` is part of.
+   * What one member says (a unit, a percent sign, a currency, a magnitude) is shared by
+   * all of them. A group is re-applied only when it learns something new, so a long
+   * chain costs linear time.
+   */
+  function joinGroup(kind: 'range' | 'dimension', prev: Tok, tok: Tok): void {
+    let g = kind === 'range' ? rangeGroup : dimensionGroup
+    if (g === null || g.members[g.members.length - 1] !== prev) {
+      g = { kind, members: [prev], exp: 0, loose: false }
+      if (kind === 'range') rangeGroup = g
+      else dimensionGroup = g
+      learn(g, prev)
+    }
+    g.members.push(tok)
+    if (kind === 'range') {
+      prev.range = 'start'
+      tok.range = 'end'
+    }
+    const changed = learn(g, tok)
+    if (changed) for (const m of g.members) applyGroup(g, m)
+    else applyGroup(g, tok)
+  }
+
+  /** Take what a member says into the group; true when the group learned something new. */
+  function learn(g: Group, m: Tok): boolean {
+    let changed = false
+    if (m.kind === 'percent' && g.percent === undefined && m.unit !== undefined) {
+      g.percent = m.unit
+      changed = true
+    } else if (m.kind === 'currency' && g.currency === undefined && m.currency !== undefined) {
+      g.currency = m.currency
+      changed = true
+    } else if (m.kind !== 'percent' && m.kind !== 'currency' && m.unit !== undefined && g.unit === undefined) {
+      g.unit = m.unit
+      changed = true
+    }
+    const inf = numInfo.get(m)
+    if (inf !== undefined && inf.exp !== 0 && g.exp === 0) {
+      g.exp = inf.exp
+      g.loose = inf.loose
+      changed = true
+    }
+    return changed && g.members.length > 1
+  }
+
+  for (const chain of fractionChains) {
+    const first = chain[0]
+    const last = chain[chain.length - 1]
+    if (first === undefined || last === undefined) continue
+    const whole = slice(first.start, last.end)
+    for (const t of chain) if (t.ambiguity === 'fraction') t.groupRaw = whole
+  }
   for (const t of out) Object.freeze(t)
   if (idTokens.length === 0) return out
   // Merge the identifier digits back in, in text order.
