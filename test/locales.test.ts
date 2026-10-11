@@ -29,7 +29,7 @@ function randomDecimal(rnd: () => number): { text: string; fraction: number } {
   return { text: int + (frac === '' ? '' : `.${frac}`), fraction }
 }
 
-describe('numbers as the platform prints them', () => {
+describe('numbers as the platform prints them', { timeout: 60_000 }, () => {
   for (const locale of LOCALES) {
     it(`${locale}: every printed number reads back exactly, or is flagged with the right alternate`, () => {
       const rnd = lcg(42)

@@ -63,14 +63,14 @@ A number in the output is compared to the numbers extracted from the evidence, i
 
 ### Normalization
 
-- Thousands separators and the decimal mark follow the locale (`en-US` by default). `1,234.50`, `1234.5` and `1 234,50` (French) are the same number when read in the right locale. Trailing fraction zeros do not matter for equality (`12.50` equals `12.5`) but do count as precision for rounding.
+- Thousands separators and the decimal mark follow the locale (`en-US` by default). `1,234.50`, `1234.5` and `1 234,50` (French) are the same number when read in the right locale. Under a comma-decimal locale an ordinary space also groups digits, but only as a short first group followed by groups of exactly three (`1 234`, `12 345 678`); `5 12` and `2024 123` stay two numbers. Under `en-US` an ordinary space never groups. Trailing fraction zeros do not matter for equality (`12.50` equals `12.5`) but do count as precision for rounding.
 - `1.2 million`, `1.2M` after a currency symbol, `$3.4M`, `5 bn` and `7 thousand` are scaled exactly (`1200000`).
 - Currency: `$` is read as USD (the symbol is also used for other dollars; use `US$`, `CA$`, `A$`, a code, or a word to be explicit). `USD 5`, `5 USD`, `$5`, `US$5` and `5 dollars` are the same amount. `¥` stays `¥`; it is not guessed to be JPY or CNY.
 - Percent: `45%`, `45 %`, `45 percent` and `45 per cent` are the same. `0.5 pp` and `0.5 percentage points` are percentage points, a different class from percent.
 - A range such as `10-12` is two numbers, and a unit written once covers both (`10-12%`, `$10-12`, `5-10 days`).
 - Signs: a leading `-`, `−` (U+2212) or `+` is an explicit sign. `(1,234)`, `($5)` and `(12.5%)` are negative when the number has a separator, a decimal, a currency or a percent sign; a bare `(2)` or `(2024)` is left alone. Turn parentheses off with `parenthesesAreNegative: false`.
 - Sign matching (`signMode: 'explicit'`, the default): an explicit sign in the output must agree with the evidence, so `-5%` does not trace to `5%`. An unsigned output may drop a sign the evidence has, and the result is marked `signDiffers`. `signMode: 'magnitude'` ignores signs entirely.
-- Units: a recognized measurement unit (`kg`, `km`, `days`, `hours`, `MB`, `x` and a short list of others, glued or as the next word) must agree when both sides have one. If only one side has a recognized unit, the number still traces and the result is marked `unitUnverified`. Words that are not in the list (`users`, `orders`) are not units.
+- Units: a recognized measurement unit (`kg`, `km`, `days`, `hours`, `MB`, `x` and a short list of others, glued or as the next word, after any numeric form including `1.2e3 kg`) must agree when both sides have one. If only one side has a recognized unit, the number still traces and the result is marked `unitUnverified`. Words that are not in the list (`users`, `orders`) are not units.
 - `allowBareEvidence: true` lets a percent or amount in the output trace to an evidence number with no unit at all (a table cell that prints `1,234.50`), marked `unitUnverified`. Default off.
 - A year inside a date also vouches for a bare year elsewhere, and a bare year vouches for the year of a date.
 
@@ -89,7 +89,7 @@ A token is `ambiguous` when the text can be read more than one way. The primary 
 | `10/12/2026` | day and month order | no roles |
 | digit runs over 60 digits | too long to compare | the digits |
 
-How an ambiguous number is matched: if its primary reading matches the other side's primary reading, it traces (and the token says `ambiguous: true`). If the only link is through another reading, the status is `unknown` with reason `ambiguous-reading`. A number whose only reading is a locale guess (`12,5` under `en-US`) can never trace, only be `unknown` or `untraced`. Pass the right `locale` for the output and `evidenceLocale` for the evidence (they are read separately; the evidence locale defaults to the output locale).
+How an ambiguous number is matched: if its primary reading matches the other side's primary reading, it traces (and the token says `ambiguous: true`). If the only link is through another reading (an exact match, a rounded match, or a derivation using the other reading), the status is `unknown` with reason `ambiguous-reading`. A number whose only reading is a locale guess (`12,5` under `en-US`) can never trace, only be `unknown` or `untraced`. Pass the right `locale` for the output and `evidenceLocale` for the evidence (they are read separately; the evidence locale defaults to the output locale).
 
 ### Derivations
 
@@ -103,7 +103,7 @@ How an ambiguous number is matched: if its primary reading matches the other sid
 
 Rules:
 
-- Pairwise only. Operands must be in the same class and unit (percents with percents, amounts of one currency with each other). Years, dates, ordinals and ambiguous numbers are never operands. A value that appears more than twice counts twice.
+- Pairwise only. Operands must be in the same class and unit (percents with percents, amounts of one currency with each other). Two percents give a percent through `percent-of` (`10%` and `20%` give `50%`). Years, dates, ordinals and ambiguous numbers are never operands. A value that appears more than twice counts twice.
 - Sums and differences are exact arithmetic, so only an exact match counts. Ratios and percents are inexact, so they match after rounding to the output's precision, and the result says `exact: false` and which rounding rule matched. A loose match is visible: `derivation.matches` counts how many different candidates produced the number.
 - Direction follows the order the evidence mentions the numbers: the first mentioned is the "from", the second the "to". If a number matches only when the operands are taken the other way round (an unsigned `30%` where the evidence lists the new value first), the status is `unknown` with reason `derivation-direction`, because the direction of a change is in the words, which this library does not read.
 - The search is capped. The number of candidates (pairs times derivations) is counted first. If it is larger than `maxCandidates` (default 5,000, at most 1,000,000), nothing is generated, `candidateCapHit` is true, and every number that is not a direct match is `unknown` with reason `candidate-cap`: never traced, and never called untraced, because the search was not complete. Narrow the evidence or the derivation list, or raise the cap.
@@ -124,7 +124,9 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 - Letters of other scripts do not glue: `100円`, `第3回` and `1,234.50米ドル` contain the numbers 100, 3 and 1,234.50. A look-alike Cyrillic or Greek letter next to a digit therefore cannot hide the number.
 - Invisible characters split a number: `1<ZWSP>234` is two numbers, so a hidden character cannot make a number vanish. NFC and NFD text read the same numbers.
 - A lone surrogate is an ordinary non-digit.
-- Scientific notation (`1.5e3`) is read exactly; an exponent over 30 is `too-long`.
+- Scientific notation (`1.5e3`) is read exactly and may carry a percent sign, currency or unit (`1e2%`, `1.2e3 kg`); an exponent over 30 is `too-long`, however many digits it has.
+- Combining marks stay with their letter, so `café3` is an identifier whether it is written precomposed or decomposed. A combining mark after a digit does not hide the digit.
+- Numbers handed in as pre-extracted tokens follow the same rules: a value over 60 digits is `too-long` whatever its flags say.
 
 ## Options
 
@@ -136,7 +138,7 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 | `evidenceLocale` | same as `locale` | locale of the evidence text |
 | `parenthesesAreNegative` | `true` | read `(1,234)` as negative |
 | `derivations` | none | any of `sum`, `difference`, `ratio`, `percent-change`, `percent-of` |
-| `rounding` | `['half-up', 'half-even']` | accepted rounding modes; `[]` means exact matches only |
+| `rounding` | `['half-up', 'half-even']` | accepted rounding modes; `[]` means exact matches only (exact derivations such as a sum still work) |
 | `maxCandidates` | `5000` | derivation search cap, 1 to 1,000,000 |
 | `signMode` | `explicit` | `explicit` or `magnitude` |
 | `allowBareEvidence` | `false` | let a percent or amount trace to a unit-less evidence number |

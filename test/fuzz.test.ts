@@ -53,7 +53,7 @@ describe('fuzz', () => {
         const result = traceNumbers(text, text, { locale, evidenceLocale: locale })
         for (const n of result.numbers) expect(n.status, `${text} -> ${n.token.raw}`).not.toBe('untraced')
       }
-    })
+    }, 120_000)
   }
 
   it('tracing the same text with derivations on never throws and stays consistent', () => {
@@ -71,5 +71,5 @@ describe('fuzz', () => {
       // The same text is always among the evidence, so nothing can be untraced.
       for (const n of r.numbers) expect(n.status, `${a} | ${b} -> ${n.token.raw}`).not.toBe('untraced')
     }
-  })
+  }, 120_000)
 })

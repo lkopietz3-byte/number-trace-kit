@@ -46,7 +46,9 @@ source entry is `src/index.ts`; the package export resolves to generated
 - **Linear time.** Extraction visits each character a bounded number of times.
   Digit chains are collected once. Over-long digit runs are never converted to
   BigInt. Rounding indexes are built lazily, once per distinct output scale.
-  Candidate and evidence indexes cap each key's list at eight entries.
+  Evidence indexes cap each key's list at eight entries; the derivation index
+  keeps a count and the first candidate of each kind per key, so candidates that
+  collide on one value cost one lookup, not a rescan.
 - **A caller RegExp is never run on caller text at large.** `ignorePattern` is
   copied into a private global RegExp and tested only on a window around each
   number (at most 64 characters of the number, 32 before, 16 after). Empty

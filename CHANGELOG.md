@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that matches only through another reading of an ambiguous number, a
   derivation in the opposite direction from the evidence order, or a search
   larger than the cap is `unknown`.
+- Review round (aa77074 and after): scientific notation keeps its percent sign,
+  currency and unit and consumes any exponent length; full-width letters and
+  symbols are folded for every lookup; spaced unit abbreviations (`5 g`,
+  `10 x`) keep their unit; accounting amounts between 1900 and 2100 stay
+  negative; derivation lookups no longer rescan colliding candidates; weak
+  links check rounding and derivations and honor the candidate cap; exact
+  derivations work with `rounding: []`; ordinary-space grouping under comma
+  locales; same-class `percent-of`; sparse arrays no longer read inherited
+  items; combining marks stay with their letter; slash chains are one group;
+  supplied tokens obey the 60-digit policy.
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.

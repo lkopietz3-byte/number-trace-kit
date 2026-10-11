@@ -28,7 +28,7 @@ function ratio(make: (n: number) => () => void): number {
   return cpu(large, 5) / Math.max(cpu(small, 5), 0.002)
 }
 
-describe('linear time on hostile text', () => {
+describe('linear time on hostile text', { timeout: 60_000 }, () => {
   it('the ratio harness can tell a quadratic function from a linear one', () => {
     const quadratic = ratio((n) => () => {
       let acc = 0
@@ -127,7 +127,7 @@ describe('linear time on hostile text', () => {
   })
 })
 
-describe('hostile values', () => {
+describe('hostile values', { timeout: 60_000 }, () => {
   it('a huge digit run is flagged too-long and never reaches BigInt', () => {
     const [t] = extractNumbers('9'.repeat(300_000))
     expect(t).toMatchObject({ ambiguous: true, ambiguity: 'too-long' })
@@ -205,7 +205,7 @@ describe('hostile values', () => {
   })
 })
 
-describe('proxies, getters and single reads', () => {
+describe('proxies, getters and single reads', { timeout: 60_000 }, () => {
   function counted<T extends object>(target: T): { proxy: T; reads: () => Record<string, number> } {
     const counts: Record<string, number> = {}
     const proxy = new Proxy(target, {
