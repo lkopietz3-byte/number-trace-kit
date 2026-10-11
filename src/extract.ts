@@ -554,7 +554,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     let q = k
     if (at(q) === 0x20 || at(q) === NBSP) q++
     if (isSignCode(at(q))) q++
-    return isDigit(at(q))
+    // A leading decimal (".99") starts a number too.
+    return isDigit(at(q)) || ((at(q) === 0x2e || at(q) === 0x2c) && isDigit(at(q + 1)))
   }
 
   /** The folded letters at p (a combining mark stays with its letter), up to max + 1 of them. */
@@ -735,7 +736,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     if (isLetter(at(p)) || (at(p) === 0x3bc && isLetter(at(p + 1)))) {
       const w = readWord(p, 16)
       const we = p + w.length
-      if ((w === 'x' || w === 'X') && isDigit(at(we)) && !isZero) {
+      if ((w === 'x' || w === 'X') && (isDigit(at(we)) || (at(we) === 0x2e && isDigit(at(we + 1)))) && !isZero) {
         // 3x4: a multiplication sign, so the 3 has no suffix.
         return sfx
       }
@@ -991,8 +992,14 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     if (c === -1) return true
     if (c === 0x20 || c === NBSP || c === 0x28) return true
     if (mark === 0x2c) return false
+    // An x or a multiplication sign right after a number: ".5x.7", "5 x.7".
+    if (c === 0x78 || c === 0x58 || c === 0xd7) {
+      let q = m - 1
+      if (at(q) === 0x20 || at(q) === NBSP) q--
+      return isDigit(at(q))
+    }
     return (
-      c === 0x5b || c === 0x7b || c === 0x3c || c === 0x3e || c === 0x22 || c === 0x27 || c === 0x2d || c === 0x2b ||
+      c === 0x2013 || c === 0x2014 || c === 0x5b || c === 0x7b || c === 0x3c || c === 0x3e || c === 0x22 || c === 0x27 || c === 0x2d || c === 0x2b ||
       c === 0x3a || c === 0x3b || c === 0x3d || c === 0x2f || c === 0x2a || CURRENCY_SYMBOLS[c] !== undefined
     )
   }
