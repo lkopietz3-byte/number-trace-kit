@@ -155,7 +155,7 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 - Canonically equivalent letters read the same: the Kelvin sign is `K` and the Angstrom sign is `Å`, so `K3` is an identifier like `K3`.
 - Percent signs after magnitudes are kept (`1 million %`, `5M%`).
 - Combining marks stay with their letter, so `café3` is an identifier whether it is written precomposed or decomposed. A combining mark after a digit does not hide the digit.
-- Numbers handed in as pre-extracted tokens follow the same rules: a value over 60 digits is `too-long` whatever its flags say, and a token whose `ambiguous` flag disagrees with its `ambiguity` reason (or that has alternates without being ambiguous) is a `TypeError`.
+- Numbers handed in as pre-extracted tokens follow the same rules: a value over 60 digits is `too-long` whatever its flags say, and a token whose `ambiguous` flag disagrees with its `ambiguity` reason (or that has alternates without being ambiguous) is a `TypeError`. Tokens from `extractNumbers` carry `magnitude` (the power of ten a written `million`, `K` or `e6` applies) and `parenthesized` (a bare `(557)`); keep both when you store tokens, because evidence `scale` hints skip a number with a `magnitude`, and a `parenthesized` figure also answers to a minus sign. Consecutive tokens of one `evidenceId` that were written together form one date.
 
 ## Options
 
@@ -187,7 +187,7 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 
 Scale and currency hints apply to the bare numbers of a document: counts and decimals with no unit, percent sign or magnitude of their own. Percents, years, dates and numbers like `$3 million` are left alone. `{ id: 'tbl', text: 'Revenue (in thousands)\n2019 | 5,735', scale: 'thousand', currency: 'USD' }` makes `5,735` read as `$5,735,000`, so `$5,735 thousand` traces and `$5.7 million` rounds from it. A table that prints `$` on its first row only is the same pattern with `currency: 'USD'`.
 
-`evidence` is one string, or an array whose items are `{ id, text, scale?, currency? }` documents and/or pre-extracted tokens (`NumberToken`, optionally with `evidenceId`). Tokens are validated; a malformed one is a `TypeError`.
+`evidence` is one string, or an array whose items are `{ id, text, scale?, currency? }` documents and/or pre-extracted tokens (`NumberToken`, optionally with `evidenceId`). Tokens are validated; a malformed one is a `TypeError`. `evidenceOrder` flips only the direction of changes, ratios and percents; sums, products and averages do not depend on it.
 
 Common ignores: citation markers and reference numbers that are not claims. `ignorePattern: /\[\d+\]|Section \d/` skips `[3]` and `Section 4`; `ignoreSmallIntegersUpTo: 10` skips small unit-less counts; `ignoreYears: true` skips years.
 

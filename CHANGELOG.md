@@ -97,6 +97,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `unknown` (they were `traced`); `1.250 + 1.250` now derives; the collision-scan row
   needs `maxDerivationMatches` to keep reading `derived`; reconcile strings with commas,
   a `$` or parentheses are accepted.
+- Review of c4338d6: evidence `scale` hints no longer touch a number that says its own
+  magnitude (new token field `magnitude`); overlong tokens are returned before any hint is
+  parsed; month-name date ranges are read in linear time; `evidenceOrder` flips only
+  directional derivations; pre-extracted evidence tokens form dates and keep
+  `parenthesized`; `allowBareOutput` reaches weak evidence and derivations; a traced date
+  part cites its own date; `reconcile` rejects repeated or contradictory signs.
 - `reconcile({ rows, total, tolerance })` and `reconcileComponents({ parts, total })`:
   exact decimal sums with the signed difference. Floats are a `TypeError`
   unless `allowFloat`.
