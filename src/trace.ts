@@ -1,6 +1,7 @@
 import {
   MAX_DIGITS,
   absKey,
+  formatDec,
   isDecimalString,
   isNegativeValue,
   mantissaAt,
@@ -36,6 +37,7 @@ import type {
   NumberToken,
   NumberTrace,
   Reading,
+  Preset,
   RoundingMode,
   SignMode,
   TraceOptions,
@@ -45,7 +47,7 @@ import type {
 
 const KINDS: readonly NumberKind[] = ['percent', 'currency', 'count', 'decimal', 'year', 'date-part', 'ordinal']
 const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long']
-const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average']
+const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average', 'product']
 const DATE_PARTS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 const MAX_LIST = 8
 const MAX_EVIDENCE_TOTAL = 50_000_000
@@ -222,6 +224,13 @@ interface Ctx {
   readonly maxOperands: 2 | 3
   readonly signMode: SignMode
   readonly allowBare: boolean
+  readonly allowBareOut: boolean
+  readonly maxMatches: number
+  readonly maxDensity: number
+  readonly roundSums: boolean
+  readonly newestFirst: boolean
+  readonly evScale: number
+  readonly evCurrency: string | undefined
   readonly ignoreRaw: ReadonlySet<string>
   readonly ignoreKeys: ReadonlySet<string>
   readonly ignoreKinds: ReadonlySet<NumberKind>
@@ -234,6 +243,11 @@ interface Ctx {
  * Is the number written as negative? Zero keeps the sign it was written with, so
  * "-0.00%" is negative and rounds from "-0.004%" and not from "0.004%".
  */
+/** A plain number with no unit: a count. */
+function isCount(e: Ent): boolean {
+  return e.cls === 'plain' && e.unit === ''
+}
+
 function writtenNegative(value: string, signStyle: NumberToken['signStyle']): boolean {
   return isNegativeValue(value) || signStyle === 'minus' || signStyle === 'parentheses'
 }
@@ -282,22 +296,68 @@ function regExpParts(value: unknown): { source: string; flags: string } {
   }
 }
 
+/** A finite positive number option. */
+function readNumberAtLeast(value: unknown, name: string, fallback: number): number {
+  if (value === undefined) return fallback
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new TypeError(`${name} must be a finite number, got ${describe(value)}.`)
+  if (value <= 0) throw new RangeError(`${name} must be greater than 0.`)
+  return value
+}
+
+const SCALE_WORDS: Readonly<Record<string, number>> = { thousand: 3, million: 6, billion: 9, trillion: 12 }
+
+/** An evidence scale as an exponent of ten, 0 to 12. */
+function scaleExponent(value: unknown, name: string): number {
+  if (typeof value === 'string') {
+    const e = Object.hasOwn(SCALE_WORDS, value) ? SCALE_WORDS[value] : undefined
+    if (e === undefined) throw new RangeError(`${name} "${value}" is not one of thousand, million, billion, trillion or an exponent of ten.`)
+    return e
+  }
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 12) return value
+  throw new RangeError(`${name} must be thousand, million, billion, trillion or an exponent of ten from 0 to 12.`)
+}
+
+function currencyCode(value: unknown, name: string): string {
+  if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value)) throw new RangeError(`${name} must be a three-letter currency code such as "USD".`)
+  return value
+}
+
+const PRESETS: Readonly<Record<Preset, Readonly<Record<string, unknown>>>> = {
+  strict: {},
+  report: {
+    derivations: ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average', 'product'],
+    roundSums: true,
+    allowBareEvidence: true,
+    allowBareOutput: true,
+    maxCandidates: 50_000,
+    maxDerivationMatches: 3,
+  },
+}
+
 function readContext(options: unknown): Ctx {
-  const o = readOptions(
+  const raw = readOptions(
     options,
     [
-      'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates', 'maxOperands',
+      'preset', 'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates', 'maxOperands',
+      'maxDerivationMatches', 'maxDerivationDensity', 'roundSums', 'evidenceOrder', 'evidenceScale', 'evidenceCurrency', 'allowBareOutput',
       'allowBareEvidence', 'signMode', 'ignore', 'ignoreKinds', 'ignoreYears', 'ignoreSmallIntegersUpTo', 'ignorePattern',
     ] as const,
     'traceNumbers',
   )
-  const loc = resolveLocale(o.locale)
-  const evLoc = o.evidenceLocale === undefined ? loc : resolveLocale(o.evidenceLocale, 'evidenceLocale')
-  const parenNeg = readBoolean(o.parenthesesAreNegative, 'parenthesesAreNegative', true)
+  if (raw.preset !== undefined && raw.preset !== 'strict' && raw.preset !== 'report') {
+    throw new RangeError('preset must be "strict" or "report".')
+  }
+  // The preset supplies defaults; anything passed explicitly wins.
+  const base = PRESETS[raw.preset ?? 'strict']
+  const o: Record<string, unknown> = { ...base }
+  for (const [k, v] of Object.entries(raw)) if (v !== undefined && k !== 'preset') o[k] = v
+  const loc = resolveLocale(o['locale'])
+  const evLoc = o['evidenceLocale'] === undefined ? loc : resolveLocale(o['evidenceLocale'], 'evidenceLocale')
+  const parenNeg = readBoolean(o['parenthesesAreNegative'], 'parenthesesAreNegative', true)
 
   const derivations = new Set<Derivation>()
-  if (o.derivations !== undefined) {
-    for (const d of snapshotArray(o.derivations, 'derivations')) {
+  if (o['derivations'] !== undefined) {
+    for (const d of snapshotArray(o['derivations'], 'derivations')) {
       if (typeof d !== 'string' || !(DERIVATIONS as readonly string[]).includes(d)) {
         throw new RangeError(`derivations: "${String(d)}" is not one of ${DERIVATIONS.join(', ')}.`)
       }
@@ -305,49 +365,58 @@ function readContext(options: unknown): Ctx {
     }
   }
   let modes: RoundingMode[] = ['half-up', 'half-even']
-  if (o.rounding !== undefined) {
+  if (o['rounding'] !== undefined) {
     const picked = new Set<RoundingMode>()
-    for (const m of snapshotArray(o.rounding, 'rounding')) {
+    for (const m of snapshotArray(o['rounding'], 'rounding')) {
       if (m !== 'half-up' && m !== 'half-even') throw new RangeError('rounding: modes are "half-up" and "half-even".')
       picked.add(m)
     }
     modes = [...picked]
   }
-  const maxCandidates = readInteger(o.maxCandidates, 'maxCandidates', 1, 1_000_000, DEFAULT_MAX_CANDIDATES)
-  const maxOperands = readInteger(o.maxOperands, 'maxOperands', 2, 3, 2) as 2 | 3
-  const signMode = o.signMode === undefined ? 'explicit' : o.signMode
+  const maxCandidates = readInteger(o['maxCandidates'], 'maxCandidates', 1, 1_000_000, DEFAULT_MAX_CANDIDATES)
+  const maxOperands = readInteger(o['maxOperands'], 'maxOperands', 2, 3, 2) as 2 | 3
+  const signMode = o['signMode'] === undefined ? 'explicit' : o['signMode']
   if (signMode !== 'explicit' && signMode !== 'magnitude') throw new RangeError('signMode must be "explicit" or "magnitude".')
 
-  const allowBare = readBoolean(o.allowBareEvidence, 'allowBareEvidence', false)
+  const allowBare = readBoolean(o['allowBareEvidence'], 'allowBareEvidence', false)
+  const allowBareOut = readBoolean(o['allowBareOutput'], 'allowBareOutput', false)
+  const maxMatches = readInteger(o['maxDerivationMatches'], 'maxDerivationMatches', 1, 1_000_000, 3)
+  const maxDensity = readNumberAtLeast(o['maxDerivationDensity'], 'maxDerivationDensity', 0.5)
+  const roundSums = readBoolean(o['roundSums'], 'roundSums', false)
+  const order = o['evidenceOrder'] === undefined ? 'oldest-first' : o['evidenceOrder']
+  if (order !== 'oldest-first' && order !== 'newest-first') throw new RangeError('evidenceOrder must be "oldest-first" or "newest-first".')
+  const evScale = o['evidenceScale'] === undefined ? 0 : scaleExponent(o['evidenceScale'], 'evidenceScale')
+  const evCurrency = o['evidenceCurrency'] === undefined ? undefined : currencyCode(o['evidenceCurrency'], 'evidenceCurrency')
   const ignoreRaw = new Set<string>()
   const ignoreKeys = new Set<string>()
-  if (o.ignore !== undefined) {
-    for (const entry of snapshotArray(o.ignore, 'ignore')) {
+  if (o['ignore'] !== undefined) {
+    for (const entry of snapshotArray(o['ignore'], 'ignore')) {
       if (typeof entry === 'string') ignoreRaw.add(entry.trim())
       else if (typeof entry === 'number') ignoreKeys.add(signedKey(numberToDecimalString(entry)))
       else throw new TypeError('ignore entries must be strings or numbers.')
     }
   }
   const ignoreKinds = new Set<NumberKind>()
-  if (o.ignoreKinds !== undefined) {
-    for (const k of snapshotArray(o.ignoreKinds, 'ignoreKinds')) {
+  if (o['ignoreKinds'] !== undefined) {
+    for (const k of snapshotArray(o['ignoreKinds'], 'ignoreKinds')) {
       if (typeof k !== 'string' || !(KINDS as readonly string[]).includes(k)) throw new RangeError(`ignoreKinds: "${String(k)}" is not a kind.`)
       ignoreKinds.add(k as NumberKind)
     }
   }
-  const ignoreYears = readBoolean(o.ignoreYears, 'ignoreYears', false)
-  const ignoreSmall = readInteger(o.ignoreSmallIntegersUpTo, 'ignoreSmallIntegersUpTo', 0, 1_000_000, -1)
+  const ignoreYears = readBoolean(o['ignoreYears'], 'ignoreYears', false)
+  const ignoreSmall = readInteger(o['ignoreSmallIntegersUpTo'], 'ignoreSmallIntegersUpTo', 0, 1_000_000, -1)
 
   let pattern: RegExp | null = null
-  if (o.ignorePattern !== undefined) {
-    const p = o.ignorePattern
+  if (o['ignorePattern'] !== undefined) {
+    const p = o['ignorePattern']
     const { source, flags } = regExpParts(p)
     // A private native copy: global (so we can walk matches), never sticky, no shared lastIndex.
     const clean = flags.replace(/[gy]/g, '')
     pattern = new RegExp(source, `${clean}g`)
   }
   return {
-    loc, evLoc, parenNeg, derivations, modes, maxCandidates, maxOperands, signMode, allowBare,
+    loc, evLoc, parenNeg, derivations, modes, maxCandidates, maxOperands, signMode, allowBare, allowBareOut, maxMatches, maxDensity,
+    roundSums, newestFirst: order === 'newest-first', evScale, evCurrency,
     ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, pattern,
   }
 }
@@ -364,6 +433,8 @@ interface Evidence {
   readonly byValue: Index
   readonly all: Ent[]
   readonly weakAll: Ent[]
+  /** Every whole date in the evidence, under each subset of its parts (year, month, day, hour, minute, second). */
+  readonly dateKeys: Map<string, EvidenceRef[]>
   readonly count: number
 }
 
@@ -375,6 +446,12 @@ function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
   } else {
     ev.all.push(ent)
     ev.byValue.add(ent.key, ent)
+    // For allowBareOutput: a bare output number may match an amount in any currency.
+    if (ent.cls.startsWith('cur:')) ev.strong.add(entKey('curany', '', ent.neg, ent.key), ent)
+    // A bare "(557)" is read as positive but may be an accounting negative: it also answers to a minus sign.
+    if (ent.token.parenthesized === true && !ent.neg) {
+      for (const u of regKeys(ent.cls, ent.unit)) ev.strong.add(entKey(ent.cls, u, true, ent.key), { ...ent, neg: true })
+    }
   }
 }
 
@@ -431,10 +508,82 @@ function makeEnt(token: NumberToken, shape: Shape, value: string, scale: number,
   }
 }
 
+// ---- whole dates -------------------------------------------------------------------------------
+
+const DATE_LETTER: Readonly<Record<string, string>> = { year: 'y', month: 'm', day: 'd', hour: 'H', minute: 'M', second: 'S' }
+
+/**
+ * The whole dates and times in a run of date-part tokens written together (one `groupRaw`):
+ * one tuple per day (or one for the month, or for the time), as strings such as `y2025|m6|d30`.
+ */
+function dateTuples(cluster: readonly NumberToken[]): string[][] {
+  const get = (part: string): string[] => cluster.filter((t) => t.part === part).map((t) => `${DATE_LETTER[part] ?? '?'}${absKey(t.value)}`)
+  const hours = get('hour')
+  if (hours.length > 0) {
+    const tuple = [hours[0] ?? '', ...get('minute').slice(0, 1), ...get('second').slice(0, 1)]
+    return [tuple]
+  }
+  const years = get('year').slice(0, 1)
+  const months = get('month').slice(0, 1)
+  const days = get('day')
+  if (days.length > 0) return days.map((d) => [...years, ...months, d])
+  if (months.length > 0) return [[...years, ...months]]
+  return []
+}
+
+/** Maximal runs of date-part tokens (with a known role) that were written as one date. */
+function dateClusters(tokens: readonly NumberToken[]): NumberToken[][] {
+  const out: NumberToken[][] = []
+  let cur: NumberToken[] = []
+  for (const t of tokens) {
+    if (t.kind === 'date-part' && t.part !== undefined && t.groupRaw !== undefined) {
+      if (cur.length > 0 && cur[0]?.groupRaw === t.groupRaw) cur.push(t)
+      else {
+        cur = [t]
+        out.push(cur)
+      }
+    } else {
+      cur = []
+    }
+  }
+  return out
+}
+
+function tupleKey(tuple: readonly string[]): string {
+  return tuple.join('|')
+}
+
+/** Record a whole date under every non-empty subset of its parts, so a less specific date can find it. */
+function addDateKeys(store: Map<string, EvidenceRef[]>, tuple: readonly string[], ref: EvidenceRef): void {
+  const n = tuple.length
+  for (let mask = 1; mask < 1 << n; mask++) {
+    const sub: string[] = []
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) sub.push(tuple[i] ?? '')
+    const k = tupleKey(sub)
+    const list = store.get(k)
+    if (list === undefined) store.set(k, [ref])
+    else if (list.length < MAX_LIST) list.push(ref)
+  }
+}
+
+/** An evidence number with the document's declared scale and currency applied to a bare table cell. */
+function applyHints(token: NumberToken, exp: number, currency: string | undefined): NumberToken {
+  const bare = (token.kind === 'count' || token.kind === 'decimal') && token.unit === undefined && token.scale >= 0 && !weakPrimary(token)
+  if (!bare || (exp === 0 && currency === undefined)) return token
+  const shift = (v: string): string => {
+    const d = parseDecimal(v)
+    return formatDec({ n: d.n * 10n ** BigInt(exp), s: d.s })
+  }
+  const alternates = token.alternates?.map((a) => ({ value: shift(a.value), scale: a.scale - exp }))
+  const base = { ...token, value: shift(token.value), scale: token.scale - exp }
+  const scaled = alternates === undefined ? base : { ...base, alternates }
+  return currency === undefined ? scaled : { ...scaled, kind: 'currency' as const, currency }
+}
+
 function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
   const ev: Evidence = {
     strong: new Index(), weak: new Index(), groupRaw: new GroupIndex(), dateAny: new Index(),
-    dateUnknown: new Index(), byValue: new Index(), all: [], weakAll: [], count: 0,
+    dateUnknown: new Index(), byValue: new Index(), all: [], weakAll: [], dateKeys: new Map(), count: 0,
   }
   let count = 0
   let textTotal = 0
@@ -445,10 +594,18 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     }
     return text
   }
-  const feed = (tokens: readonly NumberToken[], id: string): void => {
+  const feed = (tokens: readonly NumberToken[], id: string, exp = ctx.evScale, currency = ctx.evCurrency): void => {
     for (const t of tokens) {
-      ingest(ev, t, id)
+      ingest(ev, applyHints(t, exp, currency), id)
       count++
+    }
+    for (const cluster of dateClusters(tokens)) {
+      // A date with a part that is itself in doubt (an exponent after the day) cannot vouch for a whole date.
+      if (cluster.some((t) => t.ambiguous)) continue
+      for (const tuple of dateTuples(cluster)) {
+        const first = cluster[0]
+        if (first !== undefined) addDateKeys(ev.dateKeys, tuple, refOf(id, first))
+      }
     }
   }
   if (typeof evidence === 'string') {
@@ -460,7 +617,14 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
       const text = item['text']
       if (text !== undefined) {
         const id = readString(item['id'], `evidence[${index}].id`)
-        feed(scan(takeText(readString(text, `evidence[${index}].text`)), ctx.evLoc, ctx.parenNeg, true), id)
+        const docScale = item['scale']
+        const docCurrency = item['currency']
+        feed(
+          scan(takeText(readString(text, `evidence[${index}].text`)), ctx.evLoc, ctx.parenNeg, true),
+          id,
+          docScale === undefined ? ctx.evScale : scaleExponent(docScale, `evidence[${index}].scale`),
+          docCurrency === undefined ? ctx.evCurrency : currencyCode(docCurrency, `evidence[${index}].currency`),
+        )
       } else {
         const { token, evidenceId } = readToken(item, `evidence[${index}]`)
         feed([token], evidenceId ?? `token:${index}`)
@@ -528,6 +692,8 @@ interface DerivedHit {
   readonly unitUnverified: boolean
   /** The derivation's value has a sign the output does not show, and no derivation matches the output's sign. */
   readonly signDiffers: boolean
+  /** Average candidates per displayed value in the neighborhood of the output. */
+  readonly density: number
 }
 
 interface DerivedSlot {
@@ -567,6 +733,7 @@ class Matcher {
       for (const mode of this.ctx.modes) {
         const r = roundRat(rat, scale, mode)
         for (const u of regKeys(ent.cls, ent.unit)) idx.add(`${mode}\u0000${entKey(ent.cls, u, ent.neg, r.mantissa.toString())}`, ent)
+        if (ent.cls.startsWith('cur:')) idx.add(`${mode}\u0000${entKey('curany', '', ent.neg, r.mantissa.toString())}`, ent)
       }
     }
     this.rounded.set(cacheKey, idx)
@@ -625,7 +792,9 @@ class Matcher {
     const ops: Ent[] = []
     for (const e of this.ev.all) {
       const t = e.token
-      if (t.ambiguous || t.kind === 'date-part' || t.kind === 'year' || t.kind === 'ordinal') continue
+      // A number whose only doubt is thousands-versus-decimal ("1.250") still takes part, with its primary reading.
+      if ((t.ambiguous && t.ambiguity !== 'separator') || weakPrimary(t)) continue
+      if (t.kind === 'date-part' || t.kind === 'year' || t.kind === 'ordinal') continue
       // Two occurrences of the same value can still add up (two rows of 7.5%);
       // a third adds nothing new, and repeats must not inflate the search.
       // Zero is zero whatever sign it was written with.
@@ -645,6 +814,7 @@ class Matcher {
     if (d.has('percent-change')) per += 2
     if (d.has('percent-of')) per += 2
     if (d.has('average')) per += 1
+    if (d.has('product')) per += 1
     // Three-operand candidates: a sum, a difference (each figure less the other two) and a mean.
     let perTriple = 0
     if (this.ctx.maxOperands === 3) {
@@ -680,6 +850,7 @@ class Matcher {
         if (same) {
           if (d.has('sum')) push('sum', own, ratAdd(a, b), [A, B])
           if (d.has('average')) push('average', own, ratDiv(ratAdd(a, b), { p: 2n, q: 1n }) ?? a, [A, B])
+          if (d.has('product') && A.cls === 'plain' && A.unit === '') push('product', own, ratMul(a, b), [A, B])
           if (d.has('difference')) {
             const keys = A.cls === 'pct' ? [{ cls: 'pct', unit: '' }, { cls: 'pp', unit: '' }] : own
             push('difference', keys, ratSub(b, a), [A, B])
@@ -706,7 +877,12 @@ class Matcher {
             if (q1 !== null) push('percent-of', pct, ratMul(q1, HUNDRED), [A, B])
             if (q2 !== null) push('percent-of', pct, ratMul(q2, HUNDRED), [B, A], true)
           }
-        } else if (d.has('percent-of')) {
+        } else if (d.has('product') && (isCount(A) || isCount(B)) && A.cls !== 'pct' && A.cls !== 'pp' && B.cls !== 'pct' && B.cls !== 'pp') {
+          // A count times a unit price (or a quantity): the other operand's class.
+          const other = isCount(A) ? B : A
+          push('product', [{ cls: other.cls, unit: other.unit }], ratMul(a, b), [A, B])
+        }
+        if (!same && d.has('percent-of')) {
           // "7.5% of $200": a percent applied to an amount.
           const pctSide = A.cls === 'pct' ? A : B.cls === 'pct' ? B : null
           const other = pctSide === A ? B : A
@@ -767,7 +943,7 @@ class Matcher {
       for (const mode of modes) {
         const r = roundRat(cand.abs, scale, mode)
         // Sums and differences are exact arithmetic, so only an exact match counts.
-        if (!r.exact && (exactOnly || cand.kind === 'sum' || cand.kind === 'difference')) continue
+        if (!r.exact && (exactOnly || ((cand.kind === 'sum' || cand.kind === 'difference') && !this.ctx.roundSums))) continue
         const m = r.mantissa.toString()
         const slot = byMantissa.get(m) ?? { modes: new Set<RoundingMode>(), exact: r.exact }
         slot.modes.add(mode)
@@ -789,7 +965,7 @@ class Matcher {
             idx.set(key, agg)
           }
           agg.count++
-          const at = (cand.reversed ? 2 : 0) + (found.exact ? 0 : 1)
+          const at = (cand.reversed !== this.ctx.newestFirst ? 2 : 0) + (found.exact ? 0 : 1)
           agg.slots[at] ??= { cand, modes: found.modes, exact: found.exact }
           if (cand.abs.p === 0n) agg.zero ??= { cand, modes: found.modes, exact: found.exact }
         }
@@ -804,6 +980,22 @@ class Matcher {
    * reported as unverified (like a direct match), unless `strict` (bare-evidence
    * lookups). Operand units must always agree with each other.
    */
+  /**
+   * How crowded the candidates are around a displayed value: the average number of candidates
+   * per distinct displayed value within 25 units of the last digit on either side. A random
+   * wrong number lands on a candidate with about this probability.
+   */
+  private density(idx: Map<string, DerivedAgg>, cls: string, unit: string, mantissa: bigint): number {
+    const K = 25n
+    let total = 0
+    for (let d = -K; d <= K; d++) {
+      const m = mantissa + d
+      if (m < 0n) continue
+      for (const sign of ['+', '-']) total += idx.get(`${cls}\u0000${unit}\u0000${sign}${m.toString()}`)?.count ?? 0
+    }
+    return total / Number(2n * K + 1n)
+  }
+
   findDerived(
     tok: NumberToken,
     scale: number,
@@ -833,7 +1025,7 @@ class Matcher {
           if (mantissa === 0n && agg.zero !== undefined && bestAt > 0) {
             count += 1
             best = agg.zero
-            bestAt = Math.min(bestAt, agg.zero.cand.reversed ? 2 : 0)
+            bestAt = Math.min(bestAt, agg.zero.cand.reversed !== this.ctx.newestFirst ? 2 : 0)
           }
           continue
         }
@@ -858,9 +1050,10 @@ class Matcher {
             : 'half-even'
       const sameSignExists = idx.has(`${attempt.cls}\u0000${attempt.unit}\u0000${outNeg ? '-' : '+'}${mantissa.toString()}`)
       return {
-        cand: best.cand, exact: best.exact, label, reversedOnly: best.cand.reversed, matches: count,
+        cand: best.cand, exact: best.exact, label, reversedOnly: best.cand.reversed !== this.ctx.newestFirst, matches: count,
         unitUnverified: attempt.unverified,
         signDiffers: best.cand.neg !== outNeg && !sameSignExists && best.cand.abs.p !== 0n,
+        density: this.density(idx, attempt.cls, attempt.unit, mantissa),
       }
     }
     return null
@@ -955,10 +1148,15 @@ export function traceNumbers(
   }
   const ev = buildEvidence(evidence, ctx)
   const matcher = new Matcher(ev, ctx)
+  const dates = new Map<NumberToken, DateInfo>()
+  for (const cluster of dateClusters(tokens)) {
+    const info: DateInfo = { tuples: dateTuples(cluster), ok: undefined }
+    for (const t of cluster) dates.set(t, info)
+  }
   const numbers: NumberTrace[] = []
   const counts: Record<TraceStatus, number> = { traced: 0, rounded: 0, derived: 0, untraced: 0, ignored: 0, unknown: 0 }
   for (const tok of tokens) {
-    const trace = traceOne(tok, outText, ev, matcher, ctx)
+    const trace = traceOne(tok, outText, ev, matcher, ctx, dates)
     counts[trace.status]++
     numbers.push(trace)
   }
@@ -977,12 +1175,25 @@ function unknownTrace(tok: NumberToken, reason: string): NumberTrace {
   return { token: tok, status: 'unknown', evidence: [], reason }
 }
 
-function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: Matcher, ctx: Ctx): NumberTrace {
+/** The whole dates written in one run of date parts in the output, and whether the evidence has them all. */
+interface DateInfo {
+  readonly tuples: string[][]
+  ok: boolean | undefined
+}
+
+function traceOne(
+  tok: NumberToken,
+  text: string | null,
+  ev: Evidence,
+  matcher: Matcher,
+  ctx: Ctx,
+  dates: ReadonlyMap<NumberToken, DateInfo>,
+): NumberTrace {
   const ignored = ignoreReason(tok, text, ctx)
   if (ignored !== undefined) return { token: tok, status: 'ignored', evidence: [], reason: ignored }
   if (tok.ambiguity === 'superscript') return unknownTrace(tok, 'ambiguous-superscript')
   if (tok.ambiguity === 'too-long') return unknownTrace(tok, 'too-long')
-  if (tok.kind === 'date-part') return traceDate(tok, ev)
+  if (tok.kind === 'date-part') return traceDate(tok, ev, dates.get(tok))
 
   const shape = shapeOf(tok)
   const dec = parseDecimal(tok.value)
@@ -997,8 +1208,12 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
     if (same !== undefined && same.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(same) }
   }
   // The number as written, and (with allowBareEvidence) as a unit-less number.
-  const variants: Variant[] = [{ shape, bare: false }]
-  if (ctx.allowBare && shape.cls !== 'plain') variants.push({ shape: BARE_SHAPE, bare: true })
+  const variants: Variant[] = [{ shape, bare: false, unverified: false }]
+  if (ctx.allowBare && shape.cls !== 'plain') variants.push({ shape: BARE_SHAPE, bare: true, unverified: true })
+  // A bare output number against an amount with a currency.
+  if (ctx.allowBareOut && shape.cls === 'plain' && shape.unit === '') {
+    variants.push({ shape: { cls: 'curany', unit: '' }, bare: false, unverified: true })
+  }
   // An exact zero has no sign to disagree about.
   const allow = (e: Ent): boolean => key === '0' || signAllowed(tok, outNeg, e.neg, ctx.signMode)
 
@@ -1018,13 +1233,13 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   // 1. Exact match after normalization.
   for (const v of variants) {
     const exact = lookup(ev.strong, v.shape, outNeg, key, v.bare).filter(allow)
-    if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined, v.bare)
+    if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined, v.unverified)
   }
 
   // 2. The evidence is more precise and rounds to what the output shows.
   for (const v of variants) {
     const rounded = matcher.findRounded('strong', tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
-    if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, v.bare)
+    if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, v.unverified)
   }
 
   // 3. A declared derivation of evidence numbers.
@@ -1033,6 +1248,8 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
       const hit = matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
       if (hit === null) continue
       if (hit.reversedOnly) return unknownTrace(tok, 'derivation-direction')
+      // So many ways to build the number that matching one says little.
+      if (hit.matches > ctx.maxMatches || hit.density >= ctx.maxDensity) return unknownTrace(tok, 'derivation-too-likely')
       const detail: DerivationDetail = {
         kind: hit.cand.kind,
         operands: hit.cand.operands.map((o) => o.ref),
@@ -1040,7 +1257,7 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
         matches: hit.matches,
         ...(hit.label !== undefined ? { rounding: hit.label } : {}),
       }
-      return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.bare || hit.unitUnverified ? { unitUnverified: true as const } : {}), ...(hit.signDiffers ? { signDiffers: true as const } : {}) }
+      return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.unverified || hit.unitUnverified ? { unitUnverified: true as const } : {}), ...(hit.signDiffers ? { signDiffers: true as const } : {}) }
     }
   }
 
@@ -1058,6 +1275,8 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
 interface Variant {
   readonly shape: Shape
   readonly bare: boolean
+  /** A match through this variant has its unit present on only one side. */
+  readonly unverified: boolean
 }
 
 const BARE_SHAPE: Shape = { cls: 'plain', unit: '' }
@@ -1148,7 +1367,22 @@ function matched(
   }
 }
 
-function traceDate(tok: NumberToken, ev: Evidence): NumberTrace {
+function traceDate(tok: NumberToken, ev: Evidence, info: DateInfo | undefined): NumberTrace {
+  if (tok.part !== undefined && info !== undefined && info.tuples.length > 0) {
+    // A date traces as a whole date: day, month and year together. Its parts appearing in
+    // other dates only weakly support it.
+    info.ok ??= info.tuples.every((t) => ev.dateKeys.has(tupleKey(t)))
+    if (info.ok) {
+      const first = info.tuples[0]
+      return { token: tok, status: 'traced', evidence: (first === undefined ? [] : ev.dateKeys.get(tupleKey(first)) ?? []).slice(0, MAX_LIST) }
+    }
+    const byParts = traceDateParts(tok, ev)
+    return byParts.status === 'untraced' ? byParts : unknownTrace(tok, 'date-not-in-evidence')
+  }
+  return traceDateParts(tok, ev)
+}
+
+function traceDateParts(tok: NumberToken, ev: Evidence): NumberTrace {
   const key = absKey(tok.value)
   if (tok.part === undefined) {
     // Day/month order unknown. An identical date text vouches for it; anything else cannot.

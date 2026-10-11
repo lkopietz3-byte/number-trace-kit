@@ -53,6 +53,8 @@ export interface NumberToken {
   readonly signStyle?: SignStyle
   /** For `date-part` tokens: which part of the date or time this is, when known. */
   readonly part?: DatePart
+  /** Written in parentheses ("(557)") but read as positive because it is a bare number; it may be an accounting negative. */
+  readonly parenthesized?: true
   /** For date parts and fraction halves: the whole text this part came from, such as `10/12/2026` or `3/4`. */
   readonly groupRaw?: string
   /** `start` and `end` mark the two numbers of a written range such as `10-12`. */
@@ -76,14 +78,25 @@ export interface ExtractOptions {
   readonly parenthesesAreNegative?: boolean
 }
 
-export type Derivation = 'sum' | 'difference' | 'ratio' | 'percent-change' | 'percent-of' | 'average'
+export type Derivation = 'sum' | 'difference' | 'ratio' | 'percent-change' | 'percent-of' | 'average' | 'product'
 export type RoundingMode = 'half-up' | 'half-even'
 
 /** A piece of evidence text with the id you want cited. */
 export interface EvidenceDoc {
   readonly id: string
   readonly text: string
+  /**
+   * The scale the bare numbers in this document are printed in: `'thousand'`, `'million'`,
+   * `'billion'`, `'trillion'`, or an exponent of ten from 0 to 12. The kit never guesses it
+   * from a header such as "(in thousands)"; you say it. Percents, years, dates and numbers
+   * that carry their own magnitude or unit are left alone.
+   */
+  readonly scale?: EvidenceScale
+  /** The currency code of the bare numbers in this document (a table that prints `$` on its first row only). */
+  readonly currency?: string
 }
+
+export type EvidenceScale = 'thousand' | 'million' | 'billion' | 'trillion' | number
 
 /** A pre-extracted token used as evidence, optionally labeled with where it came from. */
 export interface EvidenceNumber extends NumberToken {
@@ -94,7 +107,17 @@ export type EvidenceInput = string | readonly (EvidenceDoc | EvidenceNumber)[]
 
 export type SignMode = 'explicit' | 'magnitude'
 
+/** `strict`: no derivations. `report`: the derivations a financial report needs, the unit and sum-rounding allowances, and the coincidence guard. */
+export type Preset = 'strict' | 'report'
+
 export interface TraceOptions {
+  /**
+   * A named starting point; any other option you pass overrides it. `strict` allows no
+   * derivations and no unit leniency (also the default). `report` turns on every derivation,
+   * rounded sums and differences, bare-unit leniency in both directions, a candidate cap of
+   * 50,000 and the coincidence guard.
+   */
+  readonly preset?: Preset
   /** Locale used to read the output text. Default `en-US`. */
   readonly locale?: string
   /** Locale used to read evidence text. Default: the same as `locale`. */
@@ -110,6 +133,32 @@ export interface TraceOptions {
    * triple. The candidate cap counts the triples too.
    */
   readonly maxOperands?: 2 | 3
+  /**
+   * A derived number is `unknown` (`derivation-too-likely`) when more than this many candidates
+   * produce the same displayed value: with that many ways to build it, a match says little.
+   * Default 3. `derivation.matches` always reports the count.
+   */
+  readonly maxDerivationMatches?: number
+  /**
+   * A derived number is also `unknown` (`derivation-too-likely`) when candidates are this crowded around it:
+   * the average number of candidates per displayed value within 25 units of the last digit on either side.
+   * A random wrong number lands on a candidate with about this probability. Default 0.5; the `report`
+   * preset sets the same value. Raise it to accept looser matches.
+   */
+  readonly maxDerivationDensity?: number
+  /** Let a sum or difference match after display rounding ($17.6 million from two figures with three decimals). Default false. */
+  readonly roundSums?: boolean
+  /** `newest-first`: evidence lists the later period first, so a percent change reads against the order of mention. Default `oldest-first`. */
+  readonly evidenceOrder?: 'oldest-first' | 'newest-first'
+  /** The scale of the bare numbers in string evidence (and in documents that do not set their own). */
+  readonly evidenceScale?: EvidenceScale
+  /** The currency of the bare numbers in string evidence (and in documents that do not set their own). */
+  readonly evidenceCurrency?: string
+  /**
+   * Let a bare output number trace to an evidence amount that has a currency
+   * (`5,829 million` against `$5,829 million`). Marked `unitUnverified`. Default false.
+   */
+  readonly allowBareOutput?: boolean
   /** Hard cap on derivation candidates for one call. Default 5000, maximum 1000000. */
   readonly maxCandidates?: number
   /**

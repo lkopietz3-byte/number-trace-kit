@@ -44,7 +44,7 @@ const CURRENCY_WORDS: Record<string, string> = {
 
 // Units written right against the number ("5kg"). Case matters here.
 const GLUED_UNITS: Record<string, string> = {
-  kg: 'kg', g: 'g', mg: 'mg', 'μm': 'μm', 'μs': 'μs', 'μg': 'μg', 'μL': 'μl', 'μl': 'μl', lb: 'lb', lbs: 'lb', oz: 'oz', km: 'km', m: 'm', cm: 'cm', mm: 'mm',
+  c: 'c', cpp: 'cpp', mo: 'month', mos: 'month', pt: 'pt', pts: 'pt', kg: 'kg', g: 'g', mg: 'mg', 'μm': 'μm', 'μs': 'μs', 'μg': 'μg', 'μL': 'μl', 'μl': 'μl', lb: 'lb', lbs: 'lb', oz: 'oz', km: 'km', m: 'm', cm: 'cm', mm: 'mm',
   mi: 'mi', ft: 'ft', ms: 'ms', s: 'second', h: 'hour', hr: 'hour', hrs: 'hour', min: 'minute',
   mins: 'minute', sec: 'second', secs: 'second', yr: 'year', yrs: 'year', KB: 'KB', kB: 'KB',
   MB: 'MB', GB: 'GB', TB: 'TB', ml: 'ml', mL: 'ml', L: 'l', l: 'l', kW: 'kW', kWh: 'kWh', MW: 'MW',
@@ -55,7 +55,7 @@ const SPACED_UNITS: Record<string, string> = {
   day: 'day', days: 'day', week: 'week', weeks: 'week', month: 'month', months: 'month',
   year: 'year', years: 'year', yr: 'year', yrs: 'year', hour: 'hour', hours: 'hour', hr: 'hour',
   hrs: 'hour', minute: 'minute', minutes: 'minute', min: 'minute', mins: 'minute', second: 'second',
-  seconds: 'second', sec: 'second', secs: 'second', kg: 'kg', kilogram: 'kg', kilograms: 'kg',
+  seconds: 'second', sec: 'second', secs: 'second', cent: 'c', cents: 'c', pt: 'pt', pts: 'pt', kg: 'kg', kilogram: 'kg', kilograms: 'kg',
   gram: 'g', grams: 'g', mg: 'mg', 'μm': 'μm', 'μs': 'μs', 'μg': 'μg', 'μl': 'μl', lb: 'lb', lbs: 'lb', pound: 'lb', pounds: 'lb', oz: 'oz',
   ounce: 'oz', ounces: 'oz', mile: 'mi', miles: 'mi', km: 'km', kilometer: 'km', kilometers: 'km',
   kilometre: 'km', kilometres: 'km', meter: 'm', meters: 'm', metre: 'm', metres: 'm', cm: 'cm',
@@ -358,10 +358,19 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     return { start: s, end: e, month: w.month, fresh: !reusing }
   }
 
-  const pushMonth = (s: number, e: number, month: number): void => {
+  const pushMonth = (s: number, e: number, month: number): Tok => {
     const t = pushDate(s, e, month, 'month', undefined)
     t.value = String(month)
     lastMonth = { start: s, end: e }
+    return t
+  }
+
+  // A month-name date is several tokens; the ones written together are one date.
+  const dateClusters: Tok[][] = []
+  let dateCluster: Tok[] | null = null
+  const openCluster = (tokens: Tok[]): void => {
+    dateCluster = tokens
+    dateClusters.push(tokens)
   }
 
   /** ISO dates, times of day and numeric D/M/Y dates. Returns the end index or -1. */
@@ -475,25 +484,26 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       const day = pushDate(i, end, v, 'day', undefined, end > e ? 'superscript' : undefined)
       day.range = 'end'
       lastOut.range = 'start'
+      if (dateCluster?.includes(lastOut) === true) dateCluster.push(day)
       lastDateEnd = end
       return end
     }
     const before = monthWordBefore(i)
     if (before !== null) {
       if (a <= 2 && v >= 1 && v <= 31) {
-        if (before.fresh) pushMonth(before.start, before.end, before.month)
+        if (before.fresh) openCluster([pushMonth(before.start, before.end, before.month)])
         let e = e0
         const suf = ordinalSuffixAt(e)
         if (suf > 0) e += suf
         const end = exponentEnd(e)
-        pushDate(i, end, v, 'day', undefined, end > e ? 'superscript' : undefined)
+        dateCluster?.push(pushDate(i, end, v, 'day', undefined, end > e ? 'superscript' : undefined))
         lastDateEnd = end
         return end
       }
       if (a === 4) {
-        if (before.fresh) pushMonth(before.start, before.end, before.month)
+        if (before.fresh) openCluster([pushMonth(before.start, before.end, before.month)])
         const end = exponentEnd(e0)
-        pushDate(i, end, v, 'year', undefined, end > e0 ? 'superscript' : undefined)
+        dateCluster?.push(pushDate(i, end, v, 'year', undefined, end > e0 ? 'superscript' : undefined))
         return end
       }
       return -1
@@ -503,7 +513,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       if ((gap === 1 && (at(lastDateEnd) === 0x20 || at(lastDateEnd) === 0x2c)) ||
         (gap === 2 && at(lastDateEnd) === 0x2c && at(lastDateEnd + 1) === 0x20)) {
         const end = exponentEnd(e0)
-        pushDate(i, end, v, 'year', undefined, end > e0 ? 'superscript' : undefined)
+        dateCluster?.push(pushDate(i, end, v, 'year', undefined, end > e0 ? 'superscript' : undefined))
         return end
       }
     }
@@ -531,7 +541,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           const end = exponentEnd(e)
           const day = pushDate(i, end, v, 'day', undefined, end > e ? 'superscript' : undefined)
           if (first?.part === 'day' && first.range === 'start') day.range = 'end'
-          pushMonth(p, w.end, w.month)
+          const monthTok = pushMonth(p, w.end, w.month)
+          openCluster(first?.part === 'day' && first.range === 'start' ? [first, day, monthTok] : [day, monthTok])
           lastDateEnd = w.end
           return w.end
         }
@@ -643,6 +654,48 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     return e
   }
 
+  /**
+   * If the number at `pos` sits in a hyphenated model-style name (Llama-3.3-70B-Instruct,
+   * gpt-5.4-nano-2026-03-17, Qwen3-8B), the end of that name; otherwise -1. A name has
+   * letters before its first number and letters after it (gpt-4 and pre-2020 stay numbers),
+   * or starts with a letter-and-digit word and has a later word with letters (Qwen3-8B).
+   */
+  const hyphenIdentifierEnd = (pos: number): number => {
+    const wordChar = (c: number): boolean => isLetter(c) || isDigit(c) || isMark(c) || c === 0x2e || c === 0x5f || c === 0x2d
+    let s0 = pos
+    while (s0 > 0 && pos - s0 < 80 && wordChar(at(s0 - 1))) s0--
+    let e0 = pos
+    while (e0 < n && e0 - pos < 80 && wordChar(at(e0))) e0++
+    if ((s0 > 0 && wordChar(at(s0 - 1))) || (e0 < n && wordChar(at(e0)))) return -1
+    while (e0 > pos && (at(e0 - 1) === 0x2e || at(e0 - 1) === 0x2d)) e0--
+    // Split on hyphens and note which words have letters and which have digits.
+    const letters: boolean[] = []
+    const digits: boolean[] = []
+    let hasL = false
+    let hasD = false
+    let firstMixedLetterStart = false
+    let wordStart = s0
+    for (let k = s0; k <= e0; k++) {
+      if (k === e0 || at(k) === 0x2d) {
+        letters.push(hasL)
+        digits.push(hasD)
+        if (letters.length === 1) firstMixedLetterStart = hasL && hasD && isLetter(at(wordStart))
+        hasL = false
+        hasD = false
+        wordStart = k + 1
+      } else if (isLetter(at(k))) hasL = true
+      else if (isDigit(at(k))) hasD = true
+    }
+    if (letters.length < 2) return -1
+    const firstDigit = digits.indexOf(true)
+    if (firstDigit < 0) return -1
+    const laterLetters = letters.slice(firstDigit + 1).includes(true)
+    const earlierLetters = letters.slice(0, firstDigit).includes(true)
+    if (firstDigit >= 1 && earlierLetters && laterLetters) return e0
+    if (firstMixedLetterStart && letters.slice(1).includes(true)) return e0
+    return -1
+  }
+
   /** After a version core: "+build.5", "-rc.1", "-beta.2+exp.sha" are all part of the identifier. */
   const skipVersionTail = (from: number): number => {
     let j = from
@@ -700,6 +753,12 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       while (isDigit(at(p))) p++
       sfx.superscript = true
       sfx.end = p
+      return sfx
+    }
+    if (at(p) === 0xa2) {
+      // 1.9\u00a2: cents.
+      sfx.unit = 'c'
+      sfx.end = p + 1
       return sfx
     }
     let scientific = false
@@ -853,7 +912,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         return we
       }
       if ((w === 'x' || w === 'X') && startsNumber(we)) return -1
-      const unit = own(SPACED_UNITS, lower) ?? own(GLUED_UNITS, w)
+      // A lone "c" after a space is a label (option c), not cents; "12 cents" is in the spaced table.
+      const unit = own(SPACED_UNITS, lower) ?? (w === 'c' ? undefined : own(GLUED_UNITS, w))
       if (unit !== undefined) {
         sfx.unit = unit
         return we
@@ -1020,6 +1080,15 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       cur = matchCurrencyEnding(i0)
       if (cur !== null && cur.start - 1 >= floor && isSignCode(at(cur.start - 1))) signPos = cur.start - 1
     }
+    // "$(557)": the currency sits outside the accounting parentheses.
+    let parenAfterCurrency = false
+    if (cur === null && signPos < 0 && at(i0 - 1) === 0x28 && i0 - 2 >= floor) {
+      const outside = matchCurrencyEnding(i0 - 1)
+      if (outside !== null) {
+        cur = outside
+        parenAfterCurrency = true
+      }
+    }
     let signValid = false
     if (signPos >= 0) {
       const pc = at(signPos - 1)
@@ -1045,11 +1114,23 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     // ---- identifiers glued to the number ("X3", "v2.1", "COVID-19") ------------
     if (cur === null) {
       const before = at(i0 - 1)
+      if (before === 0x2d && i0 - 1 >= floor) {
+        // Llama-3.3-70B-Instruct, gpt-5.4-nano-2026-03-17
+        const we = hyphenIdentifierEnd(i0)
+        if (we > i0) {
+          noteIdentifier(i0, we)
+          return we
+        }
+      }
       if (
         (i0 - 1 >= floor && ((letterAt(i0 - 1) && !(timesPrev !== undefined && (before === 0x78 || before === 0x58))) || before === 0x5f)) ||
         (i0 - 2 >= floor && before === 0x2d && isUpper(at(i0 - 2)))
       ) {
         let j = skipIdentifier(i0)
+        if (at(j) === 0x2d) {
+          const we = hyphenIdentifierEnd(i0)
+          if (we > j) j = we
+        }
         // v1.2.3+4, v1.2-rc.1: a "v" followed by a dotted number is a version, suffixes included.
         if (before === 0x76 || before === 0x56) {
           let dotted = false
@@ -1158,11 +1239,13 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       const exp10 = sfx?.tooLong === true ? 0 : (sfx?.exp10 ?? 0)
       let rawStart = tokStart
       let rawEnd = tokEnd
+      let parenthesized = false
       let ambiguity = sub.ambiguity
       if (sfx?.superscript === true) ambiguity = 'superscript'
       if (sfx?.tooLong === true || sub.int.length + sub.frac.length > MAX_DIGITS) ambiguity = 'too-long'
       if (isFirst && isLast && parenNeg && !neg && signStyle === undefined && ambiguity !== 'too-long') {
-        const open = rawStart - 1 >= floor && at(rawStart - 1) === 0x28
+        const openAt = parenAfterCurrency ? i0 - 1 : rawStart - 1
+        const open = openAt >= floor && at(openAt) === 0x28
         const close = at(rawEnd) === 0x29
         if (open && close) {
           // Only a bare parenthesized year is a citation; an amount or a grouped number is not.
@@ -1177,8 +1260,11 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           if (hasMark && !yearShaped) {
             neg = true
             signStyle = 'parentheses'
-            rawStart -= 1
+            if (!parenAfterCurrency) rawStart -= 1
             rawEnd += 1
+          } else if (!yearShaped) {
+            // A bare "(557)" is read as positive, but it may be an accounting negative.
+            parenthesized = true
           }
         }
       }
@@ -1222,6 +1308,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       tok.end = rawEnd
       tok.raw = text.slice(rawStart, rawEnd)
       if (signStyle !== undefined) tok.signStyle = signStyle
+      if (parenthesized) tok.parenthesized = true
       if (ambiguity !== undefined) {
         tok.ambiguous = true
         tok.ambiguity = ambiguity
@@ -1367,6 +1454,16 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     return changed && g.members.length > 1
   }
 
+  for (const cluster of dateClusters) {
+    let lo = Infinity
+    let hi = -1
+    for (const t of cluster) {
+      lo = Math.min(lo, t.start)
+      hi = Math.max(hi, t.end)
+    }
+    const whole = slice(lo, hi)
+    for (const t of cluster) if (t.groupRaw === undefined) t.groupRaw = whole
+  }
   for (const chain of fractionChains) {
     const first = chain[0]
     const last = chain[chain.length - 1]
