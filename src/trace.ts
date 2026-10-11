@@ -191,6 +191,9 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
     })
   }
   if (alternates.length > 0 && !ambiguous) throw new TypeError(`${name}: alternates need ambiguous: true.`)
+  const localeGuess = item['localeGuess']
+  if (localeGuess !== undefined && localeGuess !== true) throw new TypeError(`${name}.localeGuess must be true when present.`)
+  if (localeGuess === true && !ambiguous) throw new TypeError(`${name}: localeGuess needs ambiguous: true.`)
   const evidenceId = readOptionalString(item['evidenceId'], `${name}.evidenceId`)
   const token: NumberToken = {
     raw, start, end, value, scale, kind: kind as NumberKind, ambiguous: ambiguous || tooLong,
@@ -201,6 +204,7 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
     ...(part !== undefined ? { part: part as NonNullable<NumberToken['part']> } : {}),
     ...(groupRaw !== undefined ? { groupRaw } : {}),
     ...(range !== undefined ? { range } : {}),
+    ...(localeGuess === true ? { localeGuess: true as const } : {}),
     ...(alternates.length > 0 && !tooLong ? { alternates } : {}),
   }
   return { token, ...(evidenceId !== undefined ? { evidenceId } : {}) }
@@ -370,9 +374,10 @@ function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
  * It may only ever produce `unknown`, never a trace.
  */
 function weakPrimary(t: NumberToken): boolean {
+  if (t.localeGuess === true) return true
   return (
-    t.ambiguous && (t.ambiguity === 'separator' || t.ambiguity === 'fraction' || t.ambiguity === 'identifier') &&
-    (t.alternates === undefined || t.alternates.length === 0)
+    t.ambiguous && (t.ambiguity === 'fraction' || t.ambiguity === 'identifier' || t.ambiguity === 'separator') &&
+    (t.ambiguity !== 'separator' || t.alternates === undefined || t.alternates.length === 0)
   )
 }
 
@@ -829,12 +834,22 @@ function overlapsPattern(re: RegExp, text: string, start: number, end: number): 
   return false
 }
 
+/** An exact non-negative whole number written with digits only, no larger than `limit`. */
+function isWholeNumberAtMost(value: string, limit: number): boolean {
+  if (value.length === 0 || value.length > 8) return false
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i)
+    if (c < 0x30 || c > 0x39) return false
+  }
+  return Number(value) <= limit
+}
+
 function ignoreReason(tok: NumberToken, text: string | null, ctx: Ctx): string | undefined {
   if (ctx.ignoreKinds.has(tok.kind)) return 'kind'
   if (ctx.ignoreYears && (tok.kind === 'year' || (tok.kind === 'date-part' && tok.part === 'year'))) return 'year'
   if (
     ctx.ignoreSmall >= 0 && tok.kind === 'count' && tok.unit === undefined && !tok.ambiguous &&
-    tok.signStyle === undefined && Number(tok.value) <= ctx.ignoreSmall && tok.scale >= 0
+    tok.signStyle === undefined && tok.scale >= 0 && isWholeNumberAtMost(tok.value, ctx.ignoreSmall)
   ) {
     return 'small-integer'
   }
@@ -925,7 +940,10 @@ function traceOne(tok: NumberToken, text: string | null, ev: Evidence, matcher: 
   const allow = (e: Ent): boolean => signAllowed(tok, outNeg, e.neg, ctx.signMode)
 
   if (weakPrimary(tok)) {
-    if (linksVia(tok, tok.scale, outNeg, mantissa, key, ['strong', 'weak'], true, variants, ev, matcher, ctx)) {
+    if (
+      linksVia(tok, tok.scale, outNeg, mantissa, key, ['strong', 'weak'], true, variants, ev, matcher, ctx) ||
+      alternateLinks(tok, variants, ev, matcher, ctx)
+    ) {
       return unknownTrace(tok, 'ambiguous-reading')
     }
     // An incomplete derivation search stays unknown.
@@ -1022,6 +1040,17 @@ function weakHit(
   ctx: Ctx,
 ): boolean {
   if (linksVia(tok, tok.scale, outNeg, mantissa, key, ['weak'], false, variants, ev, matcher, ctx)) return true
+  return alternateLinks(tok, variants, ev, matcher, ctx)
+}
+
+/** Does any other reading of the number link to the evidence? */
+function alternateLinks(
+  tok: NumberToken,
+  variants: readonly Variant[],
+  ev: Evidence,
+  matcher: Matcher,
+  ctx: Ctx,
+): boolean {
   for (const alt of tok.alternates ?? []) {
     const d = parseDecimal(alt.value)
     const altMantissa = mantissaAt(d.n < 0n ? { n: -d.n, s: d.s } : d, alt.scale)
@@ -1072,8 +1101,11 @@ function traceDate(tok: NumberToken, ev: Evidence): NumberTrace {
   const exact = lookup(ev.strong, shape, false, key)
   if (exact.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(exact) }
   if (tok.part === 'year') {
-    const plain = lookup(ev.strong, { cls: 'plain', unit: '' }, false, key)
+    // A bare year elsewhere vouches for it; a year with a unit (2026 kg) does not.
+    const plain = lookup(ev.strong, { cls: 'plain', unit: '' }, false, key, true)
     if (plain.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(plain) }
+    // Digits inside an identifier (FY2026) are only a weak link.
+    if (lookup(ev.weak, { cls: 'plain', unit: '' }, false, key, true).length > 0) return unknownTrace(tok, 'ambiguous-reading')
   }
   // Evidence dates whose order was unclear cannot vouch for a known role.
   if (ev.dateUnknown.get(key) !== undefined) return unknownTrace(tok, 'ambiguous-date-order')
