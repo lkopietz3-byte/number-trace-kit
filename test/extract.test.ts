@@ -196,7 +196,7 @@ describe('exponents and fractions', () => {
     expect(one('2E-4')).toMatchObject({ value: '0.0002', scale: 4, kind: 'decimal' })
     expect(one('6.02e+23', { })).toMatchObject({ value: '602000000000000000000000' })
     expect(one('1e999')).toMatchObject({ ambiguous: true, ambiguity: 'too-long' })
-    expect(extractNumbers('5e and 0x1F and 1e3x')).toEqual([])
+    expect(extractNumbers('5e and 0x1F')).toEqual([])
   })
 
   it('flags an inline exponent instead of reading the base alone', () => {

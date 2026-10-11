@@ -99,6 +99,14 @@ function isLetter(c: number): boolean {
   return (c <= 0x24f && c !== 0xd7 && c !== 0xf7) || (c >= 0x1e00 && c <= 0x1eff)
 }
 
+/** Combining marks. NFD text spells "é" as a letter plus a mark; the mark stays with the letter. */
+function isMark(c: number): boolean {
+  return (
+    (c >= 0x300 && c <= 0x36f) || (c >= 0x1ab0 && c <= 0x1aff) || (c >= 0x1dc0 && c <= 0x1dff) ||
+    (c >= 0x20d0 && c <= 0x20ff) || (c >= 0xfe20 && c <= 0xfe2f)
+  )
+}
+
 function isAlnum(c: number): boolean {
   return isDigit(c) || isLetter(c)
 }
@@ -252,6 +260,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
   const f = fold(text)
   const out: Tok[] = []
   const idTokens: Tok[] = []
+  let fractionChain: Tok[] = []
   let floor = 0
   let lastMonth: { start: number; end: number } | null = null
   let lastDateEnd = -1
@@ -275,7 +284,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     return pieces.join('')
   }
   const isGroupSep = (c: number): boolean =>
-    isGroupSpace(c) || (info.apostrophe && (c === 0x27 || c === 0x2019))
+    isGroupSpace(c) || (info.apostrophe && (c === 0x27 || c === 0x2019)) || (c === 0x20 && info.decimal === 0x2c)
   const lastToken = (): Tok | undefined => out[out.length - 1]
   const lastPlain = (): Tok | undefined => {
     const t = lastToken()
@@ -308,7 +317,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     let q = s
     while (q < n && q - s < 10 && isLetter(at(q))) q++
     if (isLetter(at(q))) return null
-    const month = own(MONTHS, text.slice(s, q).toLowerCase())
+    const month = own(MONTHS, slice(s, q).toLowerCase())
     return month === undefined ? null : { end: q, month }
   }
 
@@ -352,7 +361,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           const m = num(r2, r2 + b1)
           const d = num(r3, after)
           if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-            const raw = text.slice(i, after)
+            const raw = slice(i, after)
             pushDate(i, i + 4, num(i, i + 4), 'year', raw)
             pushDate(r2, r2 + b1, m, 'month', raw)
             pushDate(r3, after, d, 'day', raw)
@@ -374,7 +383,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           after += 3
         }
         if (!isDigit(at(after)) && h <= 24 && mi <= 59 && (sec === null || sec <= 60)) {
-          const raw = text.slice(i, after)
+          const raw = slice(i, after)
           pushDate(i, i + a, h, 'hour', raw)
           pushDate(r2, r2 + 2, mi, 'minute', raw)
           if (sec !== null) pushDate(r2 + 3, r2 + 5, sec, 'second', raw)
@@ -403,7 +412,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           const day = firstIsDay ? p : q
           const month = firstIsDay ? q : p
           if (day < 1 || day > 31 || month < 1 || month > 12) return -1
-          const raw = text.slice(i, after)
+          const raw = slice(i, after)
           const reason = decisive ? undefined : 'date-order'
           pushDate(i, i + a, p, decisive ? (firstIsDay ? 'day' : 'month') : undefined, raw, reason)
           pushDate(r2, r2 + b1, q, decisive ? (firstIsDay ? 'month' : 'day') : undefined, raw, reason)
@@ -486,10 +495,18 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     return isDigit(at(q))
   }
 
+  /** The folded letters at p (a combining mark stays with its letter), up to max + 1 of them. */
   const readWord = (p: number, max: number): string => {
     let q = p
-    while (q < n && q - p <= max && isLetter(at(q))) q++
-    return text.slice(p, q)
+    while (q < n && q - p <= max && (isLetter(at(q)) || (q > p && isMark(at(q))))) q++
+    return slice(p, q)
+  }
+
+  /** True when the character at k is a Latin letter, or a mark on one. */
+  const letterAt = (k: number): boolean => {
+    let j = k
+    while (j >= 0 && isMark(at(j))) j--
+    return j >= 0 && isLetter(at(j))
   }
 
   /** Evidence only: keep the digit runs of a skipped identifier as weak tokens. */
@@ -514,7 +531,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     let j = from
     while (j < n) {
       const ch = at(j)
-      if (isAlnum(ch) || ch === 0x5f) j++
+      if (isAlnum(ch) || ch === 0x5f || isMark(ch)) j++
       else if (ch === 0x2e && isAlnum(at(j + 1))) j++
       else break
     }
@@ -531,18 +548,18 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       if (c === 0x24) {
         // US$, CA$, C$ ... : up to two capital letters glued before the dollar sign.
         if (p - 2 >= floor && isUpper(at(p - 1)) && isUpper(at(p - 2)) && !isLetter(at(p - 3))) {
-          const code = own(DOLLAR_PREFIXES, text.slice(p - 2, p))
+          const code = own(DOLLAR_PREFIXES, slice(p - 2, p))
           if (code !== undefined) return { start: p - 2, code }
         }
         if (p - 1 >= floor && isUpper(at(p - 1)) && !isLetter(at(p - 2))) {
-          const code = own(DOLLAR_PREFIXES, text.slice(p - 1, p))
+          const code = own(DOLLAR_PREFIXES, slice(p - 1, p))
           if (code !== undefined) return { start: p - 1, code }
         }
       }
       return { start: p, code: symbol }
     }
     if (p - 2 >= floor && isUpper(c) && isUpper(at(p - 1)) && isUpper(at(p - 2)) && !isLetter(at(p - 3))) {
-      const code = text.slice(p - 2, p + 1)
+      const code = slice(p - 2, p + 1)
       if (CURRENCY_CODES.has(code)) return { start: p - 2, code }
     }
     return null
@@ -573,19 +590,23 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       sfx.end = p
       return sfx
     }
+    let scientific = false
     if ((at(p) | 0x20) === 0x65) {
-      // Scientific notation: 1.5e3, 2E-4.
+      // Scientific notation: 1.5e3, 2E-4. The whole exponent is consumed, however long,
+      // and then a percent sign, currency or unit may still follow.
       let q = p + 1
       const negative = at(q) === 0x2d
       if (negative || at(q) === 0x2b) q++
       const digitsStart = q
-      while (isDigit(at(q)) && q - digitsStart < 6) q++
-      if (q > digitsStart && !isAlnum(at(q)) && at(q) !== 0x5f) {
-        const e = Number(slice(digitsStart, q))
-        if (e <= 30) sfx.exp10 = negative ? -e : e
-        else sfx.tooLong = true
+      while (isDigit(at(q))) q++
+      if (q > digitsStart && at(q) !== 0x5f) {
+        let z = digitsStart
+        while (z < q - 1 && at(z) === 0x30) z++
+        if (q - z > 2 || Number(slice(z, q)) > 30) sfx.tooLong = true
+        else sfx.exp10 = negative ? -Number(slice(z, q)) : Number(slice(z, q))
         sfx.end = q
-        return sfx
+        p = q
+        scientific = true
       }
     }
     if (at(p) === 0x25) {
@@ -607,18 +628,18 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         return sfx
       }
       const lower = w.toLowerCase()
-      const single = w === 'K' || w === 'k' || w === 'M' || w === 'B' || w === 'T'
-      const singleLower = hasCurrency && (w === 'm' || w === 'b' || w === 't')
+      const single = !scientific && (w === 'K' || w === 'k' || w === 'M' || w === 'B' || w === 'T')
+      const singleLower = !scientific && hasCurrency && (w === 'm' || w === 'b' || w === 't')
       if (single || singleLower) {
         sfx.exp10 = w === 'K' || w === 'k' ? 3 : w === 'M' || w === 'm' ? 6 : w === 'B' || w === 'b' ? 9 : 12
         sfx.looseMagnitude = !hasCurrency
         p = we
         magnitudeRead = true
-      } else if (lower === 'bn' || lower === 'mn' || lower === 'tn') {
+      } else if (!scientific && (lower === 'bn' || lower === 'mn' || lower === 'tn')) {
         sfx.exp10 = own(MAGNITUDE_WORDS, lower) ?? 0
         p = we
         magnitudeRead = true
-      } else if (isInteger && (lower === 'st' || lower === 'nd' || lower === 'rd' || lower === 'th')) {
+      } else if (isInteger && !scientific && (lower === 'st' || lower === 'nd' || lower === 'rd' || lower === 'th')) {
         sfx.ordinal = true
         sfx.end = we
         return sfx
@@ -664,13 +685,13 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       const we = s + w.length
       if (isDigit(at(we))) return -1
       const lower = w.toLowerCase()
-      if (!magnitudeRead && own(MAGNITUDE_WORDS, lower) !== undefined && lower !== 'bn' && lower !== 'mn' && lower !== 'tn') {
+      if (!magnitudeRead && !scientific && own(MAGNITUDE_WORDS, lower) !== undefined && lower !== 'bn' && lower !== 'mn' && lower !== 'tn') {
         sfx.exp10 = own(MAGNITUDE_WORDS, lower) ?? 0
         magnitudeRead = true
         const next = readSpaced(we)
         return next < 0 ? we : next
       }
-      if (!magnitudeRead && (lower === 'bn' || lower === 'mn' || lower === 'tn')) {
+      if (!magnitudeRead && !scientific && (lower === 'bn' || lower === 'mn' || lower === 'tn')) {
         sfx.exp10 = own(MAGNITUDE_WORDS, lower) ?? 0
         magnitudeRead = true
         const next = readSpaced(we)
@@ -705,7 +726,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         sfx.currency = currency
         return we
       }
-      const unit = own(SPACED_UNITS, lower)
+      const unit = own(SPACED_UNITS, lower) ?? own(GLUED_UNITS, w)
       if (unit !== undefined && !magnitudeRead) {
         sfx.unit = unit
         return we
@@ -860,7 +881,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     if (cur === null) {
       const before = at(i0 - 1)
       if (
-        (i0 - 1 >= floor && (isLetter(before) || before === 0x5f)) ||
+        (i0 - 1 >= floor && (letterAt(i0 - 1) || before === 0x5f)) ||
         (i0 - 2 >= floor && before === 0x2d && isUpper(at(i0 - 2)))
       ) {
         const j = skipIdentifier(i0)
@@ -885,7 +906,12 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       const e = runEnd(p)
       parts.push(p, e)
       const s = at(e)
-      if ((s === 0x2c || s === 0x2e || isGroupSep(s)) && isDigit(at(e + 1))) {
+      // An ordinary space groups digits only under a comma-decimal locale, and only as
+      // "1 234": a short first group, then exactly three digits, as in French.
+      const spaceOk =
+        s === 0x20 && info.decimal === 0x2c && isDigit(at(e + 1)) && runEnd(e + 1) - (e + 1) === 3 &&
+        (parts.length === 2 ? e - p <= 3 : e - p === 3)
+      if (((s === 0x2c || s === 0x2e || isGroupSep(s)) && s !== 0x20 && isDigit(at(e + 1))) || spaceOk) {
         seps.push(s)
         p = e + 1
       } else {
@@ -959,7 +985,10 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         const open = rawStart - 1 >= floor && at(rawStart - 1) === 0x28
         const close = at(rawEnd) === 0x29
         if (open && close) {
-          const yearShaped = sub.int.length === 4 && sub.frac === '' && Number(sub.int) >= 1900 && Number(sub.int) <= 2100
+          // Only a bare parenthesized year is a citation; an amount or a grouped number is not.
+          const yearShaped =
+            sub.int.length === 4 && sub.frac === '' && sub.first === sub.last && currency === undefined &&
+            sfx?.percent === undefined && sfx?.looseMagnitude !== true && Number(sub.int) >= 1900 && Number(sub.int) <= 2100
           // A bare "(500)" or "(2)" is usually a note or a list marker, so only numbers
           // that carry a separator, decimals, a currency or a percent sign read as negatives.
           const hasMark =
@@ -1026,9 +1055,14 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         // 3/4: a fraction or a ratio, which this kit does not evaluate. Both parts are flagged.
         const prev = lastPlain()
         if (prev !== undefined && prev.end === i0 - 1) {
-          const whole = text.slice(prev.start, tok.end)
-          for (const t of [prev, tok]) {
-            if (!t.ambiguous) {
+          // 1/2/3 is one group: every member carries the whole slash chain.
+          const chain = fractionChain[fractionChain.length - 1] === prev ? fractionChain : [prev]
+          chain.push(tok)
+          fractionChain = chain
+          const first = chain[0]
+          const whole = first === undefined ? '' : slice(first.start, tok.end)
+          for (const t of chain) {
+            if (!t.ambiguous || t.ambiguity === 'fraction') {
               t.ambiguous = true
               t.ambiguity = 'fraction'
               t.groupRaw = whole
