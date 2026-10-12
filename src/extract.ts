@@ -44,7 +44,9 @@ const CURRENCY_WORDS: Record<string, string> = {
 }
 
 // Words that say "percent" ("45 percent", "45-percent").
-const PERCENT_WORDS: Record<string, '%'> = { percent: '%', pct: '%' }
+const PERCENT_WORDS: Record<string, '%'> = {
+  percent: '%', pct: '%', prozent: '%', procent: '%', procento: '%', procenten: '%', prosent: '%', pourcent: '%',
+}
 
 // Units written right against the number ("5kg"). Case matters here.
 const GLUED_UNITS: Record<string, string> = {
@@ -96,6 +98,83 @@ const CURRENCY_PREFIX_WORDS: ReadonlySet<string> = new Set([
 const MAGNITUDE_WORDS: Record<string, number> = {
   thousand: 3, million: 6, billion: 9, trillion: 12, bn: 9, mn: 6, tn: 12,
 }
+// Magnitude words that mean one power of ten wherever they are used. Keys are lower case.
+const FIXED_MAGNITUDE: Record<string, number> = {
+  hundred: 2, tausend: 3, tsd: 3, tys: 3, lakh: 5, lakhs: 5, lac: 5, lacs: 5, crore: 7, crores: 7,
+  millions: 6, millionen: 6, mio: 6, mln: 6, 'mill\u00f3n': 6, millon: 6, millones: 6, milione: 6, milioni: 6,
+  'milh\u00e3o': 6, milhao: 6, 'milh\u00f5es': 6, milhoes: 6, miljoen: 6, miljon: 6, miljoner: 6,
+  mrd: 9, mld: 9, milliarde: 9, milliarden: 9, milliard: 9, milliards: 9, miliardo: 9, miliardi: 9, miljard: 9, miljarder: 9,
+}
+// Words that are a magnitude but whose value depends on the language or on the reader (the German Billion
+// is 10^12, the Spanish mil is 1,000, Cr is also an accounting credit): the number is unknown, never guessed.
+const UNREAD_MAGNITUDE: ReadonlySet<string> = new Set([
+  'bio', 'billionen', 'bill\u00f3n', 'billon', 'billones', 'bilh\u00e3o', 'bilhao', 'bilh\u00f5es', 'bilhoes', 'biljoen', 'biljon',
+  'bln', 'mille', 'tusen', 'tusind', 'duizend',
+])
+// Magnitude abbreviations written with a dot ("3,5 Mio. €").
+const MAGNITUDE_ABBREVIATIONS: ReadonlySet<string> = new Set(['mio', 'mrd', 'tsd', 'mln', 'mld', 'tys', 'mil', 'bln'])
+const POINT_WORDS: Record<string, 'pp'> = { pp: 'pp', ppt: 'pp', ppts: 'pp', prozentpunkte: 'pp', prozentpunkt: 'pp' }
+const PERCENT_PHRASES: Record<string, readonly string[]> = { per: ['cent', 'cento'], pour: ['cent'], por: ['ciento', 'cento'] }
+// Magnitude words in scripts that do not use spaces, matched by their first character. Longest first.
+const CJK_MAGNITUDE: ReadonlyMap<number, readonly (readonly [string, number | null])[]> = (() => {
+  const words: [string, number | null][] = [
+    ['\u4e07', 4], ['\u842c', 4], ['\u5104', 8], ['\u4ebf', 8],
+    ['\u4e07\u4ebf', null], ['\u842c\u5104', null], ['\u767e\u4e07', null], ['\u767e\u842c', null], ['\u5343\u4e07', null], ['\u5343\u842c', null],
+    ['\u5343', null], ['\u767e', null], ['\u5146', null], ['\ub9cc', null], ['\uc5b5', null], ['\uc870', null], ['\ucc9c', null], ['\ubc31', null],
+  ]
+  const map = new Map<number, [string, number | null][]>()
+  for (const entry of words) {
+    const key = entry[0].charCodeAt(0)
+    const list = map.get(key) ?? []
+    list.push(entry)
+    map.set(key, list)
+  }
+  for (const list of map.values()) list.sort((a, b) => b[0].length - a[0].length)
+  return map
+})()
+// Magnitude words in Cyrillic, Devanagari and Arabic script: read as a run of letters, then looked up.
+const RUN_MAGNITUDE: ReadonlyMap<string, number | null> = new Map<string, number | null>([
+  ['\u0442\u044b\u0441', null], ['\u0442\u044b\u0441\u044f\u0447', null], ['\u0442\u044b\u0441\u044f\u0447\u0438', null], ['\u0442\u044b\u0441\u044f\u0447\u0430', null],
+  ['\u043c\u043b\u043d', null], ['\u043c\u043b\u0440\u0434', null], ['\u0442\u0440\u043b\u043d', null], ['\u0442\u0438\u0441', null],
+  ['\u043c\u0438\u043b\u043b\u0438\u043e\u043d', null], ['\u043c\u0438\u043b\u043b\u0438\u043e\u043d\u0430', null], ['\u043c\u0438\u043b\u043b\u0438\u043e\u043d\u043e\u0432', null],
+  ['\u043c\u0438\u043b\u043b\u0438\u0430\u0440\u0434', null], ['\u043c\u0438\u043b\u043b\u0438\u0430\u0440\u0434\u0430', null], ['\u043c\u0438\u043b\u043b\u0438\u0430\u0440\u0434\u043e\u0432', null],
+  ['\u043c\u0456\u043b\u044c\u0439\u043e\u043d', null], ['\u043c\u0456\u043b\u044c\u0439\u043e\u043d\u0456\u0432', null], ['\u043c\u0456\u043b\u044c\u044f\u0440\u0434', null], ['\u043c\u0456\u043b\u044c\u044f\u0440\u0434\u0456\u0432', null],
+  ['\u0932\u093e\u0916', 5], ['\u0915\u0930\u094b\u0921\u093c', 7], ['\u0915\u0930\u094b\u095c', 7], ['\u0915\u0930\u094b\u0921', 7],
+  ['\u0939\u091c\u093c\u093e\u0930', 3], ['\u0939\u095b\u093e\u0930', 3], ['\u0939\u091c\u093e\u0930', 3], ['\u0905\u0930\u092c', null], ['\u0916\u0930\u092c', null],
+  ['\u0645\u0644\u064a\u0648\u0646', null], ['\u0645\u0644\u064a\u0627\u0631', null], ['\u0623\u0644\u0641', null], ['\u0627\u0644\u0641', null], ['\u0622\u0644\u0627\u0641', null], ['\u0645\u0644\u0627\u064a\u064a\u0646', null],
+])
+
+// How a magnitude word in the text reads: its power of ten (and whether a bare letter makes it a guess),
+// `null` when it is a magnitude the kit cannot value, `undefined` when it is not a magnitude word.
+type Magnitude = { readonly exp: number; readonly loose: boolean } | null
+
+function magnitudeOf(w: string, hasCurrency: boolean, language: string, spaced: boolean): Magnitude | undefined {
+  const lower = w.toLowerCase()
+  const fixed = own(MAGNITUDE_WORDS, lower) ?? own(FIXED_MAGNITUDE, lower)
+  if (fixed !== undefined) {
+    // Billion and trillion are 10^9 and 10^12 in English and 10^12 and 10^18 in most other languages.
+    if ((lower === 'billion' || lower === 'trillion') && language !== 'en') return null
+    return { exp: fixed, loose: false }
+  }
+  if (UNREAD_MAGNITUDE.has(lower)) return null
+  if (lower === 'mil') return hasCurrency && language === 'en' ? { exp: 6, loose: false } : null
+  if (lower === 'cr') return hasCurrency ? { exp: 7, loose: false } : null
+  if (w === 'MM') return hasCurrency ? { exp: 6, loose: false } : spaced ? undefined : { exp: 6, loose: true }
+  if (w === 'mm' && hasCurrency) return { exp: 6, loose: false }
+  return undefined
+}
+
+/** The power of ten of a single magnitude letter (K, M, B, T in either case), or -1. */
+function letterExp(w: string): number {
+  return w === 'K' || w === 'k' ? 3 : w === 'M' || w === 'm' ? 6 : w === 'B' || w === 'b' ? 9 : w === 'T' || w === 't' ? 12 : -1
+}
+
+// Vulgar fraction characters: the digits after the decimal point when the fraction is exact, `null` when it is not.
+const VULGAR_FRACTIONS: ReadonlyMap<number, string | null> = new Map<number, string | null>([
+  [0xbc, '25'], [0xbd, '5'], [0xbe, '75'], [0x2150, null], [0x2151, null], [0x2152, '1'], [0x2153, null], [0x2154, null],
+  [0x2155, '2'], [0x2156, '4'], [0x2157, '6'], [0x2158, '8'], [0x2159, null], [0x215a, null], [0x215b, '125'], [0x215c, '375'],
+  [0x215d, '625'], [0x215e, '875'], [0x2189, ''],
+])
 
 /** A table lookup that never reaches Object.prototype ("constructor", "toString", ...). */
 function own<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
@@ -244,6 +323,7 @@ function fold(text: string): Uint16Array {
     if (c >= 0x80) {
       if (c >= 0xff01 && c <= 0xff5e) c -= 0xfee0
       else if (c === 0x3000) c = 0x20
+      else if (c === 0x2044 || c === 0x2215) c = 0x2f // fraction slash and division slash: a slash
       else if (c === 0x066b) c = 0x2e
       else if (c === 0x066c) c = 0x2c
       else if (c === 0x066a) c = 0x25
@@ -331,6 +411,8 @@ interface Suffix {
   tooLong: boolean
   /** The scale came from scientific notation, which belongs to this number alone. */
   scientific: boolean
+  /** A magnitude word follows that the kit cannot value ("2 Billionen", "5 Cr"). */
+  unreadMagnitude: boolean
 }
 
 /** Extract the numbers from a text. Linear time; never throws on odd characters. */
@@ -376,6 +458,8 @@ export function scan(
     unit?: string
     exp: number
     loose: boolean
+    /** A member has a magnitude word the kit cannot value, so the others cannot be read either. */
+    unread?: boolean
   }
   let rangeGroup: Group | null = null
   let dimensionGroup: Group | null = null
@@ -895,9 +979,38 @@ export function scan(
 
   const isSignCode = (c: number): boolean => c === 0x2d || c === 0x2b
 
+  /** True when the folded text at `q` starts with `word` (BMP characters only). */
+  const startsWithAt = (q: number, word: string): boolean => {
+    for (let k = 0; k < word.length; k++) if (at(q + k) !== word.charCodeAt(k)) return false
+    return true
+  }
+
+  /**
+   * A magnitude word in another script right after a number, optionally after one space:
+   * 万, 億, млн, लाख. `exp` is null for a word the kit cannot value.
+   */
+  const scriptMagnitudeAt = (p0: number): { end: number; exp: number | null } | null => {
+    let q = p0
+    if (at(q) === 0x20 || at(q) === NBSP) q++
+    const c = at(q)
+    if (c < 0x400) return null
+    const cjk = CJK_MAGNITUDE.get(c)
+    if (cjk !== undefined) {
+      for (const [word, exp] of cjk) if (startsWithAt(q, word)) return { end: q + word.length, exp }
+      return null
+    }
+    const lo = c >= 0x900 && c <= 0x97f ? 0x900 : c >= 0x600 && c <= 0x6ff ? 0x600 : c >= 0x400 && c <= 0x52f ? 0x400 : -1
+    if (lo < 0) return null
+    const hi = lo === 0x900 ? 0x97f : lo === 0x600 ? 0x6ff : 0x52f
+    let r = q
+    while (r < n && r - q < 12 && at(r) >= lo && at(r) <= hi) r++
+    const exp = RUN_MAGNITUDE.get(slice(q, r).toLowerCase())
+    return exp === undefined ? null : { end: r, exp }
+  }
+
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
     const sfx: Suffix = {
-      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false,
+      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false,
     }
     let p = e
     if (at(p) === 0x5f) {
@@ -962,7 +1075,23 @@ export function scan(
       return sfx
     }
     let magnitudeRead = false
-    if (isLetter(at(p)) || (at(p) === 0x3bc && isLetter(at(p + 1)))) {
+    // A dot after a magnitude abbreviation ("3,5 Mio. €") belongs to it when a currency or unit follows.
+    let magAbbreviation = false
+    const script = scientific ? null : scriptMagnitudeAt(p)
+    if (script !== null) {
+      if (script.exp === null) sfx.unreadMagnitude = true
+      else sfx.exp10 = script.exp
+      p = script.end
+      // 350万円: the currency word that closes the magnitude.
+      if (at(p) === 0x5186) {
+        sfx.currency = 'JPY'
+        p++
+      } else if (at(p) === 0x5143) {
+        sfx.currency = 'CNY'
+        p++
+      }
+      magnitudeRead = true
+    } else if (isLetter(at(p)) || (at(p) === 0x3bc && isLetter(at(p + 1)))) {
       const w = readWord(p, 16)
       const we = p + w.length
       if ((w === 'x' || w === 'X') && (isDigit(at(we)) || (at(we) === 0x2e && isDigit(at(we + 1)))) && !isZero) {
@@ -976,24 +1105,30 @@ export function scan(
       const lower = w.toLowerCase()
       const single = !scientific && (w === 'K' || w === 'k' || w === 'M' || w === 'B' || w === 'T')
       const singleLower = !scientific && hasCurrency && (w === 'm' || w === 'b' || w === 't')
+      const mag = scientific || single || singleLower ? undefined : magnitudeOf(w, hasCurrency, info.language, false)
       if (single || singleLower) {
-        sfx.exp10 = w === 'K' || w === 'k' ? 3 : w === 'M' || w === 'm' ? 6 : w === 'B' || w === 'b' ? 9 : 12
+        sfx.exp10 = letterExp(w)
         sfx.looseMagnitude = !hasCurrency
         p = we
         magnitudeRead = true
-      } else if (!scientific && (lower === 'bn' || lower === 'mn' || lower === 'tn')) {
-        sfx.exp10 = own(MAGNITUDE_WORDS, lower) ?? 0
+      } else if (mag !== undefined) {
+        if (mag === null) sfx.unreadMagnitude = true
+        else {
+          sfx.exp10 = mag.exp
+          sfx.looseMagnitude = mag.loose
+        }
+        magAbbreviation = MAGNITUDE_ABBREVIATIONS.has(lower)
         p = we
         magnitudeRead = true
       } else if (isInteger && !scientific && (lower === 'st' || lower === 'nd' || lower === 'rd' || lower === 'th')) {
         sfx.ordinal = true
         sfx.end = we
         return sfx
-      } else if (lower === 'pp' || lower === 'ppt' || lower === 'ppts') {
+      } else if (own(POINT_WORDS, lower) !== undefined) {
         sfx.percent = 'pp'
         sfx.end = we
         return sfx
-      } else if (lower === 'pct') {
+      } else if (own(PERCENT_WORDS, lower) !== undefined) {
         sfx.percent = '%'
         sfx.end = we
         return sfx
@@ -1045,25 +1180,34 @@ export function scan(
       const we = s + w.length
       if (isDigit(at(we))) return -1
       const lower = w.toLowerCase()
-      if (!magnitudeRead && !scientific && own(MAGNITUDE_WORDS, lower) !== undefined && lower !== 'bn' && lower !== 'mn' && lower !== 'tn') {
-        sfx.exp10 = own(MAGNITUDE_WORDS, lower) ?? 0
-        magnitudeRead = true
-        const next = readSpaced(we)
-        return next < 0 ? we : next
+      if (!scientific) {
+        // "$5 M": a lone magnitude letter after a currency amount, when nothing but a boundary follows it.
+        const letter = hasCurrency && w.length === 1 ? letterExp(w) : -1
+        const boundary = letter >= 0 && (we >= n || at(we) === 0x20 || at(we) === NBSP || at(we) === 0x29 || at(we) === 0x2c || at(we) === 0x2e || at(we) === 0x3b || at(we) === 0x3a || at(we) === 0x21 || at(we) === 0x3f)
+        const mag = boundary ? { exp: letter, loose: false } : magnitudeOf(w, hasCurrency, info.language, true)
+        if (mag !== undefined) {
+          // Two magnitude words in a row multiply ("1 hundred thousand", "3 lakh crore"): not read.
+          if (magnitudeRead || mag === null) sfx.unreadMagnitude = true
+          else sfx.exp10 = mag.exp
+          if (magnitudeRead) return we
+          magnitudeRead = true
+          let next = -1
+          if (at(we) === 0x2e && MAGNITUDE_ABBREVIATIONS.has(lower)) next = readSpaced(we + 1)
+          if (next < 0) next = readSpaced(we)
+          return next < 0 ? we : next
+        }
       }
-      if (!magnitudeRead && !scientific && (lower === 'bn' || lower === 'mn' || lower === 'tn')) {
-        sfx.exp10 = own(MAGNITUDE_WORDS, lower) ?? 0
-        magnitudeRead = true
-        const next = readSpaced(we)
-        return next < 0 ? we : next
-      }
-      if (lower === 'percent' || lower === 'pct') {
+      if (own(PERCENT_WORDS, lower) !== undefined) {
         sfx.percent = '%'
         return we
       }
-      if (lower === 'per' && at(we) === 0x20 && readWord(we + 1, 6).toLowerCase() === 'cent') {
-        sfx.percent = '%'
-        return we + 1 + 4
+      const second = own(PERCENT_PHRASES, lower)
+      if (second !== undefined && at(we) === 0x20) {
+        const w2 = readWord(we + 1, 6).toLowerCase()
+        if (second.includes(w2)) {
+          sfx.percent = '%'
+          return we + 1 + w2.length
+        }
       }
       if (lower === 'percentage') {
         const w2 = readWord(we + 1, 8).toLowerCase()
@@ -1073,7 +1217,7 @@ export function scan(
         }
         return -1
       }
-      if (lower === 'pp' || lower === 'ppt') {
+      if (own(POINT_WORDS, lower) !== undefined) {
         sfx.percent = 'pp'
         return we
       }
@@ -1096,7 +1240,9 @@ export function scan(
       return -1
     }
     if (magnitudeRead) {
-      const next = readSpaced(p)
+      let next = -1
+      if (magAbbreviation && at(p) === 0x2e) next = readSpaced(p + 1)
+      if (next < 0) next = readSpaced(p)
       if (next >= 0) p = next
       sfx.end = p
       if (sfx.currency !== undefined || sfx.percent !== undefined) sfx.looseMagnitude = false
@@ -1230,6 +1376,10 @@ export function scan(
   while (i < n) {
     const c = f[i] ?? 0
     if (c < 0x30 || c > 0x39) {
+      if (VULGAR_FRACTIONS.has(c)) {
+        i = handle(i)
+        continue
+      }
       if (c >= 0xd800 && c <= 0xdbff) {
         // Mathematical and other astral digits cannot be folded; they are listed, never dropped quietly.
         const e = astralDigitsEnd(i)
@@ -1264,9 +1414,11 @@ export function scan(
   }
 
   function handle(d0: number): number {
+    // A vulgar fraction on its own ("½", "¼%") starts here instead of a digit.
+    const bare = !isDigit(at(d0))
     // A decimal mark right before the digits, with nothing numeric before it, belongs to the number.
     const mark = at(d0 - 1)
-    const lead = (mark === 0x2e || mark === 0x2c) && d0 - 1 >= floor && leadingMarkBoundary(d0 - 2, mark)
+    const lead = !bare && (mark === 0x2e || mark === 0x2c) && d0 - 1 >= floor && leadingMarkBoundary(d0 - 2, mark)
     // `i0` is where the number's own text starts, the mark included.
     const i0 = lead ? d0 - 1 : d0
     // ---- prefix: sign, currency, opening parenthesis --------------------------
@@ -1311,7 +1463,7 @@ export function scan(
     const timesPrev = operatorBefore(start)
 
     // ---- identifiers glued to the number ("X3", "v2.1", "COVID-19") ------------
-    if (cur === null) {
+    if (cur === null && !bare) {
       const before = at(i0 - 1)
       if (before === 0x2d && i0 - 1 >= floor && !hyphenQuantityAt(i0)) {
         // Llama-3.3-70B-Instruct, gpt-5.4-nano-2026-03-17
@@ -1345,7 +1497,7 @@ export function scan(
     }
 
     // ---- dates, times, month names -----------------------------------------------
-    if (cur === null && !signValid) {
+    if (cur === null && !signValid && !bare) {
       const d = rangeDash < 0 && !lead ? tryDate(i0) : -1
       if (d >= 0) return d
       const m = lead ? -1 : tryMonthName(i0)
@@ -1387,9 +1539,31 @@ export function scan(
         return j
       }
     }
+    // A vulgar fraction right after the digits ("3½", "1 ½") or standing alone ("¼%") is part of the number.
+    let vulgar: string | null | undefined
+    let vulgarEnd = -1
+    {
+      const gap = !bare && (at(p) === 0x20 || at(p) === NBSP) ? 1 : 0
+      const code = at(p + gap)
+      if (VULGAR_FRACTIONS.has(code)) {
+        vulgar = VULGAR_FRACTIONS.get(code) ?? null
+        vulgarEnd = p + gap + 1
+      }
+    }
     const chain = interpretChain(parts, seps)
     const tokenCount = chain.tokens.length
-    const chainEnd = p
+    const chainEnd = vulgarEnd >= 0 ? vulgarEnd : p
+    // The fraction belongs to the last number of the chain. It is read exactly when the fraction is
+    // exact and the number has no decimals of its own; otherwise the whole form is passed over, and listed.
+    let vulgarRead = false
+    if (vulgarEnd >= 0) {
+      const lastSub = chain.tokens[tokenCount - 1]
+      if (lastSub !== undefined && !chain.skippedRest && vulgar !== null && vulgar !== undefined && lastSub.frac === '' && lastSub.alt === undefined) {
+        lastSub.frac = vulgar
+        lastSub.ambiguity = 'fraction'
+        vulgarRead = true
+      }
+    }
     // A chain such as 1,234.5.6 is not a number: the part that could not be read is passed over, and listed.
     if (chain.skippedRest) skip(chain.restStart, chainEnd, 'identifier')
     let result = chainEnd
@@ -1406,7 +1580,7 @@ export function scan(
         sub.int = '0'
       }
       const digitsStart = parts[2 * sub.first] ?? d0
-      const digitsEnd = parts[2 * sub.last + 1] ?? chainEnd
+      const digitsEnd = isLast && vulgarEnd >= 0 ? vulgarEnd : parts[2 * sub.last + 1] ?? chainEnd
       let tokStart = digitsStart
       let tokEnd = digitsEnd
       const tok = makeToken('', tokStart, tokEnd, '0', 0, 'count')
@@ -1424,6 +1598,12 @@ export function scan(
           neg = at(signPos) === 0x2d
           signStyle = neg ? 'minus' : 'plus'
         }
+      }
+      if (isLast && vulgarEnd >= 0 && !vulgarRead) {
+        // ⅓, 2⅔: no exact decimal. The kit does not read it, and says so.
+        skip(digitsStart, vulgarEnd, 'unread-glued-form')
+        result = Math.max(result, vulgarEnd)
+        continue
       }
       let sfx: Suffix | undefined
       if (isLast) {
@@ -1447,6 +1627,7 @@ export function scan(
       let ambiguity = sub.ambiguity
       if (sfx?.superscript === true) ambiguity = 'superscript'
       if (sfx?.tooLong === true || sub.int.length + sub.frac.length > MAX_DIGITS) ambiguity = 'too-long'
+      if (sfx?.unreadMagnitude === true && ambiguity !== 'too-long' && ambiguity !== 'superscript') ambiguity = 'magnitude'
       if (isFirst && isLast && parenNeg && !neg && signStyle === undefined && ambiguity !== 'too-long') {
         const openAt = parenAfterCurrency ? i0 - 1 : rawStart - 1
         const open = openAt >= floor && at(openAt) === 0x28
@@ -1489,6 +1670,10 @@ export function scan(
           alternates.push({ value: decimalString(neg, sub.int, sub.frac, 0), scale: sub.frac.length })
           ambiguity = ambiguity ?? 'suffix'
         }
+        if (vulgarRead && isLast && sub.int !== '' && ambiguity === 'fraction') {
+          // "3½": 3.5, or the 3 the fraction character was dropped from.
+          alternates.push({ value: decimalString(neg, sub.int, '', exp10), scale: -exp10 })
+        }
       }
 
       // ---- kind and unit ---------------------------------------------------------------------
@@ -1514,6 +1699,8 @@ export function scan(
       tok.start = rawStart
       tok.end = rawEnd
       tok.raw = text.slice(rawStart, rawEnd)
+      // The same words written the same way in the evidence vouch for these (like a fraction written 3/4 twice).
+      if (ambiguity === 'magnitude' || (vulgarRead && isLast)) tok.groupRaw = tok.raw
       if (signStyle !== undefined) tok.signStyle = signStyle
       if (parenthesized) tok.parenthesized = true
       if (ambiguity !== undefined) {
@@ -1569,6 +1756,11 @@ export function scan(
 
   /** Give a member what the rest of its group says: percent, currency, unit and magnitude. */
   function applyGroup(g: Group, m: Tok): void {
+    if (g.unread === true && g.kind === 'range' && m.ambiguity !== 'magnitude' && m.ambiguity !== 'too-long' && m.ambiguity !== 'superscript') {
+      m.ambiguous = true
+      m.ambiguity = 'magnitude'
+      m.groupRaw = m.raw
+    }
     if (isPlainKind(m) && m.unit === undefined) {
       if (g.kind === 'range' && g.percent !== undefined) {
         m.kind = 'percent'
@@ -1651,6 +1843,10 @@ export function scan(
       changed = true
     } else if (m.kind !== 'percent' && m.kind !== 'currency' && m.unit !== undefined && g.unit === undefined) {
       g.unit = m.unit
+      changed = true
+    }
+    if (m.ambiguity === 'magnitude' && g.unread !== true) {
+      g.unread = true
       changed = true
     }
     const inf = numInfo.get(m)

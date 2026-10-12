@@ -5,6 +5,8 @@
 export type DateOrder = 'MDY' | 'DMY'
 
 export interface LocaleInfo {
+  /** The lower-case language code, such as `en` or `de`. */
+  readonly language: string
   /** Char code of the decimal mark: 0x2e (.) or 0x2c (,). */
   readonly decimal: number
   readonly order: DateOrder
@@ -26,7 +28,7 @@ const MDY_REGIONS = new Set(['en-us', 'en', 'en-ph'])
 
 export const SUPPORTED_LANGUAGES: readonly string[] = [...DOT_DECIMAL, ...COMMA_DECIMAL].sort()
 
-const DEFAULT: LocaleInfo = { decimal: 0x2e, order: 'MDY', indian: false, apostrophe: false }
+const DEFAULT: LocaleInfo = { language: 'en', decimal: 0x2e, order: 'MDY', indian: false, apostrophe: false }
 
 export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
   if (locale === undefined) return DEFAULT
@@ -49,5 +51,5 @@ export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
     )
   }
   const order: DateOrder = MDY_REGIONS.has(regional) ? 'MDY' : 'DMY'
-  return { decimal, order, indian: region === 'in', apostrophe: region === 'ch' || region === 'li' }
+  return { language, decimal, order, indian: region === 'in', apostrophe: region === 'ch' || region === 'li' }
 }

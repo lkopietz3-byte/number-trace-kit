@@ -477,3 +477,175 @@ describe('M1 hostile:F2: digits the kit cannot fold are listed, not dropped', ()
     }
   })
 })
+
+// ---- 0.1.0 release: M4, magnitude words and vulgar fractions ---------------------------------------
+
+describe('M4 false-pass:F05: magnitude words with a fixed value are read', () => {
+  it('false-pass:F05 lakh and crore are different magnitudes', () => {
+    expect(trace('Price is ₹5 lakh', 'Price is ₹5 crore').verdict).toBe('untraced')
+    expect(trace('Price is ₹5 lakh', 'Price is ₹5 lakh').verdict).toBe('clean')
+    expect(trace('Price is ₹5 lakh', 'Price is ₹500,000').verdict).toBe('clean')
+    expect(trace('Price is ₹5 crore', 'Price is ₹50,000,000').verdict).toBe('clean')
+    expect(extractNumbers('₹5 lakh, ₹2 lakhs, ₹3 lac, ₹1.5 crore, ₹4 crores').map((t) => t.value)).toEqual(['500000', '200000', '300000', '15000000', '40000000'])
+  })
+  it('false-pass:F05 Millionen is not Milliarden (de-DE)', () => {
+    expect(trace('Umsatz: 3,5 Millionen', 'Umsatz: 3,5 Milliarden', { locale: 'de-DE' }).verdict).toBe('untraced')
+    expect(trace('Umsatz: 3,5 Millionen', 'Umsatz: 3.500.000', { locale: 'de-DE' }).verdict).toBe('clean')
+    expect(trace('Umsatz: 3,5 Milliarden', 'Umsatz: 3.500.000.000', { locale: 'de-DE' }).verdict).toBe('clean')
+  })
+  it('false-pass:F05 and F19 3,5 Mio. € traces to 3.500.000 €', () => {
+    const r = trace('Umsatz: 3,5 Mio. €.', 'Umsatz: 3.500.000 €', { locale: 'de-DE' })
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers[0]?.token).toMatchObject({ value: '3500000', currency: 'EUR', kind: 'currency' })
+    expect(r.numbers[0]?.token.raw).toBe('3,5 Mio. €')
+    expect(trace('3,5 Mio. € Umsatz', '3.500.000 €', { locale: 'de-DE' }).verdict).toBe('clean')
+    expect(trace('3,5 Mrd. €', '3.500.000 €', { locale: 'de-DE' }).verdict).toBe('untraced')
+    // The dot after an abbreviation that ends a sentence is not part of the number.
+    expect(extractNumbers('Wir hatten 5 Mio. Der Rest', { locale: 'de-DE' })[0]?.raw).toBe('5 Mio')
+  })
+  it('false-pass:F05 $5 Mio is not $5, and MM, mil, hundred and Tausend are magnitudes', () => {
+    expect(trace('Revenue was $5 Mio', 'Revenue was $5').verdict).toBe('untraced')
+    expect(trace('Revenue was $1.2 MM', 'Revenue was $1.2 million').verdict).toBe('clean')
+    expect(trace('Revenue was $1.2MM', 'Revenue was $1.2 million').verdict).toBe('clean')
+    expect(trace('Revenue was $5 million', 'Revenue was $5 mil').verdict).toBe('clean')
+    expect(trace('Revenue was $5 mil', 'Revenue was $5 million').verdict).toBe('clean')
+    expect(trace('Revenue was $5 hundred', 'Revenue was $5').verdict).toBe('untraced')
+    expect(trace('Revenue was $5 hundred', 'Revenue was $500').verdict).toBe('clean')
+    expect(trace('Es sind 5 Tausend', 'Es sind 5000', { locale: 'de-DE' }).verdict).toBe('clean')
+    expect(trace('$5 M', '$5 million').verdict).toBe('clean')
+    expect(trace('$5 M', '$5').verdict).toBe('untraced')
+    expect(trace('5 mln zł', '5 000 000 zł', { locale: 'pl-PL' }).verdict).toBe('clean') // zł is not a known currency: both are bare counts
+    expect(extractNumbers('5 mln').map((t) => t.value)).toEqual(['5000000'])
+    expect(extractNumbers('€5 Mrd').map((t) => [t.value, t.currency])).toEqual([['5000000000', 'EUR']])
+  })
+  it('false-pass:F05 CJK 万 and 億/亿 are read, with the currency that follows', () => {
+    expect(extractNumbers('350万円').map((t) => [t.value, t.currency, t.kind])).toEqual([['3500000', 'JPY', 'currency']])
+    expect(extractNumbers('売上は12億円').map((t) => [t.value, t.currency])).toEqual([['1200000000', 'JPY']])
+    expect(extractNumbers('营收5亿元').map((t) => [t.value, t.currency])).toEqual([['500000000', 'CNY']])
+    expect(extractNumbers('3.5万').map((t) => [t.value, t.scale])).toEqual([['35000', -3]])
+    expect(trace('350万円', '3,500,000円').verdict).not.toBe('clean')
+    expect(trace('売上は350万', '売上は3,500,000').verdict).toBe('clean')
+    expect(trace('売上は350万', '売上は350億').verdict).toBe('untraced')
+    // A yen amount with no magnitude word is unchanged: the number is read, the yen sign is not.
+    expect(extractNumbers('売上は1,234円で').map((t) => t.raw)).toEqual(['1,234'])
+  })
+})
+
+describe('M4 false-pass:F05 and hostile:F1: a magnitude word the kit cannot value is unknown', () => {
+  const unread: [string, string, string?][] = [
+    ['Es gibt 2 Billionen', 'Es gibt 2', 'de-DE'],
+    ['Cuesta 3 mil', 'Cuesta 3', 'es-ES'],
+    ['It was 5 Cr', 'It was 5'],
+    ['Он вырос на 5 млн', 'Он вырос на 5', 'ru-RU'],
+    ['3 억 원', '3', 'ko-KR'],
+    ['売上は5千', '売上は5', 'ja-JP'],
+    ['1 hundred thousand', '1'],
+    ['₹3 lakh crore', '₹3'],
+    ['Det finns 5 tusen', 'Det finns 5', 'sv-SE'],
+    ['Il y a 5 mille', 'Il y a 5', 'fr-FR'],
+    ['Er zijn 5 duizend', 'Er zijn 5', 'nl-NL'],
+    ['Zysk 3 bln', 'Zysk 3', 'pl-PL'],
+    ['It was 2 billion', 'It was 2', 'de-DE'],
+  ]
+  for (const [out, ev, locale] of unread) {
+    it(`false-pass:F05 "${out}" is unknown (unread-magnitude), never clean`, () => {
+      const options = locale === undefined ? undefined : { locale }
+      const r = trace(out, ev, options)
+      expect(r.verdict).toBe('unknown')
+      const reasons = r.numbers.map((n) => n.reason)
+      expect(reasons).toContain('unread-magnitude')
+      expect(r.numbers.find((n) => n.reason === 'unread-magnitude')?.token).toMatchObject({ ambiguous: true, ambiguity: 'magnitude' })
+    })
+  }
+  it('false-pass:F05 the same unread phrase written the same way in the evidence traces', () => {
+    expect(trace('Es gibt 2 Billionen', 'Es gibt 2 Billionen', { locale: 'de-DE' }).verdict).toBe('clean')
+    // A currency word after the phrase makes it a different phrase.
+    expect(trace('Es gibt 2 Billionen', 'Es gibt 2 Billionen Euro', { locale: 'de-DE' }).verdict).toBe('unknown')
+    expect(trace('Es gibt 2 Billionen', 'Es gibt 2 Milliarden', { locale: 'de-DE' }).verdict).toBe('unknown')
+  })
+  it('false-pass:F05 an unread magnitude in the evidence only ever makes an output number unknown', () => {
+    const r = trace('There were 5.', 'There were 5 Cr.')
+    expect(r.numbers[0]).toMatchObject({ status: 'unknown', reason: 'ambiguous-reading' })
+  })
+  it('false-pass:F05 English billion is unchanged, other locales do not guess a long or short scale', () => {
+    expect(extractNumbers('2 billion and 3 trillion').map((t) => t.value)).toEqual(['2000000000', '3000000000000'])
+    expect(extractNumbers('2 billion', { locale: 'de-DE' })[0]).toMatchObject({ ambiguous: true, ambiguity: 'magnitude' })
+  })
+})
+
+describe('M4 false-pass:F19: percent words in other languages', () => {
+  it('false-pass:F19 Prozent, procent, pour cent, por ciento and per cento are percent', () => {
+    expect(trace('Rate of 12,5 Prozent', 'Rate of 12,5 %', { locale: 'de-DE' }).verdict).toBe('clean')
+    expect(trace('Rate of 12,5 %', 'Rate of 12,5 Prozent', { locale: 'de-DE' }).verdict).toBe('clean')
+    expect(trace('12,5 Prozent', '12,5 %', { locale: 'de-DE' }).numbers[0]?.token).toMatchObject({ kind: 'percent', value: '12.5' })
+    for (const [text, locale] of [['12,5 pour cent', 'fr-FR'], ['12,5 por ciento', 'es-ES'], ['12,5 por cento', 'pt-PT'], ['12,5 per cento', 'it-IT'], ['12,5 procent', 'nl-NL'], ['12,5 procent', 'sv-SE'], ['12,5 prosent', 'nb-NO']] as const) {
+      expect(trace(text, '12,5 %', { locale }).verdict, text).toBe('clean')
+    }
+    expect(trace('12,5 Prozent', '13,5 %', { locale: 'de-DE' }).verdict).toBe('untraced')
+    expect(trace('2 Prozentpunkte', '2 pp', { locale: 'de-DE' }).verdict).toBe('clean')
+    expect(extractNumbers('12 Prozent').map((t) => [t.kind, t.unit])).toEqual([['percent', '%']])
+  })
+  it('false-pass:F19 Euro after a magnitude is the currency', () => {
+    expect(trace('Umsatz: 3,5 Millionen Euro', 'Umsatz: 3.500.000 Euro', { locale: 'de-DE' }).verdict).toBe('clean')
+    expect(trace('Umsatz: 3,5 Millionen Euro', 'Umsatz: 3.500.000 €', { locale: 'de-DE' }).verdict).toBe('clean')
+  })
+})
+
+describe('M4 false-pass:F11 and hostile:F1: vulgar fractions', () => {
+  it('false-pass:F11 3½ against 3 is unknown, never clean', () => {
+    const r = trace('Raise 3½ points', 'Raise 3 points')
+    expect(r.verdict).toBe('unknown')
+    expect(r.numbers[0]?.token).toMatchObject({ raw: '3½', value: '3.5', ambiguous: true, ambiguity: 'fraction' })
+    expect(r.numbers[0]?.status).toBe('unknown')
+  })
+  it('hostile:F1 $5½ against $5 and 1½ hours against 1 hour are unknown', () => {
+    const a = trace('The price rose to $5½.', 'The price is $5.')
+    expect(a.verdict).toBe('unknown')
+    expect(a.numbers[0]?.token).toMatchObject({ raw: '$5½', value: '5.5', currency: 'USD', ambiguity: 'fraction' })
+    expect(trace('It took 1½ hours.', 'It took 1 hour.').verdict).toBe('unknown')
+    expect(trace('It took 1 ½ hours.', 'It took 1 hour.').verdict).toBe('unknown')
+  })
+  it('hostile:F1 ¼% and 2¼% keep their percent sign', () => {
+    const t = extractNumbers('Conversion is ¼% higher, and 2¼% overall.')
+    expect(t.map((x) => [x.raw, x.value, x.scale, x.kind, x.unit, x.ambiguity])).toEqual([
+      ['¼%', '0.25', 2, 'percent', '%', 'fraction'],
+      ['2¼%', '2.25', 2, 'percent', '%', 'fraction'],
+    ])
+    expect(trace('Conversion is ¼% higher.', 'Conversion is 25% higher.').verdict).toBe('untraced')
+    expect(trace('Conversion is ¼% higher.', 'Conversion is 0.25% higher.').verdict).toBe('unknown')
+  })
+  it('hostile:F1 a magnitude after a vulgar fraction stays attached', () => {
+    const [t] = extractNumbers('$1¾ million')
+    expect(t).toMatchObject({ value: '1750000', currency: 'USD', ambiguity: 'fraction' })
+    expect(trace('$1¾ million', '$1 million').verdict).toBe('unknown')
+  })
+  it('hostile:F1 the same fraction written the same way traces', () => {
+    expect(trace('It took 1½ hours.', 'It took 1½ hours.').verdict).toBe('clean')
+    expect(trace('It took 1½ hours.', 'It took 1½ days.').verdict).not.toBe('clean')
+    expect(trace('Rate ¼%', 'Rate ¼%').verdict).toBe('clean')
+    expect(trace('Rate ¼%', 'Rate ¼ percent').verdict).toBe('unknown')
+  })
+  it('hostile:F1 a fraction that has no exact decimal is skipped as an unread form', () => {
+    const r = trace('About ⅓ of users and 2⅔ hours', 'About 33% of users')
+    expect(r.numbers).toEqual([])
+    expect(r.skipped.map((s) => [s.raw, s.reason])).toEqual([['⅓', 'unread-glued-form'], ['2⅔', 'unread-glued-form']])
+    expect(r.verdict).toBe('unknown')
+    expect(trace('Total ⅞', 'Total 0.875').numbers[0]?.token).toMatchObject({ value: '0.875', ambiguity: 'fraction' })
+  })
+  it('hostile:F1 the fraction slash is a slash: 5⁄2 is unknown like 5/2', () => {
+    const slash = trace('Total 5⁄2', 'Total 5 and 1 and 2')
+    const ascii = trace('Total 5/2', 'Total 5 and 1 and 2')
+    expect(slash.verdict).toBe('unknown')
+    expect(slash.verdict).toBe(ascii.verdict)
+    expect(slash.numbers.map((n) => [n.token.raw, n.status])).toEqual(ascii.numbers.map((n) => [n.token.raw, n.status]))
+    expect(extractNumbers('5⁄2').map((t) => t.ambiguity)).toEqual(['fraction', 'fraction'])
+  })
+  it('hostile:F1 every vulgar fraction character is accounted for', () => {
+    const chars = ['¼', '½', '¾', '⅐', '⅑', '⅒', '⅓', '⅔', '⅕', '⅖', '⅗', '⅘', '⅙', '⅚', '⅛', '⅜', '⅝', '⅞', '↉']
+    for (const ch of chars) {
+      const r = trace(`Of ${ch} total`, 'x')
+      expect(r.numbers.length + r.skipped.length, ch).toBe(1)
+      expect(r.verdict, ch).toBe(r.numbers[0]?.status === 'untraced' ? 'untraced' : 'unknown')
+    }
+  })
+})

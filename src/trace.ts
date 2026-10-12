@@ -49,7 +49,7 @@ import type {
 } from './types.js'
 
 const KINDS: readonly NumberKind[] = ['percent', 'currency', 'count', 'decimal', 'year', 'date-part', 'ordinal']
-const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long']
+const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long', 'magnitude']
 const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average', 'product']
 const DATE_PARTS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 const MAX_LIST = 8
@@ -477,7 +477,7 @@ function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
 function weakPrimary(t: NumberToken): boolean {
   if (t.localeGuess === true) return true
   return (
-    t.ambiguous && (t.ambiguity === 'fraction' || t.ambiguity === 'identifier' || t.ambiguity === 'separator') &&
+    t.ambiguous && (t.ambiguity === 'fraction' || t.ambiguity === 'identifier' || t.ambiguity === 'magnitude' || t.ambiguity === 'separator') &&
     (t.ambiguity !== 'separator' || t.alternates === undefined || t.alternates.length === 0)
   )
 }
@@ -1314,11 +1314,13 @@ function traceOne(
   const mantissa = mantissaAt(dec.n < 0n ? { n: -dec.n, s: dec.s } : dec, tok.scale)
   if (mantissa === null) return unknownTrace(tok, 'unrepresentable')
 
-  if (tok.ambiguity === 'fraction' && tok.groupRaw !== undefined) {
-    // The same fraction written the same way vouches for both halves.
+  if ((tok.ambiguity === 'fraction' || tok.ambiguity === 'magnitude') && tok.groupRaw !== undefined) {
+    // The same fraction (or the same unread phrase) written the same way vouches for it.
     const same = ev.groupRaw.get(tok.groupRaw, key)
     if (same !== undefined && same.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(same) }
   }
+  // A magnitude word the kit cannot value is never a pass or a fail.
+  if (tok.ambiguity === 'magnitude') return unknownTrace(tok, 'unread-magnitude')
   // The number as written, and (with allowBareEvidence) as a unit-less number.
   const variants: Variant[] = [{ shape, bare: false, unverified: false }]
   if (ctx.allowBare && shape.cls !== 'plain') variants.push({ shape: BARE_SHAPE, bare: true, unverified: true })

@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `traceNumbers` returns `skipped`: every stretch of the output that holds digits but was not read as a number, with `raw`, `start`, `end` and a `reason` (`identifier`, `unread-glued-form` or `ignored`), and `counts.skipped` (its length). New exported types: `SkippedNumber`, `SkipReason`, `TraceCounts`. `TraceResult.counts` is now a `TraceCounts`, which adds `skipped` to the six statuses.
 - A number glued to letters the kit does not know and cannot call an identifier (`12foo`, `50p`, `9999kr`, `Rs1,500`) is `unread-glued-form`, and the verdict is `unknown`, not `clean`. `ignore` and `ignorePattern` cover it.
 
+### Added (M4: magnitude words and vulgar fractions)
+
+- `AmbiguityReason` gains `magnitude`: a magnitude word the kit cannot value. The number traces to `unknown` with the reason `unread-magnitude` (unless the same phrase is in the evidence).
+- Vulgar fractions (`½ ¼ ¾` and `U+2150` to `U+215E`) are read as ambiguous `fraction` tokens with an exact decimal value, the percent sign, currency and magnitude attached, and the number without the fraction as the alternate reading. A fraction with no exact decimal (`⅓`) is listed in `skipped`. The fraction slash `U+2044` and the division slash `U+2215` read as `/`.
+
+### Fixed (M4)
+
+- Magnitude words are read: `hundred`, `lakh`, `crore`, `Tausend`, `Mio`, `Millionen`, `Mrd`, `Milliarden`, `mln`, `MM`, `mil` and `Cr` (after a currency), `万`, `億`, `亿`, `लाख`, `करोड़` and the matching forms in other European languages, so `₹5 lakh` no longer traces to `₹5 crore` and `3,5 Millionen` no longer traces to `3,5 Milliarden`. `350万円` is 3,500,000 JPY.
+- `Billion` and `trillion` outside English, `mil` outside English, and the other words in the stop list are `unknown`, not read as the nearest English word.
+- `Prozent`, `procent`, `prosent`, `procento`, `pourcent`, `pour cent`, `por ciento`, `por cento` and `per cento` are percent, so `12,5 Prozent` traces to `12,5 %`.
+
 ### Fixed (M1)
 
 - Glued units are read: `W`, `kW`, `MW`, `Hz`, `kHz`, `MHz`, `GHz`, `dB`, `kcal`, `cal`, `mAh`, `Wh`, `kWh`, `nm`, `Mbps`, `Gbps`, `kbps`, `days`, `d`, `wk`, `y`, `bp`, `X` and more, so `250W` against `200W` is `untraced`. Case-insensitive where capitals change nothing (`9000KG`).

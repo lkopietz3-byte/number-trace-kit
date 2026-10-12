@@ -61,6 +61,15 @@ describe('linear time on hostile text', { timeout: 60_000 }, () => {
     'full-width digits': (n) => '５'.repeat(n),
     'ranges': (n) => '1-'.repeat(n / 2),
     'plain text with no digits': (n) => 'abc '.repeat(n / 4),
+    'magnitude abbreviations with a dot': (n) => '5 Mio. '.repeat(n / 7),
+    'two magnitude words in a row': (n) => '5 hundred thousand '.repeat(n / 19),
+    'vulgar fractions': (n) => '1\u00bd '.repeat(n / 3),
+    'bare vulgar fractions': (n) => '\u00bd'.repeat(n),
+    'vulgar fractions with no exact decimal': (n) => '2\u2154 '.repeat(n / 3),
+    'CJK magnitude words': (n) => '5\u4e07\u5186'.repeat(n / 3),
+    'a long Cyrillic run after a number': (n) => '5 ' + '\u043c'.repeat(n),
+    'Cyrillic magnitude words': (n) => '5 \u043c\u043b\u043d '.repeat(n / 6),
+    'astral digits': (n) => '\u{1d7d8}'.repeat(n / 2),
   }
 
   for (const [name, make] of Object.entries(shapes)) {

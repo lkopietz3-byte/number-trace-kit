@@ -20,6 +20,7 @@ export type AmbiguityReason =
   | 'fraction'
   | 'identifier'
   | 'too-long'
+  | 'magnitude'
 
 /** How a negative or explicitly signed number was written. */
 export type SignStyle = 'minus' | 'plus' | 'parentheses'
