@@ -14,6 +14,7 @@ Check that every number in an AI output traces to the evidence it was given, and
 - `npm run test`
 - `npm run build`
 - `npm run verify:package` packs and installs the tarball offline; run `npm run build` first.
+- `npm run attw` and `npm run audit:dependencies` run in CI outside `verify`; run them before a release.
 
 ## Rules
 - Run `npm run verify` and read its output before calling work done. Report any step that did not run.

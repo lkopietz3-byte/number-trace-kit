@@ -17,8 +17,9 @@ The library reads text and numbers you give it and returns data. It does no
 I/O, evaluates no code, and has no runtime dependencies. The inputs that matter
 for safety are untrusted model output and untrusted evidence text:
 
-- Scanning is linear in the text length. Texts over 5,000,000 UTF-16 units and
-  arrays over 1,000,000 items are rejected.
+- Scanning is linear in the text length. Texts over 5,000,000 UTF-16 units,
+  arrays over 1,000,000 items, and more than 50,000,000 characters of evidence
+  in total are rejected.
 - Digit runs over 60 digits are never converted to BigInt.
 - A caller-supplied regular expression (`ignorePattern`) is copied and shown a
   short window only. A pattern with catastrophic backtracking can still be

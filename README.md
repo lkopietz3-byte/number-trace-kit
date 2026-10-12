@@ -4,13 +4,17 @@ Does every number in this AI output trace to the evidence it was given, and do t
 
 A small TypeScript library that pulls the numbers out of a text, normalizes them into exact decimals, and checks each one against the numbers in the evidence you supply. It also adds up rows and compares the sum to a printed total, to the cent. All comparisons use exact decimal arithmetic (BigInt), never floats.
 
+**Who it is for.** Developers who ship AI-written summaries, reports or answers and hold the source text the numbers should come from: finance and pricing pages, extracted tables, invoices, metrics write-ups. It is a deterministic check you can run in tests, CI or a review queue.
+
+**What it does not do.** It checks numbers, not sentences. It does not know whether the evidence is true, does not read number words or context, and cannot tell "up 30%" from "down 30%". `traced` means the number, in that unit, appears in the evidence; it does not mean the claim is right. See Known limits and What it does not do below.
+
 Status: version 0.1.0, private and unreleased. The package is marked `"private": true` and `UNLICENSED`; it is not published anywhere and no license has been chosen.
 
 ## What it does
 
 - **`extractNumbers(text, options?)`** finds every number and returns tokens with the exact decimal value, the precision shown, the kind (percent, currency, count, decimal, year, date part, ordinal), the unit or currency, and the offsets in your text. A form that can be read two ways is returned with `ambiguous: true` and its other readings. It never picks one quietly.
-- **`traceNumbers(output, evidence, options?)`** gives every number in the output one of six statuses: `traced`, `rounded`, `derived`, `untraced`, `ignored` or `unknown`, and an overall verdict of `clean`, `untraced` or `unknown`.
-- **`reconcile({ rows, total, tolerance? })`** and **`reconcileComponents({ parts, total })`** add up amounts in exact decimals and report `ok`, the sum, the total and the signed difference.
+- **`traceNumbers(output, evidence, options?)`** (`output` is a string, or tokens you already extracted) gives every number in the output one of six statuses: `traced`, `rounded`, `derived`, `untraced`, `ignored` or `unknown`, and an overall verdict of `clean`, `untraced` or `unknown`.
+- **`reconcile({ rows, total, tolerance? })`** and **`reconcileComponents({ parts, total, tolerance? })`** add up amounts in exact decimals and report `ok`, the sum, the total and the signed difference.
 
 It does not call a model, read a network, or use the clock or randomness. Same input, same options, same result.
 
@@ -168,7 +172,7 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 | `parenthesesAreNegative` | `true` | read `(1,234)` as negative |
 | `preset` | `strict` | `strict` or `report`; the other options override it |
 | `derivations` | none | any of `sum`, `difference`, `ratio`, `percent-change`, `percent-of`, `average`, `product` |
-| `maxDerivationMatches` | `3` | a derived number buildable in more ways than this is `unknown` (`derivation-too-likely`) |
+| `maxDerivationMatches` | `3` | 1 to 1,000,000; a derived number buildable in more ways than this is `unknown` (`derivation-too-likely`) |
 | `maxDerivationDensity` | `0.5` | a derived number whose neighborhood has this many candidates per displayed value, or more, is `unknown` (`derivation-too-likely`) |
 | `roundSums` | `false` | let `sum` and `difference` match after display rounding |
 | `evidenceOrder` | `oldest-first` | `newest-first` for tables that list the later period first |
@@ -182,7 +186,7 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 | `ignore` | none | exact raw strings to skip, and plain numbers (a number skips only unit-less plain numbers of that signed value) |
 | `ignoreKinds` | none | skip every number of these kinds (for example `['ordinal']`) |
 | `ignoreYears` | `false` | skip years and the year of a date |
-| `ignoreSmallIntegersUpTo` | off | skip unit-less whole numbers from 0 to this value |
+| `ignoreSmallIntegersUpTo` | off | skip unit-less whole numbers from 0 to this value (0 to 1,000,000) |
 | `ignorePattern` | none | a `RegExp`; see below |
 
 Scale and currency hints apply to the bare numbers of a document: counts and decimals with no unit, percent sign or magnitude of their own. Percents, years, dates and numbers like `$3 million` are left alone. `{ id: 'tbl', text: 'Revenue (in thousands)\n2019 | 5,735', scale: 'thousand', currency: 'USD' }` makes `5,735` read as `$5,735,000`, so `$5,735 thousand` traces and `$5.7 million` rounds from it. A table that prints `$` on its first row only is the same pattern with `currency: 'USD'`.
@@ -199,7 +203,7 @@ Supported locale languages: `de`, `fr`, `es`, `it`, `pt`, `nl`, `ru`, `pl`, `sv`
 
 ```ts
 reconcile({ rows: [{ label, amount }, ...], total, tolerance = '0' }, { minorUnitDigits = 2, allowFloat = false })
-reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '1250.50' })
+reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '1250.50', tolerance: '0' }, { minorUnitDigits: 2 })
 ```
 
 - A **string** amount is an exact decimal in major units, written plain (`"12.34"`) or as a report prints it: comma thousands in groups of exactly three (`"38,400"`), one currency sign (`$ € £ ¥ ₹`, `"$600.00"`), accounting parentheses (`"(557)"`) or a minus sign, and a leading decimal (`".5"`). Spaces, a decimal comma, other digit systems, exponents and misplaced commas are a `TypeError`.
@@ -210,7 +214,9 @@ reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '125
 
 ## Known limits
 
-These came out of review and a combinatorial sweep, and are decided, not pending:
+Choices that are made on purpose, not pending work:
+
+- Size limits: a text over 5,000,000 UTF-16 units, an array over 1,000,000 items, or more than 50,000,000 characters of evidence in total is a `RangeError`. A number of more than 60 digits is `unknown`.
 
 - The word list for units, currencies and month names is short and English. Other words are not units (`5 users`, `3 Mio.`), and a month name only counts with a capital letter.
 - `to` and a spaced en dash join two numbers into a range even in prose that is not a range (`9 to 5 job`, `pages 3 – 7`): the only effect is that a unit or percent sign written on one number is also given to the other.
@@ -231,7 +237,7 @@ These came out of review and a combinatorial sweep, and are decided, not pending
 - It does not know whether the evidence is true. `traced` means the number, in that unit, appears in the evidence after normalization. It does not mean the sentence means what the evidence means: a number can match a different figure of the same value.
 - It does not understand sentences. It cannot tell "up 30%" from "down 30%", a revenue figure from a headcount, or which two numbers a derived value is about. Words, negation and context are invisible to it.
 - It does not read number words (`twelve`, `half`), fractions (`3/4` is flagged, not evaluated), scales stated elsewhere (`in thousands`), a percent sign written before the number (`%12`), or currency named in prose other than `dollars`, `euros` and the three-letter codes.
-- It does not infer units that are not written: a percent written as `0.45` does not trace to `45%`, and `1,234` does not trace to `$1,234` unless you set `allowBareEvidence`.
+- It does not infer units that are not written: a percent written as `0.45` does not trace to `45%`, and `1,234` does not trace to `$1,234` unless you set `allowBareOutput` (the other way round, a `$1,234` output against a bare `1,234` in the evidence, needs `allowBareEvidence`).
 - It does not truncate: an output that cuts digits off (`12.3%` from `12.39%`) is untraced, because only half-up and half-even rounding are accepted.
 - A derived match is not proof the model derived it; with many evidence numbers, coincidences happen. Treat `derived` with a high `matches` count as weak.
 - It is a mechanical check on numbers and sums. It makes no claim about whether an output is fit for any accounting, audit or legal purpose.
@@ -243,8 +249,10 @@ These came out of review and a combinatorial sweep, and are decided, not pending
 ## Development
 
 ```sh
-npm install
+npm ci
 npm run verify   # lint, typecheck, tests, build, packaging checks
+npm run attw     # type-resolution check of the packed tarball
+npm run audit:dependencies
 ```
 
 Node 20 or newer. ESM only. Zero runtime dependencies; no `node:` imports in `src`, so it runs in browsers too.

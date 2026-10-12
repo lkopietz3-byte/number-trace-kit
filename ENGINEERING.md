@@ -36,13 +36,20 @@ source entry is `src/index.ts`; the package export resolves to generated
   strong. A match that needs a non-primary reading of an ambiguous number on
   either side is weak and yields `unknown`. A number whose only reading is a
   locale guess (`weakPrimary`) never produces a strong link.
-- **Derivations are opt-in, pairwise, and counted before they run.** The
-  number of candidates (pairs times enabled derivations) is compared to
-  `maxCandidates` before anything is generated. Over the cap: no candidates,
-  `candidateCapHit`, every non-direct number `unknown`. Sums and differences
-  must match exactly; ratios and percents match after rounding to the output's
-  precision. Direction follows evidence order; a match only in the reverse
-  order is `unknown`.
+- **Derivations are opt-in, pairwise by default, and counted before they run.**
+  The number of candidates (pairs times enabled derivations, plus triples at
+  `maxOperands: 3`) is compared to `maxCandidates` before anything is
+  generated. Over the cap: no candidates, `candidateCapHit`, every non-direct
+  number `unknown`. Sums and differences must match exactly unless
+  `roundSums`; ratios, percents, averages and products match after rounding to
+  the output's precision. Direction follows evidence order (or
+  `evidenceOrder: 'newest-first'`); a match only in the reverse order is
+  `unknown`.
+- **A derived match is checked for coincidence.** `derivation.matches` counts
+  the candidates that produce the displayed value. More than
+  `maxDerivationMatches`, or a neighborhood denser than
+  `maxDerivationDensity`, is `unknown` (`derivation-too-likely`). Do not relax
+  the guard to make a row pass.
 - **Linear time.** Extraction visits each character a bounded number of times.
   Digit chains are collected once. Over-long digit runs are never converted to
   BigInt. Rounding indexes are built lazily, once per distinct output scale.
@@ -90,7 +97,10 @@ npm run build
 npm run verify:package
 ```
 
-`npm run verify` runs all of them. `verify:package` packs the tarball,
+`npm run verify` runs all of them. Two more checks run in CI and are worth
+running before a release: `npm run attw` (are the types and the module format
+right for every resolution mode) and `npm run audit:dependencies` (known
+advisories in the lockfile, dev tools included). `verify:package` packs the tarball,
 installs it into an empty project offline, imports every `exports` entry,
 compares the exported names to `api-surface.json`, runs
 `scripts/consumer-probe.mjs` by package name and type-checks
@@ -114,11 +124,22 @@ compares the exported names to `api-surface.json`, runs
   inputs. Written first.
 - `test/extract.test.ts`, `test/trace-rules.test.ts`, `test/reconcile.test.ts`,
   `test/decimal.test.ts`: the rules, one behavior per case.
-- `test/hostile.test.ts`: scaling (20k versus 80k characters, CPU time),
+- `test/hostile.test.ts`: scaling (40k versus 160k characters, CPU time),
   single reads, proxies, getters, wrong types, huge arrays.
+- `test/locales.test.ts`: numbers as `Intl.NumberFormat` prints them in 27
+  locales read back exactly.
+- `test/fuzz.test.ts`: a deterministic fuzz; extraction never throws and tokens
+  slice back to their raw text.
+- `test/derivations-more.test.ts`, `test/field-round.test.ts`: averages and
+  three-operand derivations; whole dates, scale and currency hints, the
+  coincidence guard and other rows from reports and pricing pages.
+- `test/review-round*.test.ts`: regression rows for defects found in
+  independent review, each reproduced before its fix.
 
 ## Release
 
-The package is private and unreleased. Releasing means choosing a license,
-removing `"private": true`, adding repository metadata and following the
-maintainer's release process. None of that has been done.
+The package is private and unreleased; the version is 0.1.0 and the changelog
+heading says unreleased. Releasing means choosing a license, removing
+`"private": true`, adding a `LICENSE` file and repository metadata, adding the
+`LICENSE` file to `files` in `package.json`, and following the maintainer's
+release process. None of that has been done.
