@@ -33,10 +33,37 @@ const CURRENCY_SYMBOLS: ReadonlyMap<number, string> = new Map([
 ])
 const CURRENCY_CODES = new Set([
   'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'INR', 'MXN', 'BRL', 'KRW', 'SEK',
-  'NOK', 'DKK', 'NZD', 'SGD', 'HKD', 'PLN', 'ZAR', 'RUB', 'TRY',
+  'NOK', 'DKK', 'NZD', 'SGD', 'HKD', 'PLN', 'ZAR', 'RUB', 'TRY', 'TWD',
 ])
+// Letters glued before a dollar sign that say which dollar ("CA$5", "NT$5", "Mex$5").
 const DOLLAR_PREFIXES: Record<string, string> = {
-  US: 'USD', CA: 'CAD', AU: 'AUD', NZ: 'NZD', HK: 'HKD', MX: 'MXN', C: 'CAD', A: 'AUD', S: 'SGD', R: 'BRL',
+  US: 'USD', CA: 'CAD', AU: 'AUD', NZ: 'NZD', HK: 'HKD', MX: 'MXN', SG: 'SGD', TW: 'TWD', NT: 'TWD', Mex: 'MXN', MEX: 'MXN',
+  C: 'CAD', A: 'AUD', S: 'SGD', R: 'BRL',
+  USD: 'USD', CAD: 'CAD', AUD: 'AUD', NZD: 'NZD', HKD: 'HKD', MXN: 'MXN', SGD: 'SGD', TWD: 'TWD',
+}
+// The codes a bare dollar sign can stand for, and the ones a bare yen sign can.
+const DOLLAR_CODES: ReadonlySet<string> = new Set(['USD', 'CAD', 'AUD', 'NZD', 'HKD', 'SGD', 'MXN', 'TWD'])
+const YEN_CODES: ReadonlySet<string> = new Set(['JPY', 'CNY'])
+
+/** A currency written before the amount. `family` is set for a bare `$` or `¥`, which a code may make specific. */
+interface CurrencyMatch {
+  start: number
+  code: string
+  family?: 'dollar' | 'yen'
+  /** A code before a symbol that cannot be that currency ("EUR $500"). */
+  conflict?: true
+}
+
+/**
+ * The currency of an amount that has a symbol or prefix before it and a code or word after it
+ * ("$500 CAD", "CA$500 dollars"). Returns the code to use, or null when the two disagree.
+ */
+function resolveCurrency(cur: CurrencyMatch, found: string, dollarWord: boolean): string | null {
+  if (found === cur.code) return cur.code
+  if (dollarWord) return cur.family === 'dollar' || DOLLAR_CODES.has(cur.code) ? cur.code : null
+  if (cur.family === 'dollar') return DOLLAR_CODES.has(found) ? found : null
+  if (cur.family === 'yen') return YEN_CODES.has(found) ? found : null
+  return null
 }
 const CURRENCY_WORDS: Record<string, string> = {
   dollars: 'USD', dollar: 'USD', euros: 'EUR', euro: 'EUR', usd: 'USD', eur: 'EUR', gbp: 'GBP',
@@ -53,7 +80,8 @@ const GLUED_UNITS: Record<string, string> = {
   c: 'c', cpp: 'cpp', mo: 'month', mos: 'month', pt: 'pt', pts: 'pt', kg: 'kg', g: 'g', mg: 'mg', 'μm': 'μm', 'μs': 'μs', 'μg': 'μg', 'μL': 'μl', 'μl': 'μl', lb: 'lb', lbs: 'lb', oz: 'oz', km: 'km', m: 'm', cm: 'cm', mm: 'mm',
   mi: 'mi', ft: 'ft', ms: 'ms', s: 'second', h: 'hour', hr: 'hour', hrs: 'hour', min: 'minute',
   mins: 'minute', sec: 'second', secs: 'second', yr: 'year', yrs: 'year', KB: 'KB', kB: 'KB',
-  MB: 'MB', GB: 'GB', TB: 'TB', ml: 'ml', mL: 'ml', L: 'l', l: 'l', kW: 'kW', kWh: 'kWh', MW: 'MW',
+  MB: 'MB', GB: 'GB', TB: 'TB', PB: 'PB', EB: 'EB', Kb: 'Kb', Mb: 'Mb', Gb: 'Gb', Tb: 'Tb', Pb: 'Pb',
+  KiB: 'KiB', MiB: 'MiB', GiB: 'GiB', TiB: 'TiB', PiB: 'PiB', ml: 'ml', mL: 'ml', L: 'l', l: 'l', kW: 'kW', kWh: 'kWh', MW: 'MW',
   GHz: 'GHz', MHz: 'MHz', mph: 'mph', kph: 'kph', x: 'x', am: 'am', pm: 'pm', bps: 'bps',
 }
 // Units written as a following word ("3 days"). Compared in lower case.
@@ -66,8 +94,10 @@ const SPACED_UNITS: Record<string, string> = {
   ounce: 'oz', ounces: 'oz', mile: 'mi', miles: 'mi', km: 'km', kilometer: 'km', kilometers: 'km',
   kilometre: 'km', kilometres: 'km', meter: 'm', meters: 'm', metre: 'm', metres: 'm', cm: 'cm',
   mm: 'mm', foot: 'ft', feet: 'ft', ft: 'ft', inch: 'in', inches: 'in', gallon: 'gal',
-  gallons: 'gal', liter: 'l', liters: 'l', litre: 'l', litres: 'l', ml: 'ml', mb: 'MB', gb: 'GB',
-  tb: 'TB', bps: 'bps', mph: 'mph',
+  gallons: 'gal', liter: 'l', liters: 'l', litre: 'l', litres: 'l', ml: 'ml', bps: 'bps', mph: 'mph',
+  celsius: '°C', fahrenheit: '°F', centigrade: '°C',
+  hz: 'Hz', khz: 'kHz', mhz: 'MHz', ghz: 'GHz', db: 'dB', kw: 'kW', kwh: 'kWh', kcal: 'kcal', mah: 'mAh',
+  kbps: 'kbps', mbps: 'Mbps', gbps: 'Gbps',
 }
 // Units written right against the number only ("250W"). A spaced single letter is too often a label
 // ("5 W" is not watts), so these are not read as the next word.
@@ -413,6 +443,8 @@ interface Suffix {
   scientific: boolean
   /** A magnitude word follows that the kit cannot value ("2 Billionen", "5 Cr"). */
   unreadMagnitude: boolean
+  /** The currency came from the word "dollar" or "dollars", which names no particular dollar. */
+  dollarWord: boolean
 }
 
 /** Extract the numbers from a text. Linear time; never throws on odd characters. */
@@ -950,7 +982,7 @@ export function scan(
     return prefix.length >= 2 || marks || j - i0 >= 3 ? 'unread-glued-form' : 'identifier'
   }
 
-  const matchCurrencyEnding = (pos: number): { start: number; code: string } | null => {
+  const matchCurrencyEnding = (pos: number): CurrencyMatch | null => {
     let p = pos - 1
     if (p >= floor && (at(p) === 0x20 || at(p) === NBSP)) p--
     if (p < floor) return null
@@ -958,17 +990,23 @@ export function scan(
     const symbol = CURRENCY_SYMBOLS.get(c)
     if (symbol !== undefined) {
       if (c === 0x24) {
-        // US$, CA$, C$ ... : up to two capital letters glued before the dollar sign.
-        if (p - 2 >= floor && isUpper(at(p - 1)) && isUpper(at(p - 2)) && !isLetter(at(p - 3))) {
-          const code = own(DOLLAR_PREFIXES, slice(p - 2, p))
-          if (code !== undefined) return { start: p - 2, code }
+        // US$, CA$, C$, CAD$, NT$, Mex$: up to three letters glued before the dollar sign say which dollar.
+        let q = p
+        while (q - 1 >= floor && p - q < 3 && isLetter(at(q - 1))) q--
+        if (q < p && !(q - 1 >= floor && isLetter(at(q - 1)))) {
+          const code = own(DOLLAR_PREFIXES, slice(q, p))
+          if (code !== undefined) return { start: q, code }
         }
-        if (p - 1 >= floor && isUpper(at(p - 1)) && !isLetter(at(p - 2))) {
-          const code = own(DOLLAR_PREFIXES, slice(p - 1, p))
-          if (code !== undefined) return { start: p - 1, code }
+        // A code and a space before the sign ("CAD $500"): the code makes the dollar specific, or contradicts it.
+        if (at(p - 1) === 0x20 && p - 4 >= floor && isUpper(at(p - 2)) && isUpper(at(p - 3)) && isUpper(at(p - 4)) && !isLetter(at(p - 5))) {
+          const code = slice(p - 4, p - 1)
+          if (CURRENCY_CODES.has(code)) {
+            return DOLLAR_CODES.has(code) ? { start: p - 4, code } : { start: p - 4, code: symbol, family: 'dollar', conflict: true }
+          }
         }
+        return { start: p, code: symbol, family: 'dollar' }
       }
-      return { start: p, code: symbol }
+      return c === 0xa5 ? { start: p, code: symbol, family: 'yen' } : { start: p, code: symbol }
     }
     if (p - 2 >= floor && isUpper(c) && isUpper(at(p - 1)) && isUpper(at(p - 2)) && !isLetter(at(p - 3))) {
       const code = slice(p - 2, p + 1)
@@ -978,6 +1016,36 @@ export function scan(
   }
 
   const isSignCode = (c: number): boolean => c === 0x2d || c === 0x2b
+
+  /**
+   * A temperature unit right after a number: `°C`, `° F`, `℃`, `degrees Celsius`, `deg F`. A degree sign
+   * with no C or F after it is an angle or a bearing and is left alone.
+   */
+  const temperatureAt = (p0: number): { unit: string; end: number } | null => {
+    let q = p0
+    if (at(q) === 0x20 || at(q) === NBSP) q++
+    const c = at(q)
+    if (c === 0x2103) return { unit: '°C', end: q + 1 }
+    if (c === 0x2109) return { unit: '°F', end: q + 1 }
+    let r = -1
+    if (c === 0xb0 || c === 0xba || c === 0x2da) {
+      // "° C": one space may separate the sign from the letter.
+      r = q + 1
+      if (at(r) === 0x20 || at(r) === NBSP) r++
+    } else if (isLetter(c)) {
+      const w = readWord(q, 7).toLowerCase()
+      if ((w === 'degrees' || w === 'degree' || w === 'deg') && (at(q + w.length) === 0x20 || at(q + w.length) === NBSP)) r = q + w.length + 1
+    }
+    if (r < 0) return null
+    const letter = at(r) | 0x20
+    if ((letter === 0x63 || letter === 0x66) && isLetter(at(r)) && !isLetter(at(r + 1)) && !isDigit(at(r + 1))) {
+      return { unit: letter === 0x63 ? '°C' : '°F', end: r + 1 }
+    }
+    const w = readWord(r, 10).toLowerCase()
+    const unit = w === 'celsius' || w === 'centigrade' ? '°C' : w === 'fahrenheit' ? '°F' : undefined
+    if (unit !== undefined && !isLetter(at(r + w.length)) && !isDigit(at(r + w.length))) return { unit, end: r + w.length }
+    return null
+  }
 
   /** True when the folded text at `q` starts with `word` (BMP characters only). */
   const startsWithAt = (q: number, word: string): boolean => {
@@ -1010,7 +1078,7 @@ export function scan(
 
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
     const sfx: Suffix = {
-      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false,
+      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false, dollarWord: false,
     }
     let p = e
     if (at(p) === 0x5f) {
@@ -1072,6 +1140,12 @@ export function scan(
     if ((at(p) === 0x20 || at(p) === NBSP) && at(p + 1) === 0x25) {
       sfx.percent = '%'
       sfx.end = p + 2
+      return sfx
+    }
+    const degrees = temperatureAt(p)
+    if (degrees !== null) {
+      sfx.unit = degrees.unit
+      sfx.end = degrees.end
       return sfx
     }
     let magnitudeRead = false
@@ -1228,6 +1302,7 @@ export function scan(
       const currency = own(CURRENCY_WORDS, lower)
       if (currency !== undefined && (lower.length > 3 || w === w.toUpperCase() || lower === w)) {
         sfx.currency = currency
+        sfx.dollarWord = lower === 'dollar' || lower === 'dollars'
         return we
       }
       if ((w === 'x' || w === 'X') && startsNumber(we)) return -1
@@ -1423,7 +1498,7 @@ export function scan(
     const i0 = lead ? d0 - 1 : d0
     // ---- prefix: sign, currency, opening parenthesis --------------------------
     let signPos = -1
-    let cur: { start: number; code: string } | null
+    let cur: CurrencyMatch | null
     if (i0 - 1 >= floor && isSignCode(at(i0 - 1))) {
       signPos = i0 - 1
       cur = matchCurrencyEnding(signPos)
@@ -1588,11 +1663,13 @@ export function scan(
       let signStyle: SignStyle | undefined
       let currency: string | undefined
       let hasPrefixCurrency = false
+      let currencyConflict = false
       if (isFirst) {
         tokStart = start
         if (cur !== null) {
           currency = cur.code
           hasPrefixCurrency = true
+          if (cur.conflict === true) currencyConflict = true
         }
         if (signValid && at(signPos) !== -1) {
           neg = at(signPos) === 0x2d
@@ -1616,7 +1693,15 @@ export function scan(
           continue
         }
         tokEnd = sfx.end
-        if (sfx.currency !== undefined && currency === undefined) currency = sfx.currency
+        if (sfx.currency !== undefined) {
+          if (currency === undefined) currency = sfx.currency
+          else if (cur !== null && hasPrefixCurrency) {
+            // "$500 CAD" names the dollar; "$500 EUR" contradicts itself.
+            const resolved = resolveCurrency(cur, sfx.currency, sfx.dollarWord)
+            if (resolved === null) currencyConflict = true
+            else currency = resolved
+          }
+        }
       }
 
       // ---- parentheses as a negative ----------------------------------------------------
@@ -1628,6 +1713,7 @@ export function scan(
       if (sfx?.superscript === true) ambiguity = 'superscript'
       if (sfx?.tooLong === true || sub.int.length + sub.frac.length > MAX_DIGITS) ambiguity = 'too-long'
       if (sfx?.unreadMagnitude === true && ambiguity !== 'too-long' && ambiguity !== 'superscript') ambiguity = 'magnitude'
+      if (currencyConflict && ambiguity !== 'too-long' && ambiguity !== 'superscript' && ambiguity !== 'magnitude') ambiguity = 'currency'
       if (isFirst && isLast && parenNeg && !neg && signStyle === undefined && ambiguity !== 'too-long') {
         const openAt = parenAfterCurrency ? i0 - 1 : rawStart - 1
         const open = openAt >= floor && at(openAt) === 0x28
@@ -1700,7 +1786,7 @@ export function scan(
       tok.end = rawEnd
       tok.raw = text.slice(rawStart, rawEnd)
       // The same words written the same way in the evidence vouch for these (like a fraction written 3/4 twice).
-      if (ambiguity === 'magnitude' || (vulgarRead && isLast)) tok.groupRaw = tok.raw
+      if (ambiguity === 'magnitude' || ambiguity === 'currency' || (vulgarRead && isLast)) tok.groupRaw = tok.raw
       if (signStyle !== undefined) tok.signStyle = signStyle
       if (parenthesized) tok.parenthesized = true
       if (ambiguity !== undefined) {

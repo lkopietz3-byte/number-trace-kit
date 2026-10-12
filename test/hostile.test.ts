@@ -70,6 +70,12 @@ describe('linear time on hostile text', { timeout: 60_000 }, () => {
     'a long Cyrillic run after a number': (n) => '5 ' + '\u043c'.repeat(n),
     'Cyrillic magnitude words': (n) => '5 \u043c\u043b\u043d '.repeat(n / 6),
     'astral digits': (n) => '\u{1d7d8}'.repeat(n / 2),
+    'dollar prefixes': (n) => 'CAD$5 '.repeat(n / 6),
+    'a code before a dollar sign': (n) => 'CAD $5 '.repeat(n / 7),
+    'a long letter run before a dollar sign': (n) => 'A'.repeat(n) + '$5',
+    'a code after a symbol amount': (n) => '$5 EUR '.repeat(n / 7),
+    'degree words': (n) => '5 degrees F '.repeat(n / 12),
+    'degree signs': (n) => '5\u00b0 '.repeat(n / 3),
   }
 
   for (const [name, make] of Object.entries(shapes)) {

@@ -21,6 +21,7 @@ export type AmbiguityReason =
   | 'identifier'
   | 'too-long'
   | 'magnitude'
+  | 'currency'
 
 /** How a negative or explicitly signed number was written. */
 export type SignStyle = 'minus' | 'plus' | 'parentheses'

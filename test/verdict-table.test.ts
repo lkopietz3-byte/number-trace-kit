@@ -649,3 +649,99 @@ describe('M4 false-pass:F11 and hostile:F1: vulgar fractions', () => {
     }
   })
 })
+
+// ---- 0.1.0 release: M5, unit truth ---------------------------------------------------------------------
+
+describe('M5 false-pass:F02: bits are not bytes, Celsius is not Fahrenheit', () => {
+  it('false-pass:F02 Mb is not MB and Gb is not GB, spaced and glued', () => {
+    for (const [out, ev] of [
+      ['Download 500 Mb', 'Download 500 MB'], ['Plan has 8 Gb', 'Plan has 8 GB'], ['Disk 2 Tb', 'Disk 2 TB'],
+      ['Download 500Mb', 'Download 500MB'], ['Plan has 8Gb', 'Plan has 8GB'], ['Link 5 Kb', 'Link 5 KB'],
+      ['Download 500 MB', 'Download 500 Mb'], ['Plan has 8GB', 'Plan has 8 Gb'],
+    ] as const) {
+      const r = trace(out, ev)
+      expect(r.verdict, `${out} | ${ev}`).toBe('untraced')
+      expect(r.numbers[0]?.nearMisses?.[0]?.reason, out).toBe('unit-differs')
+    }
+  })
+  it('false-pass:F02 the same data unit still traces, and a kilogram is still not a megabyte', () => {
+    expect(trace('Download 500 Mb', 'Download 500 Mb').verdict).toBe('clean')
+    expect(trace('Download 500 MB', 'Download 500MB').verdict).toBe('clean')
+    expect(trace('Plan has 8 GiB', 'Plan has 8 GiB').verdict).toBe('clean')
+    expect(trace('Plan has 8 GiB', 'Plan has 8 GB').verdict).toBe('untraced')
+    expect(trace('Weight 500 kg', 'Weight 500 MB').verdict).toBe('untraced')
+    expect(extractNumbers('5 Mb, 5 MB, 5 PB, 5 Pb').map((t) => t.unit)).toEqual(['Mb', 'MB', 'PB', 'Pb'])
+  })
+  it('false-pass:F02 a lowercase mb, gb or tb is not a unit: its case cannot be resolved', () => {
+    expect(extractNumbers('5 mb, 5 gb, 5 tb, 5 kb').map((t) => [t.value, t.unit])).toEqual([['5', undefined], ['5', undefined], ['5', undefined], ['5', undefined]])
+    const r = trace('File is 5mb', 'File is 5 MB')
+    expect(r.numbers).toEqual([])
+    expect(r.skipped).toEqual([{ raw: '5mb', start: 8, end: 11, reason: 'unread-glued-form' }])
+    expect(r.verdict).toBe('unknown')
+  })
+  it('false-pass:F02 30°C is not 30°F, with a space, a word or a single character', () => {
+    for (const [out, ev] of [
+      ['Temp 30°C', 'Temp 30°F'], ['Temp 30 °C', 'Temp 30 °F'], ['Temp 30℃', 'Temp 30℉'], ['Temp 30° C', 'Temp 30° F'],
+      ['Temp 30 degrees Celsius', 'Temp 30 degrees Fahrenheit'], ['Temp 30 Celsius', 'Temp 30 Fahrenheit'], ['Temp 30°C', 'Temp 30 degrees F'],
+    ] as const) {
+      const r = trace(out, ev)
+      expect(r.verdict, `${out} | ${ev}`).toBe('untraced')
+      expect(r.numbers[0]?.nearMisses?.[0]?.reason, out).toBe('unit-differs')
+    }
+    for (const [out, ev] of [
+      ['Temp 30°C', 'Temp 30°C'], ['Temp 30 °C', 'Temp 30°C'], ['Temp 30℃', 'Temp 30 degrees Celsius'], ['Temp -5°F', 'Temp -5 °F'],
+      ['Temp 30°C.', 'Temp 30 deg C'],
+    ] as const) {
+      expect(trace(out, ev).verdict, `${out} | ${ev}`).toBe('clean')
+    }
+    expect(extractNumbers('30°C, 30 °F, 30℃, 98.6°F').map((t) => [t.value, t.unit, t.kind])).toEqual([
+      ['30', '°C', 'count'], ['30', '°F', 'count'], ['30', '°C', 'count'], ['98.6', '°F', 'decimal'],
+    ])
+  })
+  it('false-pass:F02 a degree sign that is not a temperature is left alone', () => {
+    expect(extractNumbers('45° angle and 30°N and 12°east').map((t) => [t.raw, t.unit])).toEqual([['45', undefined], ['30', undefined], ['12', undefined]])
+  })
+})
+
+describe('M5 false-pass:F06: a currency code or prefix on a symbol amount is honored', () => {
+  it('false-pass:F06 $500 CAD is not $500 USD, and CAD$500 and NT$500 are not US$500', () => {
+    expect(trace('Price is $500 CAD.', 'Price is $500 USD.').verdict).toBe('untraced')
+    expect(trace('Price is CAD$500.', 'Price is US$500.').verdict).toBe('untraced')
+    expect(trace('Price is NT$500.', 'Price is US$500.').verdict).toBe('untraced')
+    expect(trace('Price is Mex$500.', 'Price is US$500.').verdict).toBe('untraced')
+    expect(trace('Price is CAD$500.', 'Price is CA$500.').verdict).toBe('clean')
+    expect(trace('Price is $500 CAD.', 'Price is CA$500.').verdict).toBe('clean')
+    expect(trace('Price is Mex$500.', 'Price is MX$500.').verdict).toBe('clean')
+    expect(trace('Price is $500 USD.', 'Price is US$500.').verdict).toBe('clean')
+    expect(trace('Price is $500 USD.', 'Price is $500.').verdict).toBe('clean')
+    expect(trace('Price is $500.', 'Price is $500 USD.').verdict).toBe('clean')
+    expect(extractNumbers('CAD$500, NT$500, Mex$500, NZ$500, HK$500, S$500, A$500, R$500, USD$500').map((t) => t.currency)).toEqual(
+      ['CAD', 'TWD', 'MXN', 'NZD', 'HKD', 'SGD', 'AUD', 'BRL', 'USD'],
+    )
+  })
+  it('false-pass:F06 a code that overrides the generic dollar sign or yen sign', () => {
+    expect(extractNumbers('$500 CAD, $500 AUD, ¥500 JPY, ¥500 CNY, $500 USD').map((t) => t.currency)).toEqual(['CAD', 'AUD', 'JPY', 'CNY', 'USD'])
+    expect(extractNumbers('CAD $500 and USD $500').map((t) => [t.raw, t.currency])).toEqual([['CAD $500', 'CAD'], ['USD $500', 'USD']])
+    expect(trace('Price is CAD $500.', 'Price is CA$500.').verdict).toBe('clean')
+    // The word "dollars" is a generic dollar: it never contradicts a dollar prefix.
+    expect(trace('Price is CA$500 dollars.', 'Price is CA$500.').verdict).toBe('clean')
+    expect(trace('Price is $500 dollars.', 'Price is $500.').verdict).toBe('clean')
+  })
+  it('false-pass:F06 $500 EUR contradicts itself: unknown, and never a pass against $500', () => {
+    const r = trace('Price is $500 EUR.', 'Price is $500.')
+    expect(r.verdict).toBe('unknown')
+    expect(r.numbers[0]).toMatchObject({ status: 'unknown', reason: 'conflicting-currency' })
+    expect(r.numbers[0]?.token).toMatchObject({ raw: '$500 EUR', ambiguous: true, ambiguity: 'currency' })
+    expect(trace('Price is $500 EUR.', 'Price is 500 EUR.').verdict).toBe('unknown')
+    expect(trace('Price is CA$500 USD.', 'Price is CA$500.').verdict).toBe('unknown')
+    expect(trace('Price is EUR $500.', 'Price is $500.').verdict).toBe('unknown')
+    expect(trace('Price is $500 euros.', 'Price is $500.').verdict).toBe('unknown')
+    // Written the same way in the evidence, it traces.
+    expect(trace('Price is $500 EUR.', 'Price is $500 EUR.').verdict).toBe('clean')
+  })
+  it('false-pass:F06 a bare number never matches a symbol amount whose code was changed', () => {
+    expect(trace('Price is $500 CAD.', 'Price is 500.').verdict).toBe('untraced')
+    expect(trace('Price is 500 CAD.', 'Price is $500 CAD.').verdict).toBe('clean')
+    expect(trace('Price is 500 CAD.', 'Price is $500.').verdict).toBe('untraced')
+  })
+})

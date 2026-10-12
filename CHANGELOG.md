@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AmbiguityReason` gains `magnitude`: a magnitude word the kit cannot value. The number traces to `unknown` with the reason `unread-magnitude` (unless the same phrase is in the evidence).
 - Vulgar fractions (`½ ¼ ¾` and `U+2150` to `U+215E`) are read as ambiguous `fraction` tokens with an exact decimal value, the percent sign, currency and magnitude attached, and the number without the fraction as the alternate reading. A fraction with no exact decimal (`⅓`) is listed in `skipped`. The fraction slash `U+2044` and the division slash `U+2215` read as `/`.
 
+### Added (M5: unit truth)
+
+- `AmbiguityReason` gains `currency`: a currency code that cannot go with the symbol or prefix before the amount (`$500 EUR`). The number traces to `unknown` with the reason `conflicting-currency`.
+- `°C` and `°F` are units (`30°C`, `30 °F`, `℃`, `30 degrees Celsius`). `Kb`, `Mb`, `Gb`, `Tb`, `Pb`, `PB`, `EB`, `KiB`, `MiB`, `GiB`, `TiB` and `PiB` are distinct units.
+- Dollar prefixes `CAD$`, `USD$`, `AUD$`, `NZD$`, `HKD$`, `SGD$`, `MXN$`, `TWD$`, `SG$`, `TW$`, `NT$`, `Mex$`; the code `TWD`.
+
+### Fixed (M5)
+
+- `Mb` no longer equals `MB`, and `Gb` no longer equals `GB`: spaced data units were lower-cased into one unit. A lowercase `mb`, `gb`, `tb` or `kb` is no unit (the case cannot be resolved).
+- `30°C` no longer traces to `30°F`: the degree sign ended the number and left it with no unit on either side.
+- A code after a symbol amount is honored: `$500 CAD` is Canadian dollars and no longer traces to `$500 USD`; `CAD $500`, `CAD$500` and `NT$500` are read as what they say instead of USD.
+
 ### Fixed (M4)
 
 - Magnitude words are read: `hundred`, `lakh`, `crore`, `Tausend`, `Mio`, `Millionen`, `Mrd`, `Milliarden`, `mln`, `MM`, `mil` and `Cr` (after a currency), `万`, `億`, `亿`, `लाख`, `करोड़` and the matching forms in other European languages, so `₹5 lakh` no longer traces to `₹5 crore` and `3,5 Millionen` no longer traces to `3,5 Milliarden`. `350万円` is 3,500,000 JPY.
