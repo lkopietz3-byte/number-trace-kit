@@ -225,6 +225,7 @@ Choices that are made on purpose, not pending work:
 - `1.2.3-rc.1` and `v1.2.3+4` are versions; other hyphenated words after a number (`3.5-inch`) are not.
 - A percent sign written before the number (`%12`), number words, and digits outside the Basic Multilingual Plane are not read.
 - Rounding is half-up and half-even only; truncation is untraced.
+- A number written with a zero exponent (`5e0`) carries no magnitude, so an `evidenceScale` hint can still rescale it; leave the hint off for evidence that prints scientific notation.
 - An output with no numbers is `clean`: check `numbers.length` if you expect some. A letter-glued form the kit does not know as a unit (`10x4g`) is skipped, with no list of what was skipped.
 - A derivation is not scoped to a document, row or sentence: any two numbers of the same class in the evidence can combine. The coincidence guard (`maxDerivationMatches`, `maxDerivationDensity`) is the protection, and the cost is that some honest derived numbers on dense pages are `unknown`.
 - Derived values do not chain: a figure computed in the output and then used in a second computation is not an operand.

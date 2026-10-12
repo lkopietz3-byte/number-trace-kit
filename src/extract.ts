@@ -25,11 +25,12 @@ const MONTHS: Record<string, number> = {
   october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
 }
 
-const CURRENCY_SYMBOLS: Record<number, string> = {
-  0x24: 'USD', 0x20ac: 'EUR', 0xa3: 'GBP', 0xa5: '¥', 0x20b9: 'INR', 0x20a9: 'KRW',
-  0x20bd: 'RUB', 0x20ba: 'TRY', 0x20ab: 'VND', 0x20aa: 'ILS', 0x20b1: 'PHP', 0xe3f: 'THB',
-  0x20b4: 'UAH', 0x20a6: 'NGN',
-}
+// A Map, so an inherited property on Object.prototype can never read as a currency symbol.
+const CURRENCY_SYMBOLS: ReadonlyMap<number, string> = new Map([
+  [0x24, 'USD'], [0x20ac, 'EUR'], [0xa3, 'GBP'], [0xa5, '¥'], [0x20b9, 'INR'], [0x20a9, 'KRW'],
+  [0x20bd, 'RUB'], [0x20ba, 'TRY'], [0x20ab, 'VND'], [0x20aa, 'ILS'], [0x20b1, 'PHP'], [0xe3f, 'THB'],
+  [0x20b4, 'UAH'], [0x20a6, 'NGN'],
+])
 const CURRENCY_CODES = new Set([
   'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'INR', 'MXN', 'BRL', 'KRW', 'SEK',
   'NOK', 'DKK', 'NZD', 'SGD', 'HKD', 'PLN', 'ZAR', 'RUB', 'TRY',
@@ -708,7 +709,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     if (p >= floor && (at(p) === 0x20 || at(p) === NBSP)) p--
     if (p < floor) return null
     const c = at(p)
-    const symbol = CURRENCY_SYMBOLS[c]
+    const symbol = CURRENCY_SYMBOLS.get(c)
     if (symbol !== undefined) {
       if (c === 0x24) {
         // US$, CA$, C$ ... : up to two capital letters glued before the dollar sign.
@@ -857,7 +858,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           sfx.percent = '%'
           return s + 1
         }
-        const sym = CURRENCY_SYMBOLS[at(s)]
+        const sym = CURRENCY_SYMBOLS.get(at(s))
         // "5 $6" is a 5 and a $6, not "5 dollars" followed by a bare 6.
         if (sym !== undefined && !startsNumber(s + 1)) {
           sfx.currency = sym
@@ -936,7 +937,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       }
       return sfx
     }
-    const sym = CURRENCY_SYMBOLS[at(p)]
+    const sym = CURRENCY_SYMBOLS.get(at(p))
     if (sym !== undefined && at(p) !== 0x24 && !startsNumber(p + 1)) {
       sfx.currency = sym
       sfx.end = p + 1
@@ -1060,7 +1061,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     }
     return (
       c === 0x2013 || c === 0x2014 || c === 0x5b || c === 0x7b || c === 0x3c || c === 0x3e || c === 0x22 || c === 0x27 || c === 0x2d || c === 0x2b ||
-      c === 0x3a || c === 0x3b || c === 0x3d || c === 0x2f || c === 0x2a || CURRENCY_SYMBOLS[c] !== undefined
+      c === 0x3a || c === 0x3b || c === 0x3d || c === 0x2f || c === 0x2a || CURRENCY_SYMBOLS.has(c)
     )
   }
 
@@ -1272,6 +1273,8 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       // ---- value ----------------------------------------------------------------------
       tok.value = decimalString(neg, sub.int, sub.frac, exp10)
       tok.scale = sub.frac.length - exp10
+      // The digit limit counts the expanded value, so "1...1e1" is as long as its tokens say.
+      if (ambiguity !== 'too-long' && tok.value.length - (neg ? 1 : 0) - (tok.value.includes('.') ? 1 : 0) > MAX_DIGITS) ambiguity = 'too-long'
       if (exp10 !== 0) tok.magnitude = exp10
       const alternates: Reading[] = []
       if (ambiguity !== 'too-long') {

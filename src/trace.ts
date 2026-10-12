@@ -1093,6 +1093,9 @@ class Matcher {
       // A ratio has no dimension: it matches a bare number or an x multiple only.
       if (!strict && (shape.unit === '' || shape.unit === 'x')) tries.push({ cls: 'ratio', unit: shape.unit, unverified: false })
     }
+    // A match that only works in the reverse order is kept as a fallback, so a later unit
+    // reading that matches in the stated order is not hidden by it.
+    let fallback: DerivedHit | null = null
     for (const attempt of tries) {
       let count = 0
       let best: DerivedSlot | undefined
@@ -1130,14 +1133,16 @@ class Matcher {
             ? 'half-up'
             : 'half-even'
       const sameSignExists = idx.has(`${attempt.cls}\u0000${attempt.unit}\u0000${outNeg ? '-' : '+'}${mantissa.toString()}`)
-      return {
+      const found: DerivedHit = {
         cand: best.cand, exact: best.exact, label, reversedOnly: this.against(best.cand), matches: count,
         unitUnverified: attempt.unverified,
         signDiffers: best.cand.neg !== outNeg && !sameSignExists && best.cand.abs.p !== 0n,
         density: this.density(idx, attempt.cls, attempt.unit, mantissa),
       }
+      if (!found.reversedOnly) return found
+      fallback ??= found
     }
-    return null
+    return fallback
   }
 }
 
@@ -1330,10 +1335,15 @@ function traceOne(
 
   // 3. A declared derivation of evidence numbers.
   if (ctx.derivations.size > 0 && !matcher.capHit) {
+    let reversed = false
     for (const v of variants) {
       const hit = matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
       if (hit === null) continue
-      if (hit.reversedOnly) return unknownTrace(tok, 'derivation-direction')
+      if (hit.reversedOnly) {
+        // Keep looking: another unit reading may match in the stated order.
+        reversed = true
+        continue
+      }
       // So many ways to build the number that matching one says little.
       if (hit.matches > ctx.maxMatches || hit.density >= ctx.maxDensity) return unknownTrace(tok, 'derivation-too-likely')
       const detail: DerivationDetail = {
@@ -1345,6 +1355,7 @@ function traceOne(
       }
       return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.unverified || hit.unitUnverified ? { unitUnverified: true as const } : {}), ...(hit.signDiffers ? { signDiffers: true as const } : {}) }
     }
+    if (reversed) return unknownTrace(tok, 'derivation-direction')
   }
 
   // 4. Matches only under another reading of an ambiguous number: cannot tell.
