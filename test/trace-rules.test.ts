@@ -405,7 +405,7 @@ describe('verdict', () => {
     expect(trace('5 and 6', 'x 5').verdict).toBe('untraced')
     expect(trace('5 and 4K', 'x 5 and 4').verdict).toBe('unknown')
     expect(trace('6 and 4K', 'x 5 and 4').verdict).toBe('untraced') // untraced outranks unknown
-    expect(trace('5', 'x 5').counts).toEqual({ traced: 1, rounded: 0, derived: 0, untraced: 0, ignored: 0, unknown: 0 })
+    expect(trace('5', 'x 5').counts).toEqual({ traced: 1, rounded: 0, derived: 0, untraced: 0, ignored: 0, unknown: 0, skipped: 0 })
   })
 
   it('empty evidence leaves every output number untraced and says how many evidence numbers there were', () => {

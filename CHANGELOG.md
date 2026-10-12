@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (M1: an unread number is never silently dropped)
+
+- `traceNumbers` returns `skipped`: every stretch of the output that holds digits but was not read as a number, with `raw`, `start`, `end` and a `reason` (`identifier`, `unread-glued-form` or `ignored`), and `counts.skipped` (its length). New exported types: `SkippedNumber`, `SkipReason`, `TraceCounts`. `TraceResult.counts` is now a `TraceCounts`, which adds `skipped` to the six statuses.
+- A number glued to letters the kit does not know and cannot call an identifier (`12foo`, `50p`, `9999kr`, `Rs1,500`) is `unread-glued-form`, and the verdict is `unknown`, not `clean`. `ignore` and `ignorePattern` cover it.
+
+### Fixed (M1)
+
+- Glued units are read: `W`, `kW`, `MW`, `Hz`, `kHz`, `MHz`, `GHz`, `dB`, `kcal`, `cal`, `mAh`, `Wh`, `kWh`, `nm`, `Mbps`, `Gbps`, `kbps`, `days`, `d`, `wk`, `y`, `bp`, `X` and more, so `250W` against `200W` is `untraced`. Case-insensitive where capitals change nothing (`9000KG`).
+- A comma chain after a letter prefix (`Rs1,500`, `H2,500`) is skipped whole instead of being read as the digits after the comma.
+- Underscores around a number (`_12.5%_`, `1766____`) no longer hide it; an underscore inside a word still makes it a name.
+- A number followed by a hyphen and a unit, percent or currency word (`first-100-days`, `year-over-year-12-percent`) is read as a quantity instead of a name.
+- A dotted chain with a second decimal point (`1,234.5.6`) is listed in `skipped` instead of vanishing.
+- Decimal digits above the Basic Multilingual Plane (`𝟓𝟎`) are listed in `skipped` as an unread form instead of vanishing.
+
 ## [0.1.0] - unreleased
 
 ### Fixed (final release review)

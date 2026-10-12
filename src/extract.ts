@@ -43,6 +43,9 @@ const CURRENCY_WORDS: Record<string, string> = {
   cad: 'CAD', aud: 'AUD', chf: 'CHF', jpy: 'JPY', cny: 'CNY', inr: 'INR',
 }
 
+// Words that say "percent" ("45 percent", "45-percent").
+const PERCENT_WORDS: Record<string, '%'> = { percent: '%', pct: '%' }
+
 // Units written right against the number ("5kg"). Case matters here.
 const GLUED_UNITS: Record<string, string> = {
   c: 'c', cpp: 'cpp', mo: 'month', mos: 'month', pt: 'pt', pts: 'pt', kg: 'kg', g: 'g', mg: 'mg', 'μm': 'μm', 'μs': 'μs', 'μg': 'μg', 'μL': 'μl', 'μl': 'μl', lb: 'lb', lbs: 'lb', oz: 'oz', km: 'km', m: 'm', cm: 'cm', mm: 'mm',
@@ -64,6 +67,32 @@ const SPACED_UNITS: Record<string, string> = {
   gallons: 'gal', liter: 'l', liters: 'l', litre: 'l', litres: 'l', ml: 'ml', mb: 'MB', gb: 'GB',
   tb: 'TB', bps: 'bps', mph: 'mph',
 }
+// Units written right against the number only ("250W"). A spaced single letter is too often a label
+// ("5 W" is not watts), so these are not read as the next word.
+const GLUED_EXTRA: Record<string, string> = {
+  W: 'W', GW: 'GW', TW: 'TW', mW: 'mW', Wh: 'Wh', MWh: 'MWh', GWh: 'GWh', TWh: 'TWh', J: 'J', kJ: 'kJ', MJ: 'MJ',
+  cal: 'cal', kcal: 'kcal', mA: 'mA', Ah: 'Ah', mAh: 'mAh', kV: 'kV', mV: 'mV',
+  Hz: 'Hz', kHz: 'kHz', MHz: 'MHz', GHz: 'GHz', THz: 'THz', dB: 'dB', dBm: 'dBm',
+  rpm: 'rpm', bpm: 'bpm', fps: 'fps', ppm: 'ppm', ppb: 'ppb', psi: 'psi', kPa: 'kPa', MPa: 'MPa', Pa: 'Pa',
+  nm: 'nm', kbps: 'kbps', Kbps: 'kbps', Mbps: 'Mbps', Gbps: 'Gbps', Tbps: 'Tbps',
+  d: 'day', wk: 'week', wks: 'week', y: 'year', bp: 'bp', X: 'x',
+}
+// Glued units whose capitals never change the meaning (KG is kg, MHZ is MHz). Keys are lower case.
+// Units where a capital does (mW and MW, Mb and MB, mm and MM) are exact-case entries above.
+const GLUED_FOLD: Record<string, string> = {
+  kg: 'kg', km: 'km', cm: 'cm', ms: 'ms', oz: 'oz', ft: 'ft', lb: 'lb', lbs: 'lb', hz: 'Hz', khz: 'kHz', mhz: 'MHz',
+  ghz: 'GHz', kw: 'kW', kwh: 'kWh', mwh: 'MWh', gwh: 'GWh', twh: 'TWh', db: 'dB', kcal: 'kcal', mah: 'mAh', wh: 'Wh',
+  kbps: 'kbps', mbps: 'Mbps', gbps: 'Gbps', tbps: 'Tbps', ppm: 'ppm', rpm: 'rpm', bpm: 'bpm', fps: 'fps', psi: 'psi',
+  kpa: 'kPa', mpa: 'MPa', mph: 'mph', kph: 'kph',
+}
+// Letters glued after a number that make an identifier or a code, not a quantity ("3D", "5G", "2FA", "4WD").
+const IDENT_SUFFIXES: ReadonlySet<string> = new Set(['D', 'G', 'FA', 'WD', 'AWD'])
+const RESOLUTIONS: ReadonlySet<string> = new Set(['144', '240', '360', '480', '576', '720', '1080', '1440', '2160', '4320'])
+// A letter prefix that is a currency written before the amount ("Rs1,500", "kr9999"): a quantity, not an identifier.
+const CURRENCY_PREFIX_WORDS: ReadonlySet<string> = new Set([
+  'Rs', 'RS', 'rs', 'RM', 'Rp', 'kr', 'Kr', 'KR', 'R', 'zł', 'Fr', 'Php', 'PHP', 'Tk', 'Kč', 'Ft', 'lei', 'Lei', 'Br', 'Bs',
+])
+
 const MAGNITUDE_WORDS: Record<string, number> = {
   thousand: 3, million: 6, billion: 9, trillion: 12, bn: 9, mn: 6, tn: 12,
 }
@@ -71,6 +100,29 @@ const MAGNITUDE_WORDS: Record<string, number> = {
 /** A table lookup that never reaches Object.prototype ("constructor", "toString", ...). */
 function own<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
   return Object.hasOwn(table, key) ? table[key] : undefined
+}
+
+/** What a word after a hyphen ("100-days", "12-percent", "50-dollars") says about the number before it. */
+function hyphenWord(lower: string): { unit?: string; percent?: '%'; currency?: string } | undefined {
+  const unit = own(SPACED_UNITS, lower)
+  if (unit !== undefined) return { unit }
+  const percent = own(PERCENT_WORDS, lower)
+  if (percent !== undefined) return { percent }
+  const currency = own(CURRENCY_WORDS, lower)
+  if (currency !== undefined && lower.length > 3) return { currency }
+  return undefined
+}
+
+/** The unit of a word glued to a number: exact case first, then the forms where case makes no difference. */
+function glueUnit(w: string): string | undefined {
+  const exact = own(GLUED_UNITS, w) ?? own(GLUED_EXTRA, w)
+  if (exact !== undefined) return exact
+  const lower = w.toLowerCase()
+  if (w.length >= 3) {
+    const spaced = own(SPACED_UNITS, lower)
+    if (spaced !== undefined) return spaced
+  }
+  return own(GLUED_FOLD, lower)
 }
 
 const NBSP = 0xa0
@@ -130,6 +182,33 @@ const DIGIT_ZEROS: readonly number[] = [
   0x1a80, 0x1a90, 0x1b50, 0x1bb0, 0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0,
   0xaa50, 0xabf0,
 ]
+
+/**
+ * Decimal digits above the Basic Multilingual Plane as [first code point, how many], sorted. These are
+ * not folded (a surrogate pair cannot become one code unit), so the scanner lists them as skipped.
+ */
+const ASTRAL_DIGITS: readonly (readonly [number, number])[] = [
+  [0x104a0, 10], [0x10d30, 10], [0x10d40, 10], [0x11066, 10], [0x110f0, 10], [0x11136, 10], [0x111d0, 10], [0x112f0, 10],
+  [0x11450, 10], [0x114d0, 10], [0x11650, 10], [0x116c0, 10], [0x116d0, 20], [0x11730, 10], [0x118e0, 10], [0x11950, 10],
+  [0x11bf0, 10], [0x11c50, 10], [0x11d50, 10], [0x11da0, 10], [0x11de0, 10], [0x11f50, 10], [0x16130, 10], [0x16a60, 10],
+  [0x16ac0, 10], [0x16b50, 10], [0x16d70, 10], [0x1ccf0, 10], [0x1d7ce, 50], [0x1e140, 10], [0x1e2f0, 10], [0x1e4f0, 10],
+  [0x1e5f1, 10], [0x1e950, 10], [0x1fbf0, 10],
+]
+
+/** True when the code point is a decimal digit outside the Basic Multilingual Plane. */
+function isAstralDigit(cp: number): boolean {
+  let lo = 0
+  let hi = ASTRAL_DIGITS.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const block = ASTRAL_DIGITS[mid]
+    if (block === undefined) return false
+    if (cp < block[0]) hi = mid - 1
+    else if (cp >= block[0] + block[1]) lo = mid + 1
+    else return true
+  }
+  return false
+}
 
 /** The value 0 to 9 of a non-ASCII decimal digit, or -1. */
 function foreignDigit(c: number): number {
@@ -225,6 +304,15 @@ interface SubToken {
   alt?: { int: string; frac: string }
 }
 
+type SkipKind = 'identifier' | 'unread-glued-form'
+
+/** A stretch of text the scanner passed over although it holds digits. */
+export interface SkipRecord {
+  readonly start: number
+  readonly end: number
+  readonly reason: SkipKind
+}
+
 interface Suffix {
   end: number
   percent?: '%' | 'pp'
@@ -235,8 +323,10 @@ interface Suffix {
   superscript: boolean
   /** The single-letter magnitude (K, M, B, T) with nothing to say it is money. */
   looseMagnitude: boolean
-  /** The text glued to the number is an identifier; resume scanning here. */
+  /** The text glued to the number is an identifier or an unread form; resume scanning here. */
   skipTo: number
+  /** Why it is skipped, when `skipTo` is set. */
+  skipReason: SkipKind
   /** An exponent too large to expand ("1e999"). */
   tooLong: boolean
   /** The scale came from scientific notation, which belongs to this number alone. */
@@ -256,9 +346,16 @@ export function extractNumbers(text: string, options?: ExtractOptions): NumberTo
  * Internal entry used by traceNumbers with already-validated options. With
  * `identifiers` set (evidence only), the digits inside skipped identifiers such
  * as `FY2025` come back as tokens flagged `identifier`, which can only ever
- * make an output number `unknown`, never `traced`.
+ * make an output number `unknown`, never `traced`. With `skips` set, every
+ * stretch that holds digits but was not read as a number is appended to it.
  */
-export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifiers = false): NumberToken[] {
+export function scan(
+  text: string,
+  info: LocaleInfo,
+  parenNeg: boolean,
+  identifiers = false,
+  skips: SkipRecord[] | null = null,
+): NumberToken[] {
   const n = text.length
   if (n > MAX_TEXT_LENGTH) {
     throw new RangeError(`Text has ${n} characters; the limit is ${MAX_TEXT_LENGTH}.`)
@@ -626,6 +723,31 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     }
   }
 
+  /** Where the last recorded skip ended, so two skips never overlap. */
+  let skipFloor = 0
+  /** Pass over [a, b): keep its digits as weak evidence and, if asked, record it as skipped. */
+  const skip = (a: number, b: number, reason: SkipKind): void => {
+    noteIdentifier(a, b)
+    if (skips === null) return
+    const from = Math.max(a, skipFloor)
+    if (b <= from) return
+    skips.push({ start: from, end: b, reason })
+    skipFloor = b
+  }
+
+  /** The start of the alphanumeric word that ends at `pos` (the letters glued before a number). */
+  const wordStart = (pos: number): number => {
+    const lim = Math.max(floor, skipFloor, pos - 80)
+    let q = pos
+    while (q > lim) {
+      const c = at(q - 1)
+      if (isAlnum(c) || c === 0x5f || isMark(c)) q--
+      else if (c === 0x2d && q - 2 >= lim && letterAt(q - 2)) q--
+      else break
+    }
+    return q
+  }
+
   const skipIdentifier = (from: number): number => {
     let j = from
     while (j < n) {
@@ -661,6 +783,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
    * letters before its first number and letters after it (gpt-4 and pre-2020 stay numbers),
    * or starts with a letter-and-digit word and has a later word with letters (Qwen3-8B).
    */
+  let hyphenStart = 0
   const hyphenIdentifierEnd = (pos: number): number => {
     const wordChar = (c: number): boolean => isLetter(c) || isDigit(c) || isMark(c) || c === 0x2e || c === 0x5f || c === 0x2d
     let s0 = pos
@@ -692,9 +815,25 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     if (firstDigit < 0) return -1
     const laterLetters = letters.slice(firstDigit + 1).includes(true)
     const earlierLetters = letters.slice(0, firstDigit).includes(true)
-    if (firstDigit >= 1 && earlierLetters && laterLetters) return e0
-    if (firstMixedLetterStart && letters.slice(1).includes(true)) return e0
+    if ((firstDigit >= 1 && earlierLetters && laterLetters) || (firstMixedLetterStart && letters.slice(1).includes(true))) {
+      hyphenStart = s0
+      return e0
+    }
     return -1
+  }
+
+  /**
+   * True when the digits at `pos` are followed by a hyphen and a unit, percent or currency word
+   * ("first-100-days", "year-over-year-12-percent"): a quantity written in kebab case, not a name.
+   */
+  const hyphenQuantityAt = (pos: number): boolean => {
+    let e = runEnd(pos)
+    if (at(e) === 0x2e && isDigit(at(e + 1))) e = runEnd(e + 1)
+    if (at(e) !== 0x2d || !isLetter(at(e + 1))) return false
+    const w = readWord(e + 1, 12)
+    const after = at(e + 1 + w.length)
+    if (w.length > 12 || isLetter(after) || isDigit(after)) return false
+    return hyphenWord(w.toLowerCase()) !== undefined
   }
 
   /** After a version core: "+build.5", "-rc.1", "-beta.2+exp.sha" are all part of the identifier. */
@@ -702,6 +841,29 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     let j = from
     while ((at(j) === 0x2b || at(j) === 0x2d) && isAlnum(at(j + 1))) j = skipIdentifier(j + 1)
     return j
+  }
+
+  /** True when the underscore at `u` belongs to a name (`foo_12`, `x86_64`), not to markup around a number (`_12_`). */
+  const underscoreGlues = (u: number): boolean => {
+    let q = u
+    while (q > floor && at(q - 1) === 0x5f) q--
+    return q - 1 >= floor && (isAlnum(at(q - 1)) || isMark(at(q - 1)))
+  }
+
+  /**
+   * Why [wStart, j) is skipped. A currency written as a letter prefix ("Rs1,500", "kr9999") is
+   * a quantity the kit cannot read; every other letter prefix is an identifier.
+   */
+  const prefixedFormReason = (wStart: number, i0: number, j: number): SkipKind => {
+    const prefix = slice(wStart, i0)
+    if (!CURRENCY_PREFIX_WORDS.has(prefix)) return 'identifier'
+    let marks = false
+    for (let k = i0; k < j; k++) {
+      const ch = at(k)
+      if (ch === 0x2c || ch === 0x2e) marks = true
+      else if (!isDigit(ch)) return 'identifier'
+    }
+    return prefix.length >= 2 || marks || j - i0 >= 3 ? 'unread-glued-form' : 'identifier'
   }
 
   const matchCurrencyEnding = (pos: number): { start: number; code: string } | null => {
@@ -733,13 +895,20 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
 
   const isSignCode = (c: number): boolean => c === 0x2d || c === 0x2b
 
-  const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean): Suffix => {
+  const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
     const sfx: Suffix = {
-      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, tooLong: false, scientific: false,
+      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false,
     }
     let p = e
     if (at(p) === 0x5f) {
-      sfx.skipTo = skipIdentifier(p)
+      let q = p
+      while (at(q) === 0x5f) q++
+      if (isAlnum(at(q)) || isMark(at(q))) {
+        // 12_000, 5_foo: the number is part of a name.
+        sfx.skipTo = skipIdentifier(p)
+        return sfx
+      }
+      // Underscores and then a boundary ("_12.5_", "1766____") are markup or filler, not part of the number.
       return sfx
     }
     if (isSuper(at(p))) {
@@ -833,10 +1002,15 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         sfx.end = we
         return sfx
       } else {
-        const unit = own(GLUED_UNITS, w)
+        const unit = glueUnit(w)
         if (unit === undefined) {
-          // A micro sign with no known unit is a boundary; any other unknown word is an identifier.
-          if (w.charCodeAt(0) !== 0x3bc) sfx.skipTo = skipIdentifier(we)
+          // A micro sign with no known unit is a boundary. Any other unknown word is an identifier
+          // when it is a known code shape ("3D", "5G"), and otherwise a form the kit cannot read.
+          if (w.charCodeAt(0) !== 0x3bc) {
+            sfx.skipTo = skipIdentifier(we)
+            const code = IDENT_SUFFIXES.has(w) || ((w === 'p' || w === 'i') && resolution)
+            sfx.skipReason = code ? 'identifier' : 'unread-glued-form'
+          }
           return sfx
         }
         sfx.unit = unit
@@ -930,9 +1104,11 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     }
     if (at(p) === 0x2d && isLetter(at(p + 1))) {
       const w = readWord(p + 1, 12)
-      const unit = own(SPACED_UNITS, w.toLowerCase())
-      if (unit !== undefined && !isLetter(at(p + 1 + w.length)) && !isDigit(at(p + 1 + w.length))) {
-        sfx.unit = unit
+      const word = hyphenWord(w.toLowerCase())
+      if (word !== undefined && w.length <= 12 && !isLetter(at(p + 1 + w.length)) && !isDigit(at(p + 1 + w.length))) {
+        if (word.unit !== undefined) sfx.unit = word.unit
+        if (word.percent !== undefined) sfx.percent = word.percent
+        if (word.currency !== undefined) sfx.currency = word.currency
         sfx.end = p + 1 + w.length
       }
       return sfx
@@ -957,7 +1133,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
   const interpretChain = (
     parts: number[],
     seps: number[],
-  ): { tokens: SubToken[]; skippedRest: boolean } => {
+  ): { tokens: SubToken[]; skippedRest: boolean; restStart: number } => {
     const tokens: SubToken[] = []
     const count = parts.length / 2
     const partStart = (k: number): number => parts[2 * k] ?? 0
@@ -1014,7 +1190,7 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
         // version or an address: an identifier, not a number.
         const decSep = seps[dec - 1] ?? 0
         if (decSep === 0x2e && dec + 1 < count && seps[dec] === 0x2e) {
-          return { tokens, skippedRest: true }
+          return { tokens, skippedRest: true, restStart: partStart(k) }
         }
         frac = slice(partStart(dec), partEnd(dec))
         if (groups === 0 && decSep !== D) ambiguity = 'separator'
@@ -1034,13 +1210,35 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       })
       k = last + 1
     }
-    return { tokens, skippedRest: false }
+    return { tokens, skippedRest: false, restStart: -1 }
+  }
+
+  /** The end of a run of decimal digits above the BMP starting at k (surrogate pairs), or k. */
+  const astralDigitsEnd = (k: number): number => {
+    let q = k
+    while (q + 1 < n) {
+      const hi = f[q] ?? 0
+      const lo = f[q + 1] ?? 0
+      if (hi < 0xd800 || hi > 0xdbff || lo < 0xdc00 || lo > 0xdfff) break
+      if (!isAstralDigit(((hi - 0xd800) << 10) + (lo - 0xdc00) + 0x10000)) break
+      q += 2
+    }
+    return q
   }
 
   let i = 0
   while (i < n) {
     const c = f[i] ?? 0
     if (c < 0x30 || c > 0x39) {
+      if (c >= 0xd800 && c <= 0xdbff) {
+        // Mathematical and other astral digits cannot be folded; they are listed, never dropped quietly.
+        const e = astralDigitsEnd(i)
+        if (e > i) {
+          skip(i, e, 'unread-glued-form')
+          i = e
+          continue
+        }
+      }
       i++
       continue
     }
@@ -1115,18 +1313,19 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
     // ---- identifiers glued to the number ("X3", "v2.1", "COVID-19") ------------
     if (cur === null) {
       const before = at(i0 - 1)
-      if (before === 0x2d && i0 - 1 >= floor) {
+      if (before === 0x2d && i0 - 1 >= floor && !hyphenQuantityAt(i0)) {
         // Llama-3.3-70B-Instruct, gpt-5.4-nano-2026-03-17
         const we = hyphenIdentifierEnd(i0)
         if (we > i0) {
-          noteIdentifier(i0, we)
+          skip(hyphenStart, we, 'identifier')
           return we
         }
       }
       if (
-        (i0 - 1 >= floor && ((letterAt(i0 - 1) && !(timesPrev !== undefined && (before === 0x78 || before === 0x58))) || before === 0x5f)) ||
+        (i0 - 1 >= floor && ((letterAt(i0 - 1) && !(timesPrev !== undefined && (before === 0x78 || before === 0x58))) || (before === 0x5f && underscoreGlues(i0 - 1)))) ||
         (i0 - 2 >= floor && before === 0x2d && isUpper(at(i0 - 2)))
       ) {
+        const wStart = wordStart(i0)
         let j = skipIdentifier(i0)
         if (at(j) === 0x2d) {
           const we = hyphenIdentifierEnd(i0)
@@ -1138,7 +1337,9 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
           for (let k = i0; k < j && !dotted; k++) dotted = at(k) === 0x2e
           if (dotted) j = skipVersionTail(j)
         }
-        noteIdentifier(i0, j)
+        // Rs1,500, H2,500: a comma chain after a letter prefix is one form, not an identifier and a number.
+        while (at(j) === 0x2c && isDigit(at(j + 1))) j = skipIdentifier(j + 1)
+        skip(wStart, j, prefixedFormReason(wStart, i0, j))
         return j
       }
     }
@@ -1182,13 +1383,15 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       const versionSuffix = (at(p) === 0x2d && isLetter(at(p + 1))) || (at(p) === 0x2b && isAlnum(at(p + 1)))
       if (!grouped || versionSuffix) {
         const j = skipVersionTail(skipIdentifier(p))
-        noteIdentifier(i0, j)
+        skip(i0, j, 'identifier')
         return j
       }
     }
     const chain = interpretChain(parts, seps)
     const tokenCount = chain.tokens.length
     const chainEnd = p
+    // A chain such as 1,234.5.6 is not a number: the part that could not be read is passed over, and listed.
+    if (chain.skippedRest) skip(chain.restStart, chainEnd, 'identifier')
     let result = chainEnd
     for (let ti = 0; ti < tokenCount; ti++) {
       const sub = chain.tokens[ti]
@@ -1225,11 +1428,11 @@ export function scan(text: string, info: LocaleInfo, parenNeg: boolean, identifi
       let sfx: Suffix | undefined
       if (isLast) {
         const intDigits = sub.frac === ''
-        sfx = readSuffix(digitsEnd, hasPrefixCurrency, intDigits && sub.alt === undefined, sub.int === '0' && intDigits)
+        sfx = readSuffix(digitsEnd, hasPrefixCurrency, intDigits && sub.alt === undefined, sub.int === '0' && intDigits, intDigits && RESOLUTIONS.has(sub.int))
         if (sfx.skipTo >= 0) {
-          // The number is glued to an identifier ("3D", "5G"): not a number at all.
+          // The number is glued to an identifier ("3D", "5G") or to letters the kit cannot read ("12foo").
           result = Math.max(sfx.skipTo, chainEnd)
-          noteIdentifier(digitsStart, result)
+          skip(digitsStart, result, sfx.skipReason)
           continue
         }
         tokEnd = sfx.end

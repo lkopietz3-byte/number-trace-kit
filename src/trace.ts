@@ -15,6 +15,7 @@ import {
 } from './decimal.js'
 import type { Dec, Rat } from './decimal.js'
 import { scan } from './extract.js'
+import type { SkipRecord } from './extract.js'
 import {
   MAX_TEXT_LENGTH,
   describe,
@@ -40,6 +41,8 @@ import type {
   Preset,
   RoundingMode,
   SignMode,
+  SkippedNumber,
+  TraceCounts,
   TraceOptions,
   TraceResult,
   TraceStatus,
@@ -1217,10 +1220,11 @@ export function traceNumbers(
   const ctx = readContext(options)
   let tokens: readonly NumberToken[]
   let outText: string | null = null
+  const skips: SkipRecord[] = []
   if (typeof output === 'string') {
     if (output.length > MAX_TEXT_LENGTH) throw new RangeError(`output has ${output.length} characters; the limit is ${MAX_TEXT_LENGTH}.`)
     outText = output
-    tokens = scan(output, ctx.loc, ctx.parenNeg)
+    tokens = scan(output, ctx.loc, ctx.parenNeg, false, skips)
   } else {
     const items = snapshotArray(output, 'output')
     tokens = items.map((item, i) => {
@@ -1243,21 +1247,38 @@ export function traceNumbers(
     for (const t of cluster) dates.set(t, info)
   }
   const numbers: NumberTrace[] = []
-  const counts: Record<TraceStatus, number> = { traced: 0, rounded: 0, derived: 0, untraced: 0, ignored: 0, unknown: 0 }
+  const statuses: Record<TraceStatus, number> = { traced: 0, rounded: 0, derived: 0, untraced: 0, ignored: 0, unknown: 0 }
   for (const tok of tokens) {
     const trace = traceOne(tok, outText, ev, matcher, ctx, dates)
-    counts[trace.status]++
+    statuses[trace.status]++
     numbers.push(trace)
   }
-  const verdict = counts.untraced > 0 ? 'untraced' : counts.unknown > 0 ? 'unknown' : 'clean'
+  // Digits the scanner passed over. A glued form it cannot read is never a pass: it makes the verdict unknown.
+  let unreadForms = 0
+  const skipped: SkippedNumber[] = skips.map((rec) => {
+    const raw = (outText ?? '').slice(rec.start, rec.end)
+    const covered = rec.reason === 'unread-glued-form' && skipIgnored(raw, rec.start, rec.end, outText, ctx)
+    const reason = covered ? 'ignored' : rec.reason
+    if (reason === 'unread-glued-form') unreadForms++
+    return { raw, start: rec.start, end: rec.end, reason }
+  })
+  const counts: TraceCounts = { ...statuses, skipped: skipped.length }
+  const verdict = statuses.untraced > 0 ? 'untraced' : statuses.unknown > 0 || unreadForms > 0 ? 'unknown' : 'clean'
   return {
     verdict,
     numbers,
+    skipped,
     counts,
     evidenceNumbers: ev.count,
     derivationCandidates: matcher.candidates.length,
     candidateCapHit: matcher.capHit,
   }
+}
+
+/** Is an unread glued form covered by the caller's ignore list or pattern? */
+function skipIgnored(raw: string, start: number, end: number, text: string | null, ctx: Ctx): boolean {
+  if (ctx.ignoreRaw.has(raw.trim())) return true
+  return ctx.pattern !== null && text !== null && overlapsPattern(ctx.pattern, text, start, end)
 }
 
 function unknownTrace(tok: NumberToken, reason: string): NumberTrace {

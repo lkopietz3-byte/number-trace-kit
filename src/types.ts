@@ -232,10 +232,39 @@ export interface NumberTrace {
 
 export type TraceVerdict = 'clean' | 'untraced' | 'unknown'
 
+/**
+ * Why a stretch of the output was left unread: `identifier` (a name, version or code such as
+ * `X3`, `v2.1`, `5G`), `unread-glued-form` (a number glued to letters the kit does not know,
+ * such as `12foo` or `Rs1,500`; the verdict cannot be `clean`) or `ignored` (an unread form
+ * that your `ignore` or `ignorePattern` option covers).
+ */
+export type SkipReason = 'identifier' | 'unread-glued-form' | 'ignored'
+
+/** A stretch of the output text that holds digits the kit did not read as a number. */
+export interface SkippedNumber {
+  /** The exact source text, for example `250Wp` or `X3`. */
+  readonly raw: string
+  readonly start: number
+  readonly end: number
+  readonly reason: SkipReason
+}
+
+/** How many numbers ended in each status, and how many stretches were skipped. */
+export interface TraceCounts extends Readonly<Record<TraceStatus, number>> {
+  /** The length of `skipped`. */
+  readonly skipped: number
+}
+
 export interface TraceResult {
   readonly verdict: TraceVerdict
   readonly numbers: readonly NumberTrace[]
-  readonly counts: Readonly<Record<TraceStatus, number>>
+  /**
+   * Digits in the output text that were not read as numbers: identifiers, and glued forms the
+   * kit cannot read. Empty when the output was given as tokens. An `unread-glued-form` entry
+   * makes the verdict `unknown` unless a number is `untraced`.
+   */
+  readonly skipped: readonly SkippedNumber[]
+  readonly counts: TraceCounts
   /** How many numbers were found in the evidence. */
   readonly evidenceNumbers: number
   /** How many derivation candidates were generated. */

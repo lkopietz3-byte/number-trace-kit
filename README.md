@@ -58,6 +58,8 @@ result.verdict // 'untraced'
 
 Each entry in `result.numbers` carries the token, the status, the evidence it matched (`id`, `raw`, offsets), and for `derived` the operands and whether the match was exact.
 
+`result.skipped` lists every stretch of the output that holds digits but was not read as a number, each with its `raw` text, offsets and a reason (see Verdict), and `result.counts.skipped` is its length. Nothing the kit passes over is silent.
+
 ```ts
 reconcile({
   rows: [{ label: 'Subtotal', amount: '1200.00' }, { label: 'Tax', amount: '99.00' }],
@@ -143,13 +145,19 @@ For a table of many rows and a printed total, use `reconcile`; it is exact and n
 ### Verdict
 
 - `untraced`: at least one number is `untraced`.
-- `unknown`: nothing is untraced, but at least one number is `unknown`.
-- `clean`: every number is `traced`, `rounded`, `derived` or `ignored`. An output with no numbers is `clean` (there was nothing to trace).
+- `unknown`: nothing is untraced, but at least one number is `unknown`, or at least one stretch of the output was skipped with the reason `unread-glued-form`: digits glued to letters the kit does not know and cannot call an identifier (`12foo`, `3xyz`, `50p`, `9999kr`, `Rs1,500`). The kit cannot tell what the number means, so it never calls the output clean. Add the text to `ignore` (or match it with `ignorePattern`) to accept it; the entry stays in `skipped` with the reason `ignored`.
+- `clean`: every number is `traced`, `rounded`, `derived` or `ignored`, and nothing was skipped as an unread form. An output with no numbers is `clean` (there was nothing to trace), so check `numbers.length` and `skipped` if you expect some.
+
+A skipped entry with the reason `identifier` (`X3`, `v2.1`, `iPhone15`, `5G`, `3D`, `COVID-19`, `Llama-3.3-70B-Instruct`, `192.168.1.1`, `0x1F`, `x86_64`) is a name, a version or a code. It is listed, and it does not change the verdict.
 
 ## What gets treated as a number, and what does not
 
-- Digits: ASCII digits, full-width digits and punctuation (U+FF01 to U+FF5E), and the decimal digits of every script in the Basic Multilingual Plane (Arabic-Indic, Devanagari, Thai and the rest) are read, folded to ASCII the way NFKC folds full-width forms, with offsets still pointing into your original text. Digits outside that plane (mathematical digits) are not numbers to this library, and number words (`twelve percent`) are not read.
-- Numbers glued to Latin letters are identifiers, not numbers: `X3`, `v2.1`, `H2O`, `COVID-19`, `GPT-4`, `F-16`, `5G`, `A4`, `3D`, `FY2025`, `Q3`, `x86_64`, `iPhone15`. They are skipped in the output, so a model name or version string is never asked to trace. A letter-glued form that is a unit (`5kg`, `10x`), a magnitude (`5bn`), an ordinal (`3rd`) or a currency code (`100USD`) is read as such. Dotted chains like `1.2.3` and `192.168.1.1` are skipped as versions and addresses, and a version keeps its whole suffix (`v1.2.3+4`, `1.2.3-rc.1`, `2.0.0-beta.2+build.5`). In the evidence, the digits inside a skipped identifier are kept as weak evidence: an output number equal to them (a `2025` against `FY2025`) is `unknown`, never `traced`.
+- Digits: ASCII digits, full-width digits and punctuation (U+FF01 to U+FF5E), and the decimal digits of every script in the Basic Multilingual Plane (Arabic-Indic, Devanagari, Thai and the rest) are read, folded to ASCII the way NFKC folds full-width forms, with offsets still pointing into your original text. Decimal digits outside that plane (mathematical digits such as `𝟓𝟎`) are not numbers to this library, but they are listed in `skipped` with the reason `unread-glued-form`, so they cannot hide a figure. Number words (`twelve percent`) are not read.
+- Numbers glued to Latin letters are identifiers, not numbers: `X3`, `v2.1`, `H2O`, `COVID-19`, `GPT-4`, `F-16`, `5G`, `A4`, `3D`, `2FA`, `4WD`, `1080p`, `FY2025`, `Q3`, `x86_64`, `iPhone15`. They are skipped in the output and listed in `skipped` with the reason `identifier`, so a model name or version string is never asked to trace. A letter-glued form that is a unit (`5kg`, `250W`, `45days`, `10x`), a magnitude (`5bn`), an ordinal (`3rd`) or a currency code (`100USD`) is read as such. Dotted chains like `1.2.3` and `192.168.1.1` are skipped as versions and addresses, and a version keeps its whole suffix (`v1.2.3+4`, `1.2.3-rc.1`, `2.0.0-beta.2+build.5`). In the evidence, the digits inside a skipped identifier are kept as weak evidence: an output number equal to them (a `2025` against `FY2025`) is `unknown`, never `traced`.
+- A number glued to letters that are neither a unit nor a known code shape (`12foo`, `3xyz`, `50p`, `9999kr`) is not an identifier: it is probably a quantity the kit cannot read. It is listed in `skipped` with the reason `unread-glued-form` and makes the verdict `unknown`. A currency written as a letter prefix (`Rs1,500`, `RM1234.50`, `kr9999`) is the same; a comma chain after a letter prefix (`H2,500`) is skipped whole, never read as the digits after the comma.
+- Units are read glued (`250W`, `50Hz`, `60dB`, `450kcal`, `5000mAh`, `940Mbps`, `45days`, `250bp`, `3X`) in any capitalization where capitals do not change the meaning (`9000KG` is `kg`). Units whose capitals do (`mW` and `MW`) are read exactly as written. A single letter such as `W` or `d` is a unit only when glued; a spaced `5 W` is not read.
+- Hyphenated quantities are read when the word after the number is a unit, percent or currency word (`first-100-days`, `30-day`, `year-over-year-12-percent`, `revenue-of-9999-dollars`). Other hyphenated words (`sales-9999-units`) are names.
+- Underscores around a number are markup or filler, not part of the number: `_12.5%_` is 12.5%, `1766____` is 1766. An underscore inside a word (`foo_12`, `x86_64`, `12_000`) keeps the number part of a name.
 - Letters of other scripts do not glue: `100円`, `第3回` and `1,234.50米ドル` contain the numbers 100, 3 and 1,234.50. A look-alike Cyrillic or Greek letter next to a digit therefore cannot hide the number.
 - Invisible characters split a number: `1<ZWSP>234` is two numbers, so a hidden character cannot make a number vanish. NFC and NFD text read the same numbers.
 - A lone surrogate is an ordinary non-digit.
@@ -223,10 +231,10 @@ Choices that are made on purpose, not pending work:
 - `3 x 4` gives the first number the unit of the second (`3 x 4 cm`), including where the first is a count (`2 x 5 kg`).
 - An ordinary space groups digits only under comma-decimal locales and only as `1 234`; `1 234` under `en-US` is two numbers.
 - `1.2.3-rc.1` and `v1.2.3+4` are versions; other hyphenated words after a number (`3.5-inch`) are not.
-- A percent sign written before the number (`%12`), number words, and digits outside the Basic Multilingual Plane are not read.
+- A percent sign written before the number (`%12`), number words, and digits outside the Basic Multilingual Plane are not read (the digits are listed in `skipped`).
 - Rounding is half-up and half-even only; truncation is untraced.
 - A number written with a zero exponent (`5e0`) carries no magnitude, so an `evidenceScale` hint can still rescale it; leave the hint off for evidence that prints scientific notation.
-- An output with no numbers is `clean`: check `numbers.length` if you expect some. A letter-glued form the kit does not know as a unit (`10x4g`) is skipped, with no list of what was skipped.
+- An output with no numbers is `clean`: check `numbers.length` and `skipped` if you expect some. Identifier shapes (`X3`, `v2.1`, `iPhone15`, `5G`) are skipped and listed; a hyphenated name with letters on both sides of its number (`sales-9999-units`) is an identifier too, whatever it means in prose. `skipped` is filled only when the output is a string, not when you pass tokens.
 - A derivation is not scoped to a document, row or sentence: any two numbers of the same class in the evidence can combine. The coincidence guard (`maxDerivationMatches`, `maxDerivationDensity`) is the protection, and the cost is that some honest derived numbers on dense pages are `unknown`.
 - Derived values do not chain: a figure computed in the output and then used in a second computation is not an operand.
 - Operands of one derivation need the same class and unit. A table that prints `$` on its first row only needs the `currency` hint, not a mixed derivation.

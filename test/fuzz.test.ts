@@ -65,7 +65,9 @@ describe('fuzz', () => {
         derivations: ['sum', 'difference', 'ratio', 'percent-change', 'percent-of'],
         maxCandidates: 400,
       })
-      const total = Object.values(r.counts).reduce((x, y) => x + y, 0)
+      const { skipped, ...byStatus } = r.counts
+      expect(skipped, a).toBe(r.skipped.length)
+      const total = Object.values(byStatus).reduce((x, y) => x + y, 0)
       expect(total, a).toBe(r.numbers.length)
       expect(['clean', 'untraced', 'unknown']).toContain(r.verdict)
       // The same text is always among the evidence, so nothing can be untraced.

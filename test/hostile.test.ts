@@ -75,6 +75,28 @@ describe('linear time on hostile text', { timeout: 60_000 }, () => {
     })
   }
 
+  const skipShapes: Record<string, (n: number) => string> = {
+    'unread glued forms': (n) => '12foo '.repeat(n / 6),
+    'comma chains after a letter prefix': (n) => 'Rs1,500 '.repeat(n / 8),
+    'underscore markup': (n) => '_5.5%_ '.repeat(n / 7),
+    'long letter run before a digit': (n) => 'a'.repeat(n) + '1',
+    'hyphenated names': (n) => 'a-1-b-2-c-3-d-4-e-5 '.repeat(n / 20),
+    'kebab quantities': (n) => 'first-100-days '.repeat(n / 15),
+    'version chains': (n) => 'v1.2.3+4 '.repeat(n / 9),
+    'dotted junk': (n) => '1,234.5.6 '.repeat(n / 10),
+  }
+  for (const [name, make] of Object.entries(skipShapes)) {
+    it(`traceNumbers: skipped forms stay linear: ${name}`, () => {
+      const r = ratio((n) => {
+        const text = make(n)
+        return () => {
+          traceNumbers(text, 'x 12 5.5% 100 days')
+        }
+      })
+      expect(r).toBeLessThan(10)
+    })
+  }
+
   it('traceNumbers: 200k characters of output against matching evidence', () => {
     const chunk = 'Revenue was $1,234.50 (up 12.5%) across 3 regions on 2026-10-10. '
     const r = ratio((n) => {
