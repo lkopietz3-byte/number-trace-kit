@@ -108,3 +108,39 @@ describe('release-review:P2-skipped-span a sign or currency before an unread for
     expect(r.verdict).toBe('clean')
   })
 })
+
+describe('release-review:P2-rate-rounding the rate leniency reaches rounded matches', () => {
+  it.each([
+    ['$29/month', '$28.99'],
+    ['8% per year', '7.96%'],
+    ['€29 per month', '€28.99'],
+    ['$29/month', 'The plan costs $28.99 today.'],
+    ['5% a year', 'Growth was 4.96%.'],
+  ])('release-review:P2-rate-rounding %s traces by rounding to %s', (output, evidence) => {
+    const r = trace(output, evidence)
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers[0]?.status).toBe('rounded')
+    expect(r.numbers[0]?.unitUnverified).toBeUndefined()
+  })
+
+  it.each([
+    ['$29/month', '$28.99/year'],
+    ['8% per year', '7.96% per month'],
+    ['$29/month', '$28.99/month/seat'],
+    ['$30/month', '$28.99'],
+    ['-$29/month', '$28.99'],
+    ['$29/month', '28.99'],
+    ['$28.99/month', '$29'],
+  ])('release-review:P2-rate-rounding %s still does not match %s', (output, evidence) => {
+    const r = trace(output, evidence, { signMode: 'strict' })
+    expect(r.verdict).not.toBe('clean')
+    expect(r.numbers[0]?.status).not.toBe('traced')
+    expect(r.numbers[0]?.status).not.toBe('rounded')
+  })
+
+  it('release-review:P2-rate-rounding a rated figure the evidence writes with its own rate is still matched by that rate', () => {
+    const r = trace('$29/month', '$28.99/month')
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers[0]?.status).toBe('rounded')
+  })
+})

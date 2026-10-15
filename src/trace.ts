@@ -1155,6 +1155,7 @@ class Matcher {
     outNeg: boolean,
     mantissa: bigint,
     bare = false,
+    onlyCls?: string,
   ): { ents: Ent[]; label: RoundLabel } | null {
     if (this.ctx.modes.length === 0) return null
     const idx = this.roundedIndex(source, scale)
@@ -1165,6 +1166,8 @@ class Matcher {
           const list = idx.get(`${mode}\u0000${entKey(shape.cls, u, neg, mantissa.toString())}`)
           if (list === undefined) continue
           for (const e of list) {
+            // `onlyCls`: evidence of exactly that class, not a rated figure filed under it as well.
+            if (onlyCls !== undefined && e.cls !== onlyCls) continue
             if (!signAllowed(signTok, outNeg, e.neg, this.ctx.signMode)) continue
             const modes = hits.get(e) ?? new Set<RoundingMode>()
             modes.add(mode)
@@ -1911,8 +1914,12 @@ function traceOne(
   }
 
   // A rated percent or amount ("$50 per month") against the same figure with no rate in the evidence.
-  if (tok.rate !== undefined && (shape.cls.startsWith('cur:') || shape.cls.startsWith('pct') || shape.cls.startsWith('pp'))) {
-    const baseCls = shape.cls.slice(0, shape.cls.length - tok.rate.length)
+  const unratedBase =
+    tok.rate !== undefined && (shape.cls.startsWith('cur:') || shape.cls.startsWith('pct') || shape.cls.startsWith('pp'))
+      ? shape.cls.slice(0, shape.cls.length - tok.rate.length)
+      : undefined
+  if (unratedBase !== undefined) {
+    const baseCls = unratedBase
     const unrated = lookup(ev.strong, { cls: baseCls, unit: '' }, outNeg, key).filter((e) => e.cls === baseCls).filter(allow)
     if (unrated.length > 0) return matched(tok, 'traced', unrated, outNeg, undefined, false, ctx, aside)
   }
@@ -1921,6 +1928,11 @@ function traceOne(
   for (const v of variants) {
     const rounded = matcher.findRounded('strong', tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
     if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, v.unverified, ctx, aside)
+  }
+  // The same leniency for a rounded figure: "$29/month" from "$28.99", never from "$28.99/year".
+  if (unratedBase !== undefined) {
+    const rounded = matcher.findRounded('strong', tok, tok.scale, { cls: unratedBase, unit: '' }, outNeg, mantissa, false, unratedBase)
+    if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, false, ctx, aside)
   }
 
   // 3. A declared derivation of evidence numbers.
