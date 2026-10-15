@@ -186,7 +186,7 @@ describe('gate-hostile:G10 a skipped form never overlaps a number token', () => 
     return found
   }
 
-  it.each(['Revenue 500CA$25', 'in250USD 1,234.56', 'Cost 5Jan 9', 'Price 12foo$5', 'Total 7xyz€9', 'x 5Oct 12', 'a 3Mar 4 b'])('gate-hostile:G10 %s', (text) => {
+  it.each(['Revenue 500CA$25', 'in250USD 1,234.56', 'Cost 5Jan 9', 'Price 12foo$5', 'Total 7xyz€9', 'x 5Oct 12', 'a 3Mar 4 b', 'COVID Oct1-2COVID 1.234', '7 October2026-10-1017h30 ft('])('gate-hostile:G10 %s', (text) => {
     expect(overlaps(text)).toEqual([])
   })
 
@@ -938,5 +938,119 @@ describe('gate-review:F19 a parenthetical right after a figure is an aside, not 
 
   it('gate-review:F19 tokens carry no text, so a parenthesized negative from tokens is held', () => {
     expect(verdict(extractNumbers('It cost €200 ($300).'), 'It cost €200 or $300.')).toBe('unknown')
+  })
+})
+
+describe('gate-fix:T1 tokens the kit made are accepted back (found by the fuzz sweep after the review)', () => {
+  it.each(['–1.234k', 'x –1.234K y', '–1.234m', '–1.234 B', ' –4K m ^ am', '–4K', '1.234 B', '–1.234 M customers'])('gate-fix:T1 round trip of %j', (text) => {
+    const tokens = extractNumbers(text)
+    expect(() => traceNumbers(tokens, text)).not.toThrow()
+    expect(() => traceNumbers('x', tokens)).not.toThrow()
+  })
+})
+
+// Time grows with the text: 4x the characters costs about 4x the CPU for every new construct (CPU time, growth ratio).
+function cpuSeconds(fn: () => void, runs: number): number {
+  let best = Infinity
+  for (let i = 0; i < runs; i++) {
+    const before = process.cpuUsage()
+    fn()
+    const used = process.cpuUsage(before)
+    best = Math.min(best, (used.user + used.system) / 1e6)
+  }
+  return best
+}
+function growth(make: (n: number) => () => void): number {
+  const small = make(40_000)
+  const large = make(160_000)
+  small()
+  large()
+  return cpuSeconds(large, 5) / Math.max(cpuSeconds(small, 5), 0.005)
+}
+
+describe('gate-fix:T2 linear time on the constructs added after the review', { timeout: 120_000 }, () => {
+  const shapes: Record<string, (n: number) => string> = {
+    'underscore groups in one chain': (n) => '1' + '_000'.repeat(n / 4),
+    'underscore chain that is not grouped': (n) => '1_'.repeat(n / 2),
+    'circled digits': (n) => '①'.repeat(n),
+    'circled digits and spaces': (n) => '① '.repeat(n / 2),
+    'subscripts after letters': (n) => 'H₂O '.repeat(n / 4),
+    'astral numerals': (n) => '\u{10107}'.repeat(n / 2),
+    'rates': (n) => '5 mg/kg/day '.repeat(n / 12),
+    'per phrases': (n) => '5 mg per kg per day '.repeat(n / 20),
+    'a long slash chain after a unit': (n) => '5 kg' + '/s'.repeat(n / 2),
+    'percent first': (n) => '%5 '.repeat(n / 3),
+    'percent signs only': (n) => '%'.repeat(n),
+    'dotted two-digit-year dates': (n) => '14.10.26 '.repeat(n / 9),
+    'h times': (n) => '17h30 '.repeat(n / 6),
+    'dot times': (n) => '5.30pm '.repeat(n / 7),
+    'compound quantities': (n) => '2h45m '.repeat(n / 6),
+    'currency codes glued': (n) => 'AED199 '.repeat(n / 7),
+    'currency codes with a space': (n) => 'THB 1,500 '.repeat(n / 10),
+    'spaced magnitude letters': (n) => '5 M '.repeat(n / 4),
+    'magnitude after a parenthesis': (n) => '($5) million '.repeat(n / 13),
+    'typeset spaces': (n) => '5 kg '.repeat(n / 5),
+    'zero-width characters': (n) => '5​%'.repeat(n / 3),
+    'a long run of typeset spaces after a number': (n) => '5' + ' '.repeat(n) + 'kg',
+    'square and cubic words': (n) => '5 square meters 3 cubic feet '.repeat(n / 29),
+    'week labels': (n) => '2026-W10 '.repeat(n / 9),
+    'estimate labels': (n) => '2026E '.repeat(n / 6),
+    'lowercase m and MM': (n) => '2.5m 48 MM '.repeat(n / 11),
+  }
+  for (const [name, make] of Object.entries(shapes)) {
+    it(`extractNumbers: ${name}`, () => {
+      expect(
+        growth((n) => {
+          const text = make(n)
+          return () => {
+            extractNumbers(text)
+          }
+        }),
+      ).toBeLessThan(10)
+    })
+  }
+
+  it('traceNumbers: many skipped forms in the evidence and the output, with checkIdentifiers', () => {
+    expect(
+      growth((n) => {
+        const text = 'Q3 2h45m AED199 '.repeat(n / 16)
+        return () => {
+          traceNumbers(text, text, { checkIdentifiers: true })
+        }
+      }),
+    ).toBeLessThan(10)
+  })
+
+  it('traceNumbers: extract then trace the tokens', () => {
+    expect(
+      growth((n) => {
+        const text = '$5/month 2h45m ① '.repeat(n / 17)
+        return () => {
+          traceNumbers(extractNumbers(text), text)
+        }
+      }),
+    ).toBeLessThan(10)
+  })
+})
+
+describe('gate-false-pass:G5-F06 sweep: every code in the list is read, glued and spaced', () => {
+  const all = (
+    'AED AFN ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP CNY ' +
+    'CRC CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR ILS INR ' +
+    'IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP ' +
+    'MRU MUR MVR MWK MXN MYR MZN NAD NGN NOK NPR NZD OMR PAB PGK PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG ' +
+    'SEK SGD SHP SLE SRD SSP STN SVC SYP SZL THB TJS TMT TND TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF ' +
+    'XCD XOF XPF YER ZAR ZMW ZWG RMB BTC ETH USDT USDC'
+  ).split(' ')
+  it('gate-false-pass:G5-F06 each code before, glued before and after an amount makes a currency, and a wrong amount is untraced', () => {
+    const bad: string[] = []
+    for (const code of all) {
+      for (const text of [`Fee ${code}1,500 due`, `Fee ${code} 1,500 due`, `Fee 1,500 ${code} due`, `Fee 1,500${code} due`]) {
+        const t = extractNumbers(text)[0]
+        if (t === undefined || t.kind !== 'currency' || t.value !== '1500' || (t.currency !== code && !(code === 'USD' && t.currency === 'USD'))) bad.push(text)
+        if (verdict(text, 'Fee 9 due') !== 'untraced') bad.push(`${text} vs 9`)
+      }
+    }
+    expect(bad).toEqual([])
   })
 })

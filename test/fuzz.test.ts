@@ -14,6 +14,9 @@ const FRAGMENTS = [
   '．', '％', '−', ' ', ' ', '​', '\ud800', '\udc00', '😀', 'é', '́',
   'q', 'Q', 'v', 'X', 'GPT', 'FY', 'a', 'and', 'to', 'COVID', '19', '4K', '.5', '5.', '1e3', '0x1F', '\n', '"', "'",
   '#', '@', '*', '=', '^', '|', '円', '第', '3/4', '1-2', '2026-10-10', '10/12/2026', '12:30',
+  // The forms of the release-gate review: currency codes, underscores, glyphs, rates, times, dates, spaces, compounds.
+  'AED', 'THB1,500', '1_500', '1_5', '①', '⑤00', '₅', '¹²', '%', '%12', '14.10.26', '17h30', '5.30pm', '(4am)', '/month', ' per ', 'mg/kg', '2h45m',
+  '$(', ') million', '\u202f', '\t', '\u200b', '‰', '×', '10×', '2026E', 'Q3', '2026-W10', 'USDT', 'KSh', 'x10', 'MM', 'trn', 'grand', '(', '1H26',
 ]
 
 function lcg(seed: number): () => number {
@@ -52,6 +55,11 @@ describe('fuzz', () => {
         }
         const result = traceNumbers(text, text, { locale, evidenceLocale: locale })
         for (const n of result.numbers) expect(n.status, `${text} -> ${n.token.raw}`).not.toBe('untraced')
+        // Tokens the kit made are accepted back as tokens, and a skipped form never overlaps a number.
+        expect(() => traceNumbers(tokens, text, { locale, evidenceLocale: locale }), text).not.toThrow()
+        for (const s of result.skipped) {
+          for (const n of result.numbers) expect(s.start < n.token.end && n.token.start < s.end, `${text}: ${s.raw} overlaps ${n.token.raw}`).toBe(false)
+        }
       }
     }, 120_000)
   }

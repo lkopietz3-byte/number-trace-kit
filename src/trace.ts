@@ -209,7 +209,8 @@ function readToken(item: Record<string, unknown>, name: string, evidence = false
   const alternates: Reading[] = []
   if (alternatesRaw !== undefined) {
     const list = snapshotArray(alternatesRaw, `${name}.alternates`)
-    if (list.length > 4) throw new TypeError(`${name}.alternates has too many readings.`)
+    // A form can be read several ways at once (an en dash that may be a minus, a separator, a magnitude letter): at most 12.
+    if (list.length > 12) throw new TypeError(`${name}.alternates has too many readings.`)
     list.forEach((alt, k) => {
       if (!isRecord(alt)) throw new TypeError(`${name}.alternates[${k}] must be an object.`)
       const altValue = readString(getOwn(alt, 'value'), `${name}.alternates[${k}].value`)

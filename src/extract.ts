@@ -1320,7 +1320,9 @@ export function scan(
   /** Pass over [a, b): keep its digits as weak evidence and, if asked, record it as skipped. */
   // Skipped forms that left no weak token behind (a circled digit): they count toward the limit as well.
   let bareSkips = 0
-  const skip = (a: number, b: number, reason: SkipKind): void => {
+  const skip = (requested: number, b: number, reason: SkipKind): void => {
+    // A skip never reaches back into a number already read ("Oct1-2COVID": the Oct and the 1 are dates, the name starts after them).
+    const a = Math.max(requested, floor)
     const held = idTokens.length
     noteIdentifier(a, b)
     if (idTokens.length === held) bareSkips++
@@ -2016,7 +2018,7 @@ export function scan(
       if (unit !== undefined) {
         sfx.unit = unit
         // "5 MM" and "5 m": millimeters or meters, or millions. The kit cannot tell, so the other reading is kept.
-        if ((w === 'MM' || w === 'm') && !scientific) sfx.unitMagnitudeAlt = 6
+        if ((w === 'MM' || w === 'm') && !scientific && !magnitudeRead && sfx.exp10 === 0) sfx.unitMagnitudeAlt = 6
         return we
       }
       return -1
