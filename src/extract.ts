@@ -212,7 +212,7 @@ const CURRENCY_PREFIX_WORDS: ReadonlySet<string> = new Set([
 ])
 
 const MAGNITUDE_WORDS: Record<string, number> = {
-  thousand: 3, million: 6, billion: 9, trillion: 12, bn: 9, mn: 6, tn: 12,
+  thousand: 3, million: 6, billion: 9, trillion: 12, bn: 9, mn: 6, tn: 12, trn: 12, tril: 12, bil: 9,
 }
 // Magnitude words that mean one power of ten wherever they are used. Keys are lower case.
 const FIXED_MAGNITUDE: Record<string, number> = {
@@ -274,6 +274,8 @@ function magnitudeOf(w: string, hasCurrency: boolean, language: string, spaced: 
   }
   if (UNREAD_MAGNITUDE.has(lower)) return null
   if (lower === 'mil') return hasCurrency && language === 'en' ? { exp: 6, loose: false } : null
+  // Slang for money only: "$5 mill", "$5 thou", "$5 grand" (but "5 grand slams" is a count).
+  if (lower === 'mill' || lower === 'thou' || lower === 'grand') return hasCurrency ? { exp: lower === 'mill' ? 6 : 3, loose: false } : undefined
   if (lower === 'cr') return hasCurrency ? { exp: 7, loose: false } : null
   if (w === 'MM') return hasCurrency ? { exp: 6, loose: false } : spaced ? undefined : { exp: 6, loose: true }
   if (w === 'mm' && hasCurrency) return { exp: 6, loose: false }
@@ -592,6 +594,8 @@ interface Suffix {
   unreadMagnitude: boolean
   /** The currency came from the word "dollar" or "dollars", which names no particular dollar. */
   dollarWord: boolean
+  /** A unit that is also a magnitude ("2.5m": meters, or millions; "48 MM"): the power of ten of the other reading, or 0. */
+  unitMagnitudeAlt: number
 }
 
 /** Extract the numbers from a text. Linear time; never throws on odd characters. */
@@ -1514,9 +1518,43 @@ export function scan(
     return year >= 1900 && year <= 2090 && year % 10 === 0
   }
 
+  /** True when a currency symbol, code or word ("USD", "dollars", "€") follows after one space at p. */
+  const currencyWordAt = (p: number): boolean => {
+    if (!isGap(at(p))) return false
+    const s = p + 1
+    if (CURRENCY_SYMBOLS.has(at(s))) return true
+    if (!isLetter(at(s))) return false
+    const w = readWord(s, 12)
+    if (w.length > 12) return false
+    const after = at(s + w.length)
+    if (isLetter(after) || isDigit(after)) return false
+    return ((w.length === 3 || w.length === 4) && CURRENCY_CODES.has(w)) || own(CURRENCY_WORDS, w.toLowerCase()) !== undefined
+  }
+
+  /**
+   * A magnitude word or letter right after the closing parenthesis of an accounting negative, with at most one space
+   * before it ("($14.2) million", "($14.2)M"). `exp` is null for a magnitude word the kit cannot value.
+   */
+  const magnitudeAfterParen = (p0: number, hasCurrency: boolean): { exp: number | null; end: number } | null => {
+    let q = p0
+    const spaced = isGap(at(q))
+    if (spaced) q++
+    if (!isLetter(at(q))) return null
+    const w = readWord(q, 20)
+    if (w.length > 20) return null
+    const we = q + w.length
+    if (isLetter(at(we)) || isDigit(at(we)) || at(we) === 0x5f) return null
+    if (w.length === 1) {
+      const letter = hasCurrency ? letterExp(w) : -1
+      return letter < 0 ? null : { exp: letter, end: we }
+    }
+    const mag = magnitudeOf(w, hasCurrency, info.language, spaced)
+    return mag === undefined ? null : { exp: mag === null ? null : mag.exp, end: we }
+  }
+
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
     const sfx: Suffix = noProto({
-      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false, dollarWord: false,
+      end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false, dollarWord: false, unitMagnitudeAlt: 0,
     })
     let p = e
     if (at(p) === 0x5f) {
@@ -1679,10 +1717,14 @@ export function scan(
           return sfx
         }
         sfx.unit = unit
+        // "2.5m customers": meters, or millions. The kit cannot tell, so the other reading is kept.
+        if (w === 'm' && !scientific) sfx.unitMagnitudeAlt = 6
         sfx.end = we
         return sfx
       }
     }
+    // A bare K, M, B or T after a space is a magnitude that may also be a label: set by readSpaced.
+    let spacedLetter = false
     // Spaced words: "1.2 million", "5 percent", "30 days", "4 dollars".
     const readSpaced = (from: number): number => {
       // Reads one recognized word starting after one space at `from`; returns its end or -1.
@@ -1716,10 +1758,14 @@ export function scan(
       if (isDigit(at(we))) return -1
       const lower = w.toLowerCase()
       if (!scientific) {
-        // "$5 M": a lone magnitude letter after a currency amount, when nothing but a boundary follows it.
-        const letter = hasCurrency && w.length === 1 ? letterExp(w) : -1
-        const boundary = letter >= 0 && (we >= n || isGap(at(we)) || at(we) === 0x29 || at(we) === 0x2c || at(we) === 0x2e || at(we) === 0x3b || at(we) === 0x3a || at(we) === 0x21 || at(we) === 0x3f)
-        const mag = boundary ? { exp: letter, loose: false } : magnitudeOf(w, hasCurrency, info.language, true)
+        // "$5 M": a lone magnitude letter after a currency amount, when it does not start or continue a word.
+        // Without a currency only a capital K, M, B or T counts, and it may also be a label ("5 M").
+        const letter = w.length === 1 && (hasCurrency || w === 'K' || w === 'M' || w === 'B' || w === 'T') ? letterExp(w) : -1
+        const boundary = letter >= 0 && !isLetter(at(we)) && !isDigit(at(we)) && !isMark(at(we)) && at(we) !== 0x5f
+        // "5 MM USD": MM before a currency word is millions.
+        const millions = w === 'MM' && !hasCurrency && currencyWordAt(we)
+        if (boundary && !hasCurrency) spacedLetter = true
+        const mag = boundary ? { exp: letter, loose: false } : millions ? { exp: 6, loose: false } : magnitudeOf(w, hasCurrency, info.language, true)
         if (mag !== undefined) {
           // Two magnitude words in a row multiply ("1 hundred thousand", "3 lakh crore"): not read.
           if (magnitudeRead || mag === null) sfx.unreadMagnitude = true
@@ -1780,6 +1826,8 @@ export function scan(
       const unit = spacedUnit(w) ?? (w === 'c' ? undefined : own(GLUED_UNITS, w))
       if (unit !== undefined) {
         sfx.unit = unit
+        // "5 MM" and "5 m": millimeters or meters, or millions. The kit cannot tell, so the other reading is kept.
+        if ((w === 'MM' || w === 'm') && !scientific) sfx.unitMagnitudeAlt = 6
         return we
       }
       return -1
@@ -1814,7 +1862,7 @@ export function scan(
     if (spacedEnd >= 0) {
       sfx.end = spacedEnd
       if (sfx.exp10 !== 0 && sfx.currency === undefined && sfx.percent === undefined) {
-        sfx.looseMagnitude = false
+        sfx.looseMagnitude = spacedLetter
       }
     }
     return sfx
@@ -2223,7 +2271,7 @@ export function scan(
       }
 
       // ---- parentheses as a negative ----------------------------------------------------
-      const exp10 = sfx?.tooLong === true ? 0 : (sfx?.exp10 ?? 0)
+      let exp10 = sfx?.tooLong === true ? 0 : (sfx?.exp10 ?? 0)
       let rawStart = tokStart
       let rawEnd = tokEnd
       let parenthesized = false
@@ -2251,6 +2299,18 @@ export function scan(
             signStyle = 'parentheses'
             if (!parenAfterCurrency) rawStart -= 1
             rawEnd += 1
+            // "($14.2) million": the magnitude word outside the closing parenthesis belongs to the figure.
+            if (exp10 === 0 && sfx?.scientific !== true && sfx?.percent === undefined && sfx?.unit === undefined) {
+              const outside = magnitudeAfterParen(rawEnd, currency !== undefined)
+              if (outside !== null) {
+                rawEnd = outside.end
+                if (outside.exp === null) {
+                  if (ambiguity !== 'superscript') ambiguity = 'magnitude'
+                } else {
+                  exp10 = outside.exp
+                }
+              }
+            }
           } else if (!yearShaped) {
             // A bare "(557)" is read as positive, but it may be an accounting negative.
             parenthesized = true
@@ -2272,6 +2332,11 @@ export function scan(
         if (sfx?.looseMagnitude === true) {
           // "4K": 4000, or the label "4K". The unscaled reading is the alternate.
           alternates.push({ value: decimalString(neg, sub.int, sub.frac, 0), scale: sub.frac.length })
+          ambiguity = ambiguity ?? 'suffix'
+        }
+        if (sfx !== undefined && sfx.unitMagnitudeAlt !== 0 && ambiguity !== 'magnitude') {
+          // "2.5m": meters (the reading) or millions; "48 MM": millimeters or millions.
+          alternates.push({ value: decimalString(neg, sub.int, sub.frac, exp10 + sfx.unitMagnitudeAlt), scale: sub.frac.length - exp10 - sfx.unitMagnitudeAlt })
           ambiguity = ambiguity ?? 'suffix'
         }
         if (dashSign && (ambiguity === undefined || ambiguity === 'separator' || ambiguity === 'suffix')) {

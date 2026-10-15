@@ -330,3 +330,102 @@ describe('gate-review:F10 a count, a period and a capitalized English month name
     expect(verdict('Am 5. März 2026', 'Am 5 März 2026', { locale: 'de-DE' })).toBe('clean')
   })
 })
+
+describe('gate-review:F06 a lone magnitude letter after a currency amount', () => {
+  it.each([
+    ['Revenue: $5 M\nCosts: $3 M', 'Revenue: $5 million\nCosts: $3 million'],
+    ['**Revenue $5 M**', 'Revenue $5 million'],
+    ['Revenue $5 M\tnet', 'Revenue $5 million'],
+    ['Revenue $5 M+ net', 'Revenue $5 million'],
+    ['Revenue $5 M-ish', 'Revenue $5 million'],
+    ['Revenue $5 M—costs', 'Revenue $5 million'],
+    ['Revenue "$5 M"', 'Revenue $5 million'],
+    ['Revenue [$5 M]', 'Revenue $5 million'],
+    ['Revenue |$5 M|', 'Revenue $5 million'],
+    ['Revenue $5 M\r\nnet', 'Revenue $5 million'],
+    ['Revenue $5 M *net*', 'Revenue $5 million'],
+  ])('gate-review:F06 %j is $5 million', (output, evidence) => {
+    expect(verdict(output, evidence)).toBe('clean')
+    expect(verdict(output, 'Revenue $5')).toBe('untraced')
+  })
+
+  it('gate-review:F06 a letter that starts a word is still a word', () => {
+    expect(extractNumbers('Revenue $5 Mx and $5 Mark')[0]).toMatchObject({ value: '5', currency: 'USD' })
+    expect(extractNumbers('Revenue $5 M2')[0]).toMatchObject({ value: '5' })
+  })
+})
+
+describe('gate-review:F09 lowercase m and spaced MM are not only meters and millimeters', () => {
+  it('gate-review:F09 2.5m customers against 2.5 million customers is unknown, never untraced', () => {
+    for (const [output, evidence] of [
+      ['We have 2.5m customers.', 'We have 2.5 million customers.'],
+      ['We have 1.2m units.', 'We have 1.2 million units.'],
+      ['We have 48 MM units.', 'We have 48 million units.'],
+    ] as const) {
+      expect(verdict(output, evidence), output).toBe('unknown')
+    }
+    expect(verdict('We have 3.5m customers.', 'We have 2.5 million customers.')).toBe('untraced')
+    expect(verdict('We have 2.5 million customers.', 'We have 2.5m customers.')).toBe('unknown')
+  })
+
+  it('gate-review:F09 the reading as meters or millimeters still traces to itself and to the words', () => {
+    expect(verdict('The pool is 25m long.', 'The pool is 25m long.')).toBe('clean')
+    expect(verdict('The pool is 25m long.', 'The pool is 25 meters long.')).toBe('clean')
+    expect(verdict('A 48 MM lens.', 'A 48 MM lens.')).toBe('clean')
+    expect(verdict('The pool is 25m long.', 'The pool is 30m long.')).toBe('untraced')
+  })
+
+  it('gate-review:F09 MM before a currency is millions', () => {
+    expect(verdict('Revenue 5 MM USD.', 'Revenue 5 million USD.')).toBe('clean')
+    expect(verdict('Revenue 5 MM USD.', 'Revenue 5 USD.')).toBe('untraced')
+    expect(verdict('Revenue 5 MM dollars.', 'Revenue $5 million.')).toBe('clean')
+    expect(verdict('Revenue $5 MM.', 'Revenue $5 million.')).toBe('clean')
+  })
+})
+
+describe('gate-false-pass:G5-F05 magnitude words and letters that were dropped silently', () => {
+  it.each([['trn'], ['tril'], ['bil'], ['mill'], ['thou'], ['grand']])('gate-false-pass:G5-F05 $5 %s is not $5', (word) => {
+    expect(verdict(`India targets a $5 ${word} economy.`, 'India targets a $5 economy.')).toBe('untraced')
+  })
+
+  it('gate-false-pass:G5-F05 the words have the value they say', () => {
+    expect(extractNumbers('$5 trn, $5 tril, $2.1 bil, $5 mill, $5 thou, $5 grand').map((t) => t.value)).toEqual([
+      '5000000000000', '5000000000000', '2100000000', '5000000', '5000', '5000',
+    ])
+    expect(verdict('India targets a $5 trn economy.', 'India targets a $5 trillion economy.')).toBe('clean')
+    expect(extractNumbers('Federer won 5 grand slams, 3 mill workers and 2 thou').map((t) => t.value)).toEqual(['5', '3', '2'])
+  })
+
+  it('gate-false-pass:G5-F05 a spaced bare K, M, B or T is a magnitude that may be a label, so it is never a silent pass', () => {
+    for (const letter of ['K', 'M', 'B', 'T']) {
+      expect(verdict(`Users: 5 ${letter}`, 'Users: 5'), letter).toBe('unknown')
+      expect(verdict(`Users: 5 ${letter}`, `Users: 5 ${letter}`), letter).toBe('clean')
+    }
+    expect(verdict('Users: 5 M', 'Users: 5 million')).toBe('clean')
+    expect(extractNumbers('Users: 5 M')[0]).toMatchObject({ value: '5000000', ambiguous: true, ambiguity: 'suffix' })
+  })
+})
+
+describe('gate-false-pass:G5-F08 a magnitude after the closing parenthesis of an accounting negative', () => {
+  it.each([
+    ['The net loss was ($14.2) million.'],
+    ['The net loss was $(14.2) million.'],
+    ['The net loss was ($14.2)M.'],
+    ['The net loss was (14.2) million.'],
+  ])('gate-false-pass:G5-F08 %s is -14.2 million', (text) => {
+    expect(extractNumbers(text)[0]).toMatchObject({ value: '-14200000', signStyle: 'parentheses' })
+  })
+
+  it('gate-false-pass:G5-F08 the honest restatement traces and the scale error does not', () => {
+    expect(trace('The net loss was $14.2 million.', 'Net loss for the year was ($14.2) million.').counts.signDiffers).toBe(1)
+    expect(verdict('The net loss was $14.2 million.', 'Net loss for the year was ($14.2) million.')).toBe('clean')
+    expect(verdict('The net loss was $14.2.', 'Net loss for the year was ($14.2) million.')).toBe('untraced')
+    expect(verdict('The net loss was $1.2 billion.', 'The loss was ($1.2) billion.')).toBe('clean')
+    expect(verdict('The net loss was $1.2.', 'The loss was ($1.2) billion.')).toBe('untraced')
+    expect(verdict('The net loss was ($14.2 million).', 'Net loss for the year was ($14.2) million.')).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-F08 a word after the parenthesis that is not a magnitude changes nothing', () => {
+    expect(extractNumbers('Loss ($14.2) and ($3.5) total')[0]).toMatchObject({ value: '-14.2', raw: '($14.2)' })
+  })
+})
