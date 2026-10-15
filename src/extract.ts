@@ -318,6 +318,19 @@ function isGroupSpace(c: number): boolean {
   return c === NBSP || c === NNBSP || c === THIN
 }
 
+/**
+ * The characters that may sit between a number and the word, sign or percent that goes with it: an ordinary space,
+ * a tab, every typeset space (U+2000 to U+200A, U+202F, U+205F, U+1680, and U+00A0; U+3000 is folded to a space) and
+ * the invisible characters that stand where a space would be (zero-width space, joiners, word joiner, byte order mark,
+ * soft hyphen). A line break is not one: it ends the number. Digit grouping is a separate, smaller set (`isGroupSpace`).
+ */
+function isGap(c: number): boolean {
+  return (
+    c === 0x20 || c === 0x09 || c === NBSP || c === 0x1680 || (c >= 0x2000 && c <= 0x200d) || c === 0x202f || c === 0x205f ||
+    c === 0x2060 || c === 0xfeff || c === 0xad
+  )
+}
+
 function isDigit(c: number): boolean {
   return c >= 0x30 && c <= 0x39
 }
@@ -701,10 +714,10 @@ export function scan(
 
   const monthWordBefore = (i: number): { start: number; end: number; month: number; fresh: boolean } | null => {
     let p = i - 1
-    if (at(p) === 0x20 || at(p) === NBSP) p--
+    if (isGap(at(p))) p--
     // "marzo de 2026": the connector between a month and its year.
-    if ((at(p) | 0x20) === 0x65 && (at(p - 1) | 0x20) === 0x64 && (at(p - 2) === 0x20 || at(p - 2) === NBSP)) p -= 3
-    else if ((at(p) | 0x20) === 0x6c && (at(p - 1) | 0x20) === 0x65 && (at(p - 2) | 0x20) === 0x64 && (at(p - 3) === 0x20 || at(p - 3) === NBSP)) p -= 4
+    if ((at(p) | 0x20) === 0x65 && (at(p - 1) | 0x20) === 0x64 && (isGap(at(p - 2)))) p -= 3
+    else if ((at(p) | 0x20) === 0x6c && (at(p - 1) | 0x20) === 0x65 && (at(p - 2) | 0x20) === 0x64 && (isGap(at(p - 3)))) p -= 4
     if (at(p) === 0x2e) p--
     let q = p
     while (q >= 0 && p - q < 14 && (isLetter(at(q)) || isMark(at(q)))) q--
@@ -1006,7 +1019,7 @@ export function scan(
       else if (at(e) === 0xba || at(e) === 0xb0) e += 1 // 1º de marzo
       let p = e
       if (at(p) === 0x2e) p++ // 5. März
-      if (at(p) === 0x20) {
+      if (isGap(at(p))) {
         p++
         // "5th of October", "5 de marzo", "5 di marzo"
         p += connectorLength(p)
@@ -1083,7 +1096,7 @@ export function scan(
   /** True when a number (optionally after one space or a sign) starts at k. */
   const startsNumber = (k: number): boolean => {
     let q = k
-    if (at(q) === 0x20 || at(q) === NBSP) q++
+    if (isGap(at(q))) q++
     if (isSignCode(at(q))) q++
     // A leading decimal (".99") starts a number too.
     return isDigit(at(q)) || ((at(q) === 0x2e || at(q) === 0x2c) && isDigit(at(q + 1)))
@@ -1112,7 +1125,7 @@ export function scan(
     const word = 'between'
     for (let k = 0; k < 7; k++) if ((at(b + k) | 0x20) !== word.charCodeAt(k)) return false
     const sp = at(pos - 1)
-    return (sp === 0x20 || sp === NBSP) && (b === 0 || !isLetter(at(b - 1)))
+    return isGap(sp) && (b === 0 || !isLetter(at(b - 1)))
   }
 
   /** "between 10 and 12": the word "and" joins two numbers into a range when "between" opens it. */
@@ -1131,11 +1144,11 @@ export function scan(
    */
   const operatorBefore = (pos: number): Tok | undefined => {
     let j = pos - 1
-    for (let guard = 0; guard < 8 && (at(j) === 0x20 || at(j) === NBSP); guard++) j--
+    for (let guard = 0; guard < 8 && (isGap(at(j))); guard++) j--
     const c = at(j)
     if (c !== 0x78 && c !== 0x58 && c !== 0xd7) return undefined
     j--
-    for (let guard = 0; guard < 8 && (at(j) === 0x20 || at(j) === NBSP); guard++) j--
+    for (let guard = 0; guard < 8 && (isGap(at(j))); guard++) j--
     const prev = lastPlain()
     return prev !== undefined && prev.end === j + 1 ? prev : undefined
   }
@@ -1315,7 +1328,7 @@ export function scan(
 
   const matchCurrencyEndingRaw = (pos: number): CurrencyMatch | null => {
     let p = pos - 1
-    if (p >= floor && (at(p) === 0x20 || at(p) === NBSP)) p--
+    if (p >= floor && (isGap(at(p)))) p--
     if (p < floor) return null
     const c = at(p)
     const symbol = CURRENCY_SYMBOLS.get(c)
@@ -1362,7 +1375,7 @@ export function scan(
    */
   const temperatureAt = (p0: number): { unit: string; end: number } | null => {
     let q = p0
-    if (at(q) === 0x20 || at(q) === NBSP) q++
+    if (isGap(at(q))) q++
     const c = at(q)
     if (c === 0x2103) return { unit: '°C', end: q + 1 }
     if (c === 0x2109) return { unit: '°F', end: q + 1 }
@@ -1370,10 +1383,10 @@ export function scan(
     if (c === 0xb0 || c === 0xba || c === 0x2da) {
       // "° C": one space may separate the sign from the letter.
       r = q + 1
-      if (at(r) === 0x20 || at(r) === NBSP) r++
+      if (isGap(at(r))) r++
     } else if (isLetter(c)) {
       const w = readWord(q, 7).toLowerCase()
-      if ((w === 'degrees' || w === 'degree' || w === 'deg') && (at(q + w.length) === 0x20 || at(q + w.length) === NBSP)) r = q + w.length + 1
+      if ((w === 'degrees' || w === 'degree' || w === 'deg') && (isGap(at(q + w.length)))) r = q + w.length + 1
     }
     if (r < 0) return null
     const letter = at(r) | 0x20
@@ -1392,7 +1405,7 @@ export function scan(
    */
   const meridiemAt = (p0: number): { unit: string; end: number } | null => {
     let q = p0
-    if (at(q) === 0x20 || at(q) === NBSP) q++
+    if (isGap(at(q))) q++
     const first = at(q) | 0x20
     if (first !== 0x61 && first !== 0x70) return null
     const unit = first === 0x61 ? 'am' : 'pm'
@@ -1420,7 +1433,7 @@ export function scan(
    */
   const scriptMagnitudeAt = (p0: number): { end: number; exp: number | null } | null => {
     let q = p0
-    if (at(q) === 0x20 || at(q) === NBSP) q++
+    if (isGap(at(q))) q++
     const c = at(q)
     if (c < 0x400) return null
     const cjk = CJK_MAGNITUDE.get(c)
@@ -1516,7 +1529,7 @@ export function scan(
       sfx.end = p + 1
       return sfx
     }
-    if ((at(p) === 0x20 || at(p) === NBSP) && at(p + 1) === 0x25) {
+    if ((isGap(at(p))) && at(p + 1) === 0x25) {
       sfx.percent = '%'
       sfx.end = p + 2
       return sfx
@@ -1631,7 +1644,7 @@ export function scan(
         sfx.percent = '%'
         return from + 1
       }
-      if (at(from) !== 0x20 && at(from) !== NBSP) return -1
+      if (!isGap(at(from))) return -1
       const s = from + 1
       if (!(isLetter(at(s)) || (at(s) === 0x3bc && isLetter(at(s + 1))))) {
         if (at(s) === 0x25) {
@@ -1659,7 +1672,7 @@ export function scan(
       if (!scientific) {
         // "$5 M": a lone magnitude letter after a currency amount, when nothing but a boundary follows it.
         const letter = hasCurrency && w.length === 1 ? letterExp(w) : -1
-        const boundary = letter >= 0 && (we >= n || at(we) === 0x20 || at(we) === NBSP || at(we) === 0x29 || at(we) === 0x2c || at(we) === 0x2e || at(we) === 0x3b || at(we) === 0x3a || at(we) === 0x21 || at(we) === 0x3f)
+        const boundary = letter >= 0 && (we >= n || isGap(at(we)) || at(we) === 0x29 || at(we) === 0x2c || at(we) === 0x2e || at(we) === 0x3b || at(we) === 0x3a || at(we) === 0x21 || at(we) === 0x3f)
         const mag = boundary ? { exp: letter, loose: false } : magnitudeOf(w, hasCurrency, info.language, true)
         if (mag !== undefined) {
           // Two magnitude words in a row multiply ("1 hundred thousand", "3 lakh crore"): not read.
@@ -1678,7 +1691,7 @@ export function scan(
         return we
       }
       const second = own(PERCENT_PHRASES, lower)
-      if (second !== undefined && at(we) === 0x20) {
+      if (second !== undefined && isGap(at(we))) {
         const w2 = readWord(we + 1, 6).toLowerCase()
         if (second.includes(w2)) {
           sfx.percent = '%'
@@ -1687,7 +1700,7 @@ export function scan(
       }
       if (lower === 'percentage') {
         const w2 = readWord(we + 1, 8).toLowerCase()
-        if (at(we) === 0x20 && (w2 === 'point' || w2 === 'points')) {
+        if (isGap(at(we)) && (w2 === 'point' || w2 === 'points')) {
           sfx.percent = 'pp'
           return we + 1 + w2.length
         }
@@ -1702,7 +1715,7 @@ export function scan(
         return we
       }
       const dollarCode = own(DOLLAR_ADJECTIVES, lower)
-      if (dollarCode !== undefined && at(we) === 0x20) {
+      if (dollarCode !== undefined && isGap(at(we))) {
         const w2 = readWord(we + 1, 8).toLowerCase()
         const e2 = we + 1 + w2.length
         if ((w2 === 'dollar' || w2 === 'dollars') && !isLetter(at(e2)) && !isDigit(at(e2))) {
@@ -1887,7 +1900,7 @@ export function scan(
   function leadingMarkBoundary(m: number, mark: number): boolean {
     const c = at(m)
     if (c === -1) return true
-    if (c === 0x20 || c === NBSP || c === 0x28) return true
+    if (isGap(c) || c === 0x28) return true
     if (mark === 0x2c) {
       // A decimal comma (",5" under a comma-decimal locale) keeps the same boundaries after symbols
       // and opening punctuation; after a letter, digit or closing punctuation it is a separator.
@@ -1901,7 +1914,7 @@ export function scan(
     // An x or a multiplication sign right after a number: ".5x.7", "5 x.7".
     if (c === 0x78 || c === 0x58 || c === 0xd7) {
       let q = m - 1
-      if (at(q) === 0x20 || at(q) === NBSP) q--
+      if (isGap(at(q))) q--
       return isDigit(at(q))
     }
     // Anything else keeps the point ("~.5", "|.99", "#.5", curly quotes), except where the point is
@@ -2055,7 +2068,7 @@ export function scan(
     let vulgar: string | null | undefined
     let vulgarEnd = -1
     {
-      const gap = !bare && (at(p) === 0x20 || at(p) === NBSP) ? 1 : 0
+      const gap = !bare && (isGap(at(p))) ? 1 : 0
       const code = at(p + gap)
       if (VULGAR_FRACTIONS.has(code)) {
         vulgar = VULGAR_FRACTIONS.get(code) ?? null

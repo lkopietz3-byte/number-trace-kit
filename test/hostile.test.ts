@@ -188,7 +188,9 @@ describe('hostile values', { timeout: 60_000 }, () => {
 
   it('zero-width characters split a number rather than hiding it', () => {
     expect(extractNumbers('1​234').map((t) => t.raw)).toEqual(['1', '234'])
-    expect(extractNumbers('45​%')[0]).toMatchObject({ kind: 'count' })
+    // Between a number and its percent sign or unit word an invisible character counts as the space it stands for
+    // (gate-false-pass:G5-F01); otherwise it would hide the word.
+    expect(extractNumbers('45​%')[0]).toMatchObject({ kind: 'percent' })
     expect(traceNumbers('1​234', '1234').verdict).toBe('untraced')
   })
 
