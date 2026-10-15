@@ -1216,13 +1216,17 @@ class Matcher {
     // and a percent of an amount make a candidate. Counting every pair as if it made all of them would give up on
     // a page of 100 mixed numbers that has a few thousand candidates.
     const d = this.ctx.derivations
-    const groups = new Map<string, number>()
+    const groups = new Map<string, number[]>()
     let counts = 0
     let percents = 0
     let points = 0
-    for (const e of ops) {
+    for (let i = 0; i < ops.length; i++) {
+      const e = ops[i]
+      if (e === undefined) continue
       const g = `${e.cls}\u0000${e.unit}`
-      groups.set(g, (groups.get(g) ?? 0) + 1)
+      const members = groups.get(g)
+      if (members === undefined) groups.set(g, [i])
+      else members.push(i)
       if (isCount(e)) counts++
       if (e.cls === 'pct') percents++
       if (e.cls === 'pp') points++
@@ -1242,7 +1246,8 @@ class Matcher {
       if (d.has('average')) perTriple += 1
     }
     let total = 0
-    for (const [g, size] of groups) {
+    for (const [g, members] of groups) {
+      const size = members.length
       const pairs = (size * (size - 1)) / 2
       total += pairs * (perSame + (d.has('product') && g === 'plain\u0000' ? 1 : 0))
       if (size >= 3) total += ((size * (size - 1) * (size - 2)) / 6) * perTriple
@@ -1267,92 +1272,133 @@ class Matcher {
       target.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed: reversed === true, ordered: reversed !== undefined, order: target.length })
     }
     const HUNDRED: Rat = { p: 100n, q: 1n }
-    for (let i = 0; i < m; i++) {
-      const A = ops[i]
-      if (A === undefined) continue
-      for (let j = i + 1; j < m; j++) {
-        const B = ops[j]
-        if (B === undefined) continue
-        const same = A.cls === B.cls && A.unit === B.unit
-        twin = opKeys[i] === opKeys[j]
-        const a = signed(A)
-        const b = signed(B)
-        const own: Shape[] = [{ cls: A.cls, unit: A.unit }]
-        if (same) {
-          if (d.has('sum')) push('sum', own, ratAdd(a, b), [A, B])
-          if (d.has('average')) push('average', own, ratDiv(ratAdd(a, b), { p: 2n, q: 1n }) ?? a, [A, B])
-          if (d.has('product') && A.cls === 'plain' && A.unit === '') push('product', own, ratMul(a, b), [A, B])
-          if (d.has('difference')) {
-            const keys = A.cls === 'pct' ? [{ cls: 'pct', unit: '' }, { cls: 'pp', unit: '' }] : own
-            push('difference', keys, ratSub(b, a), [A, B], false)
-            push('difference', keys, ratSub(a, b), [B, A], true)
-          }
-          if (d.has('ratio')) {
-            const keys: Shape[] = [{ cls: 'ratio', unit: '' }, { cls: 'ratio', unit: 'x' }]
-            const q1 = ratDiv(a, b)
-            const q2 = ratDiv(b, a)
-            if (q1 !== null) push('ratio', keys, q1, [A, B], false)
-            if (q2 !== null) push('ratio', keys, q2, [B, A], true)
-          }
-          if (d.has('percent-change')) {
-            const pct: Shape[] = [{ cls: 'pct', unit: '' }]
-            const c1 = ratDiv(ratSub(b, a), a)
-            const c2 = ratDiv(ratSub(a, b), b)
-            if (c1 !== null) push('percent-change', pct, ratMul(c1, HUNDRED), [A, B], false)
-            if (c2 !== null) push('percent-change', pct, ratMul(c2, HUNDRED), [B, A], true)
-          }
-          if (d.has('percent-of')) {
-            const pct: Shape[] = [{ cls: 'pct', unit: '' }]
-            const q1 = ratDiv(a, b)
-            const q2 = ratDiv(b, a)
-            if (q1 !== null) push('percent-of', pct, ratMul(q1, HUNDRED), [A, B], false)
-            if (q2 !== null) push('percent-of', pct, ratMul(q2, HUNDRED), [B, A], true)
-          }
-        } else if (d.has('product') && (isCount(A) || isCount(B)) && A.cls !== 'pct' && A.cls !== 'pp' && B.cls !== 'pct' && B.cls !== 'pp') {
-          // A count times a unit price (or a quantity): the other operand's class.
-          const other = isCount(A) ? B : A
-          push('product', [{ cls: other.cls, unit: other.unit }], ratMul(a, b), [A, B])
+    // Visit only the pairs that make a candidate, never every pair: operands of one class and unit, a count with
+    // an amount, a percent with an amount. The count above bounds what is visited here too, so a large evidence set of
+    // numbers that never combine costs a few passes, not a loop over every pair. Pairs are replayed in operand order.
+    const pairKeys: number[] = []
+    const addPair = (x: number, y: number): void => {
+      pairKeys.push(x < y ? x * m + y : y * m + x)
+    }
+    for (const [g, members] of groups) {
+      if (perSame === 0 && !(d.has('product') && g === 'plain\u0000')) continue
+      for (let a = 0; a < members.length; a++) {
+        for (let b = a + 1; b < members.length; b++) addPair(members[a] ?? 0, members[b] ?? 0)
+      }
+    }
+    if (d.has('product') || d.has('percent-of')) {
+      const plain: number[] = []
+      const amounts: number[] = []
+      const percentIdx: number[] = []
+      for (let i = 0; i < m; i++) {
+        const e = ops[i]
+        if (e === undefined || e.cls === 'pp') continue
+        if (e.cls === 'pct') percentIdx.push(i)
+        else {
+          amounts.push(i)
+          if (isCount(e)) plain.push(i)
         }
-        if (!same && d.has('percent-of')) {
-          // "7.5% of $200": a percent applied to an amount.
-          const pctSide = A.cls === 'pct' ? A : B.cls === 'pct' ? B : null
-          const other = pctSide === A ? B : A
-          if (pctSide !== null && other.cls !== 'pct' && other.cls !== 'pp') {
-            push(
-              'percent-of',
-              [{ cls: other.cls, unit: other.unit }],
-              ratMul(ratDiv(signed(pctSide), HUNDRED) ?? { p: 0n, q: 1n }, signed(other)),
-              [pctSide, other],
-            )
-          }
+      }
+      if (d.has('product')) {
+        for (const c of plain) {
+          for (const o of amounts) if (!isCount(ops[o] as Ent)) addPair(c, o)
+        }
+      }
+      if (d.has('percent-of')) {
+        for (const p of percentIdx) {
+          for (const o of amounts) addPair(p, o)
+        }
+      }
+    }
+    const pairOrder = Float64Array.from(pairKeys).sort()
+    for (const key of pairOrder) {
+      const i = Math.floor(key / m)
+      const j = key - i * m
+      const A = ops[i]
+      const B = ops[j]
+      if (A === undefined || B === undefined) continue
+      const same = A.cls === B.cls && A.unit === B.unit
+      twin = opKeys[i] === opKeys[j]
+      const a = signed(A)
+      const b = signed(B)
+      const own: Shape[] = [{ cls: A.cls, unit: A.unit }]
+      if (same) {
+        if (d.has('sum')) push('sum', own, ratAdd(a, b), [A, B])
+        if (d.has('average')) push('average', own, ratDiv(ratAdd(a, b), { p: 2n, q: 1n }) ?? a, [A, B])
+        if (d.has('product') && A.cls === 'plain' && A.unit === '') push('product', own, ratMul(a, b), [A, B])
+        if (d.has('difference')) {
+          const keys = A.cls === 'pct' ? [{ cls: 'pct', unit: '' }, { cls: 'pp', unit: '' }] : own
+          push('difference', keys, ratSub(b, a), [A, B], false)
+          push('difference', keys, ratSub(a, b), [B, A], true)
+        }
+        if (d.has('ratio')) {
+          const keys: Shape[] = [{ cls: 'ratio', unit: '' }, { cls: 'ratio', unit: 'x' }]
+          const q1 = ratDiv(a, b)
+          const q2 = ratDiv(b, a)
+          if (q1 !== null) push('ratio', keys, q1, [A, B], false)
+          if (q2 !== null) push('ratio', keys, q2, [B, A], true)
+        }
+        if (d.has('percent-change')) {
+          const pct: Shape[] = [{ cls: 'pct', unit: '' }]
+          const c1 = ratDiv(ratSub(b, a), a)
+          const c2 = ratDiv(ratSub(a, b), b)
+          if (c1 !== null) push('percent-change', pct, ratMul(c1, HUNDRED), [A, B], false)
+          if (c2 !== null) push('percent-change', pct, ratMul(c2, HUNDRED), [B, A], true)
+        }
+        if (d.has('percent-of')) {
+          const pct: Shape[] = [{ cls: 'pct', unit: '' }]
+          const q1 = ratDiv(a, b)
+          const q2 = ratDiv(b, a)
+          if (q1 !== null) push('percent-of', pct, ratMul(q1, HUNDRED), [A, B], false)
+          if (q2 !== null) push('percent-of', pct, ratMul(q2, HUNDRED), [B, A], true)
+        }
+      } else if (d.has('product') && (isCount(A) || isCount(B)) && A.cls !== 'pct' && A.cls !== 'pp' && B.cls !== 'pct' && B.cls !== 'pp') {
+        // A count times a unit price (or a quantity): the other operand's class.
+        const other = isCount(A) ? B : A
+        push('product', [{ cls: other.cls, unit: other.unit }], ratMul(a, b), [A, B])
+      }
+      if (!same && d.has('percent-of')) {
+        // "7.5% of $200": a percent applied to an amount.
+        const pctSide = A.cls === 'pct' ? A : B.cls === 'pct' ? B : null
+        const other = pctSide === A ? B : A
+        if (pctSide !== null && other.cls !== 'pct' && other.cls !== 'pp') {
+          push(
+            'percent-of',
+            [{ cls: other.cls, unit: other.unit }],
+            ratMul(ratDiv(signed(pctSide), HUNDRED) ?? { p: 0n, q: 1n }, signed(other)),
+            [pctSide, other],
+          )
         }
       }
     }
     if (perTriple > 0) {
-      for (let i = 0; i < m; i++) {
-        const A = ops[i]
-        if (A === undefined) continue
-        for (let j = i + 1; j < m; j++) {
-          const B = ops[j]
-          if (B === undefined || B.cls !== A.cls || B.unit !== A.unit) continue
-          for (let k = j + 1; k < m; k++) {
-            const C = ops[k]
-            if (C === undefined || C.cls !== A.cls || C.unit !== A.unit) continue
-            twin = opKeys[i] === opKeys[j] || opKeys[i] === opKeys[k] || opKeys[j] === opKeys[k]
-            const a = signed(A)
-            const b = signed(B)
-            const c = signed(C)
-            const own: Shape[] = [{ cls: A.cls, unit: A.unit }]
-            if (d.has('sum')) push('sum', own, ratAdd(ratAdd(a, b), c), [A, B, C])
-            if (d.has('average')) push('average', own, ratDiv(ratAdd(ratAdd(a, b), c), { p: 3n, q: 1n }) ?? a, [A, B, C])
-            if (d.has('difference')) {
-              // Each figure less the other two. No figure is "earlier", so none is reversed.
-              const keys = A.cls === 'pct' ? [{ cls: 'pct', unit: '' }, { cls: 'pp', unit: '' }] : own
-              push('difference', keys, ratSub(ratSub(a, b), c), [A, B, C])
-              push('difference', keys, ratSub(ratSub(b, a), c), [B, A, C])
-              push('difference', keys, ratSub(ratSub(c, a), b), [C, A, B])
-            }
+      // Triples of one class and unit only, listed from the groups and replayed in operand order.
+      const triples: Array<[number, number, number]> = []
+      for (const members of groups.values()) {
+        for (let a = 0; a < members.length; a++) {
+          for (let b = a + 1; b < members.length; b++) {
+            for (let c = b + 1; c < members.length; c++) triples.push([members[a] ?? 0, members[b] ?? 0, members[c] ?? 0])
           }
+        }
+      }
+      triples.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2])
+      for (const [i, j, k] of triples) {
+        const A = ops[i]
+        const B = ops[j]
+        const C = ops[k]
+        if (A === undefined || B === undefined || C === undefined) continue
+        twin = opKeys[i] === opKeys[j] || opKeys[i] === opKeys[k] || opKeys[j] === opKeys[k]
+        const a = signed(A)
+        const b = signed(B)
+        const c = signed(C)
+        const own: Shape[] = [{ cls: A.cls, unit: A.unit }]
+        if (d.has('sum')) push('sum', own, ratAdd(ratAdd(a, b), c), [A, B, C])
+        if (d.has('average')) push('average', own, ratDiv(ratAdd(ratAdd(a, b), c), { p: 3n, q: 1n }) ?? a, [A, B, C])
+        if (d.has('difference')) {
+          // Each figure less the other two. No figure is "earlier", so none is reversed.
+          const keys = A.cls === 'pct' ? [{ cls: 'pct', unit: '' }, { cls: 'pp', unit: '' }] : own
+          push('difference', keys, ratSub(ratSub(a, b), c), [A, B, C])
+          push('difference', keys, ratSub(ratSub(b, a), c), [B, A, C])
+          push('difference', keys, ratSub(ratSub(c, a), b), [C, A, B])
         }
       }
     }

@@ -75,7 +75,10 @@ source entry is `src/index.ts`; the package export resolves to generated
   (`maxEvidenceNumbers` lowers it) and the scan stops the moment it is exceeded.
   Derivation candidates are counted before they are built (same-class pairs
   times derivations, plus the count-times-amount and percent-of-amount pairs)
-  and cost one sort by value. The derivation index of one output scale holds
+  and cost one sort by value. Only the pairs and triples that can make a candidate
+  are visited (same class and unit, a count with an amount, a percent with an
+  amount), so tokens that never combine cost a pass, not a loop over every pair.
+  The derivation index of one output scale holds
   only the candidates within 26 units of the numbers written at that scale; a
   scale that needs more than 64 separate stretches is filed whole once. At most
   12 distinct scales are answered, so the worst case is candidates times 12,
