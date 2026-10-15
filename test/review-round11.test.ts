@@ -69,3 +69,42 @@ describe('release-review:P1-pair-iteration candidate generation visits only comp
     expect(growth).toBeLessThan(9)
   })
 })
+
+describe('release-review:P2-skipped-span a sign or currency before an unread form is part of that form', () => {
+  it.each([
+    ['-2h45m', '2h45m'],
+    ['+2h45m', '2h45m'],
+    ['$500foo', '500foo'],
+    ['€12abc', '12abc'],
+    ['-12foo', '12foo'],
+    ['-1_5', '1_5'],
+    ['$1_5', '1_5'],
+    ['-⅓', '⅓'],
+    ['-2⅔', '2⅔'],
+    ['%12foo', '12foo'],
+  ])('release-review:P2-skipped-span %s against %s is unknown in both sign modes', (output, evidence) => {
+    for (const signMode of ['explicit', 'strict'] as const) {
+      const r = trace(output, evidence, { signMode })
+      expect(r.verdict, signMode).toBe('unknown')
+      expect(r.skipped[0]?.reason, signMode).toBe('unread-glued-form')
+      expect(r.skipped[0]?.raw, signMode).toBe(output)
+    }
+  })
+
+  it.each([
+    ['-2h45m', 'The run took -2h45m.'],
+    ['$500foo', 'Code $500foo shipped.'],
+    ['-⅓', 'Change of -⅓ noted.'],
+    ['%12foo', 'Label %12foo here.'],
+  ])('release-review:P2-skipped-span the same signed form in the evidence still vouches for it: %s', (output, evidence) => {
+    const r = trace(output, evidence, { signMode: 'strict' })
+    expect(r.verdict).toBe('clean')
+    expect(r.skipped[0]?.reason).toBe('in-evidence')
+  })
+
+  it('release-review:P2-skipped-span a name keeps only its own characters: a sign before 5G is not part of the name', () => {
+    const r = trace('a -5G network', 'The 5G network.', { checkIdentifiers: true })
+    expect(r.skipped[0]?.raw).toBe('5G')
+    expect(r.verdict).toBe('clean')
+  })
+})

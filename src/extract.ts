@@ -2382,7 +2382,7 @@ export function scan(
       let grouped = first <= 3 && at(parts[0] ?? 0) !== 0x30 && (rest === 0 || (rest === 1 && (seps[lead] === 0x2e || seps[lead] === 0x2c)))
       for (let q = 1; q <= lead && grouped; q++) grouped = (parts[2 * q + 1] ?? 0) - (parts[2 * q] ?? 0) === 3
       if (!grouped) {
-        skip(i0, p, 'unread-glued-form')
+        skip(start, p, 'unread-glued-form')
         return p
       }
     }
@@ -2469,7 +2469,7 @@ export function scan(
       }
       if (isLast && vulgarEnd >= 0 && !vulgarRead) {
         // ⅓, 2⅔: no exact decimal. The kit does not read it, and says so.
-        skip(digitsStart, vulgarEnd, 'unread-glued-form')
+        skip(isFirst ? start : digitsStart, vulgarEnd, 'unread-glued-form')
         result = Math.max(result, vulgarEnd)
         continue
       }
@@ -2480,7 +2480,9 @@ export function scan(
         if (sfx.skipTo >= 0) {
           // The number is glued to an identifier ("3D", "5G") or to letters the kit cannot read ("12foo").
           result = Math.max(sfx.skipTo, chainEnd)
-          skip(digitsStart, result, sfx.skipReason)
+          // The sign or currency written before an unread form is part of it ("-2h45m" is not "2h45m"). A name keeps
+          // only its own characters: a sign before "5G" is not part of the name.
+          skip(isFirst && sfx.skipReason === 'unread-glued-form' ? start : digitsStart, result, sfx.skipReason)
           continue
         }
         tokEnd = sfx.end
