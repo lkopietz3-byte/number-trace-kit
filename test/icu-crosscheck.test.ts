@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extractNumbers } from '../src/index.js'
 import { SUPPORTED_LANGUAGES, resolveLocale } from '../src/locale.js'
-import { checkLocale, icuLocales } from '../scripts/crosscheck-lib.mjs'
+import { checkLocale, checkLocaleStyles, icuLocales } from '../scripts/crosscheck-lib.mjs'
 
 // Locale handling against this Node's own ICU/CLDR: for every locale of every supported language that ICU has data for, print 51 numbers
 // (integers and decimals, both signs, four grouping modes, written as exact decimal strings) with Intl.NumberFormat, read them back with
@@ -19,9 +19,12 @@ describe(`locales against ICU ${process.env.NODE_ICU_VERSION ?? ''} (icu-crossch
   for (const lang of SUPPORTED_LANGUAGES) {
     const mine = tags.filter((t) => t === lang || t.startsWith(`${lang}-`))
     if (mine.length === 0) continue
-    it(`icu-crosscheck: ${lang} (${mine.length} locales) reads back what ICU prints and matches its decimal mark and date order`, () => {
+    it(`icu-crosscheck: ${lang} (${mine.length} locales) reads back what ICU prints (decimals, currency, percent) and matches its decimal mark and date order`, () => {
       const bad: string[] = []
-      for (const tag of mine) bad.push(...checkLocale(extractNumbers, resolveLocale, tag).mismatches)
+      for (const tag of mine) {
+        bad.push(...checkLocale(extractNumbers, resolveLocale, tag).mismatches)
+        bad.push(...checkLocaleStyles(extractNumbers, tag).mismatches)
+      }
       expect(bad.slice(0, 8)).toEqual([])
     })
   }

@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { checkCase, checkLocale, generateCases, icuLocales } from './crosscheck-lib.mjs'
+import { checkCase, checkLocale, checkLocaleStyles, generateCases, icuLocales } from './crosscheck-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..')
@@ -54,8 +54,11 @@ for (const tag of tags) {
   prints += r.prints
   ambiguous += r.ambiguous
   icuBad.push(...r.mismatches)
+  const st = checkLocaleStyles(kit.extractNumbers, tag)
+  prints += st.prints
+  icuBad.push(...st.mismatches)
 }
-console.log(`ICU ${process.versions.icu} (CLDR ${process.versions.cldr}), Node ${process.version}: ${tags.length} locales of ${locale.SUPPORTED_LANGUAGES.length} languages, ${prints} printed numbers read back, ${ambiguous} flagged ambiguous, ${icuBad.length} mismatches`)
+console.log(`ICU ${process.versions.icu} (CLDR ${process.versions.cldr}), Node ${process.version}: ${tags.length} locales of ${locale.SUPPORTED_LANGUAGES.length} languages, ${prints} printings read back (decimal, currency and percent styles), ${ambiguous} flagged ambiguous, ${icuBad.length} mismatches`)
 for (const m of icuBad.slice(0, 40)) console.log(`  ${m}`)
 if (icuBad.length) failed++
 

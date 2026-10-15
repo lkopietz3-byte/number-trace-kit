@@ -186,3 +186,50 @@ export function checkLocale(extractNumbers, resolveLocale, tag) {
   }
   return { mismatches, prints, ambiguous }
 }
+
+const STYLE_VALUES = [['1234.5', 2], ['1234567.25', 2], ['0.99', 2], ['12.00', 2]]
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'INR']
+
+/**
+ * Currency and percent styles in one locale: the amount must read back exactly (a currency word the kit does not know is read as a
+ * plain number), and a percent must read as a percent. Two printings are skipped because the README says they are not read: a percent sign
+ * written before the number (Turkish `%12,34`), and the Cape Verdean `1234$50`, where the cifrao is the decimal mark.
+ * Returns { mismatches, prints }.
+ */
+export function checkLocaleStyles(extractNumbers, tag) {
+  const mismatches = []
+  let prints = 0
+  const reads = (printed, want, kinds) => {
+    const toks = extractNumbers(printed, { locale: tag })
+    if (toks.length !== 1) return `${toks.length} numbers`
+    const t = toks[0]
+    const readings = [t.value, ...(t.alternates ?? []).map((a) => a.value)]
+    if (!kinds.includes(t.kind)) return `kind ${t.kind}`
+    return t.value === want || (t.ambiguous && readings.includes(want)) ? null : `value ${t.value}`
+  }
+  for (const currency of CURRENCIES) {
+    for (const display of ['symbol', 'code']) {
+      for (const [v] of STYLE_VALUES) {
+        const places = currency === 'JPY' ? 0 : 2
+        const text = currency === 'JPY' ? String(Math.round(Number(v))) : v
+        const want = currency === 'JPY' ? text : Number(text).toFixed(2)
+        const printed = new Intl.NumberFormat(tag, { style: 'currency', currency, currencyDisplay: display, minimumFractionDigits: places, maximumFractionDigits: places }).format(text)
+        prints++
+        if (/\d\$\d/.test(printed)) continue
+        // a locale's own currency word or symbol (a Bulgarian dollar is `щ.д.`) is not in the kit's list: the amount still reads exactly, as a plain number
+        const why = reads(printed, want, ['currency', 'decimal', 'count'])
+        if (why) mismatches.push(`${tag}: ${currency} ${display} ${JSON.stringify(printed)} (${want}): ${why}`)
+      }
+    }
+  }
+  for (const [value, want] of [['0.1234', '12.34'], ['0.5', '50'], ['12.5', '1250'], ['0.075', '7.5']]) {
+    const places = want.includes('.') ? want.split('.')[1].length : 0
+    const printed = new Intl.NumberFormat(tag, { style: 'percent', minimumFractionDigits: places, maximumFractionDigits: places }).format(value)
+    prints++
+    if (/^[^\d]*%/.test(printed) && !/\d\s*%/.test(printed)) continue
+    const why = reads(printed, want, ['percent'])
+    if (why) mismatches.push(`${tag}: percent ${JSON.stringify(printed)} (${want}): ${why}`)
+  }
+  return { mismatches, prints }
+}
+

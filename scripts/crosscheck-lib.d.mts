@@ -21,3 +21,7 @@ export function checkLocale(
   resolveLocale: (locale: string) => { decimal: number; order: string },
   tag: string,
 ): { mismatches: string[]; prints: number; ambiguous: number }
+export function checkLocaleStyles(
+  extractNumbers: (text: string, options: { locale: string }) => readonly { value: string; kind: string; ambiguous: boolean; alternates?: readonly { value: string }[] | undefined }[],
+  tag: string,
+): { mismatches: string[]; prints: number }

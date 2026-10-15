@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (dev-only cross-checks)
 
-- `npm run crosscheck` (scripts/crosscheck.mjs) compares the built package with two references: Node's ICU for every supported locale it has, and Python's `decimal` and `fractions` (scripts/crosscheck-decimal.py, run with `python3 -I`) on 50,000 seeded rounding, arithmetic and derivation cases (about 146,000 comparisons, 0 mismatches; a kit with only half-up rounding, with ties always to even, or with `roundSums` on is caught). Vitest runs the ICU check live (test/icu-crosscheck.test.ts) and a 3,000-case Python fixture (test/decimal-crosscheck.test.ts; `node scripts/crosscheck.mjs --check-fixture` proves Python still gives it). Nothing here ships in the package.
+- `npm run crosscheck` (scripts/crosscheck.mjs) compares the built package with two references: Node's ICU for every supported locale it has (decimals, currency amounts and percents), and Python's `decimal` and `fractions` (scripts/crosscheck-decimal.py, run with `python3 -I`) on 50,000 seeded rounding, arithmetic and derivation cases (about 146,000 comparisons, 0 mismatches; a kit with only half-up rounding, with ties always to even, or with `roundSums` on is caught). Vitest runs the ICU check live (test/icu-crosscheck.test.ts) and a 3,000-case Python fixture (test/decimal-crosscheck.test.ts; `node scripts/crosscheck.mjs --check-fixture` proves Python still gives it). Nothing here ships in the package.
 
 ### Fixed (sweep of the new forms)
 
