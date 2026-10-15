@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (ICU cross-check: regional decimal marks and date order)
+
+- Thirty regional locales read their own printed numbers wrongly because the locale table knew only the language's mark: English as printed in `en-AT`, `en-BE`, `en-CZ`, `en-DE`, `en-DK`, `en-EE`, `en-ES`, `en-FI`, `en-FR`, `en-GE`, `en-HU`, `en-ID`, `en-IT`, `en-LT`, `en-LV`, `en-NL`, `en-NO`, `en-PL`, `en-PT`, `en-RO`, `en-SE`, `en-SI`, `en-SK` and `en-UA` uses a decimal comma, as do `ms-BN` and `ms-ID`; `es-419`, `es-BR`, `es-BZ`, `es-CU` and `it-CH` use a decimal point. `123,456` under `en-DE` (123.456) was read as 123,456 with no flag, a thousandfold misread, and `123.456` under `es-BR` the same. A numeric region such as `419` is now read as a region. Numeric dates are month-first in the US territories (`en-AS`, `en-GU`, `en-MH`, `en-MP`, `en-PR`, `en-UM`, `en-VI`), `en-BI`, `es-PA`, `es-PR` and `fil`. Found by printing 54 numbers in every ICU locale of the 41 supported languages (338 locales on ICU 78.3) and reading them back: 293 mismatches before, 0 after (test/icu-crosscheck.test.ts).
+
+### Added (dev-only cross-checks)
+
+- `npm run crosscheck` (scripts/crosscheck.mjs) compares the built package with two references: Node's ICU for every supported locale it has, and Python's `decimal` and `fractions` (scripts/crosscheck-decimal.py, run with `python3 -I`) on 50,000 seeded rounding, arithmetic and derivation cases (about 146,000 comparisons, 0 mismatches). Vitest runs the ICU check live (test/icu-crosscheck.test.ts) and a 3,000-case Python fixture (test/decimal-crosscheck.test.ts; `node scripts/crosscheck.mjs --check-fixture` proves Python still gives it). Nothing here ships in the package.
+
 ### Fixed (sweep of the new forms)
 
 - A time of day written with full-width digits (`１２:３４`) now keeps its own text as `raw` (it held the folded ASCII text, so the offsets did not slice back to it). The seeded sweep gained forms for times of day, the same date in seven languages, hyphen and East Asian dates, `+/-`, decades and square units, and its independent oracle knows the `time` kind and the weak readings added in this round (`magnitude`, `currency`, `date`, `sign`).
@@ -18,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed (S9: messages and locales)
 
 - Evidence given as an array of strings (the natural shape for retrieved chunks) now says what to do: `evidence[0] must be a { id, text } object or a number token, got string. Wrap each string as { id, text }, or join the strings into one string.` A missing or wrong-typed `evidence` says `evidence must be a string or an array of { id, text } documents or tokens`, and a wrong `output` says `output must be a string or an array of tokens`; before, both said "must be an array" although a string is valid (docs-release:F1, docs-release:F2).
-- A bare `hi` locale (and `hi` with any region) reads Indian grouping: `12,34,567.89` was read as `12.34` and `567.89` (hostile:F7). Compared with the platform's own number formatting over 41 supported languages and about 250 regions, `hi` was the only language with a mismatch.
+- A bare `hi` locale (and `hi` with any region) reads Indian grouping: `12,34,567.89` was read as `12.34` and `567.89` (hostile:F7). Compared with the platform's own number formatting over the 41 supported languages (169 language and region tags), `hi` was the only language with a mismatch.
 - A locale tag with a Unicode extension (`en-US-u-nu-latn`, `de-u-nu-arab`) is accepted; before, the one-character `u` failed the tag pattern with a message that called a valid tag invalid. Other extensions (`-x-`, `-t-`) are rejected with a message that names the extension, and the locale error no longer echoes the whole caller string (hostile:F10).
 
 ### Fixed (S8: sign glyphs)

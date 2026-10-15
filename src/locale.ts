@@ -22,9 +22,19 @@ const COMMA_DECIMAL = new Set([
   'sl', 'hr', 'ro', 'hu', 'bg', 'tr', 'id', 'vi', 'el', 'uk', 'sr', 'lt', 'lv', 'et',
 ])
 // Regions that use the other mark than their language's default.
-const DOT_REGIONS = new Set(['de-ch', 'de-li', 'es-mx', 'es-us', 'es-pr', 'es-gt', 'es-hn', 'es-ni', 'es-pa', 'es-pe', 'es-sv', 'es-do'])
-const COMMA_REGIONS = new Set(['en-za'])
-const MDY_REGIONS = new Set(['en-us', 'en', 'en-ph'])
+const DOT_REGIONS = new Set([
+  'de-ch', 'de-li', 'es-mx', 'es-us', 'es-pr', 'es-gt', 'es-hn', 'es-ni', 'es-pa', 'es-pe', 'es-sv', 'es-do',
+  'es-419', 'es-br', 'es-bz', 'es-cu', 'it-ch',
+])
+// English as it is printed in continental Europe and South Africa uses the comma, and so does Malay in Brunei and Indonesia.
+const COMMA_REGIONS = new Set([
+  'en-za', 'en-at', 'en-be', 'en-cz', 'en-de', 'en-dk', 'en-ee', 'en-es', 'en-fi', 'en-fr', 'en-ge', 'en-hu', 'en-id',
+  'en-it', 'en-lt', 'en-lv', 'en-nl', 'en-no', 'en-pl', 'en-pt', 'en-ro', 'en-se', 'en-si', 'en-sk', 'en-ua', 'ms-bn', 'ms-id',
+])
+// Numeric dates month first: the United States and its territories, the Philippines, Burundi, Panama.
+const MDY_REGIONS = new Set([
+  'en-us', 'en', 'en-ph', 'en-as', 'en-bi', 'en-gu', 'en-mh', 'en-mp', 'en-pr', 'en-um', 'en-vi', 'es-pa', 'es-pr', 'fil', 'fil-ph',
+])
 
 export const SUPPORTED_LANGUAGES: readonly string[] = [...DOT_DECIMAL, ...COMMA_DECIMAL].sort()
 
@@ -58,7 +68,7 @@ export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
     }
   }
   const head = parts.slice(1, end)
-  const region = head.find((part) => /^[a-z]{2}$/.test(part))
+  const region = head.find((part) => /^(?:[a-z]{2}|\d{3})$/.test(part))
   const regional = region === undefined ? language : `${language}-${region}`
   let decimal: number
   if (DOT_REGIONS.has(regional)) decimal = 0x2e
