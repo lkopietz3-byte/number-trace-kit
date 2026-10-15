@@ -1024,3 +1024,65 @@ describe('M2 false-pass:F03: "X to Y" shares a modifier only where the words say
     }
   })
 })
+
+describe('M3 false-pass:F04: identical values never form a derivation pair', () => {
+  const INVOICE = 'Invoice 17: total due $1,299.00. Payment received: $1,299.00. 12 line items.'
+  const ALL = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average', 'product'] as const
+  const only = (r: TraceResult): NumberTrace => {
+    expect(r.numbers.length).toBe(1)
+    return r.numbers[0] as NumberTrace
+  }
+
+  it('false-pass:F04 a repeated total cannot make 0, 0%, 100% or $0 come back derived and clean', () => {
+    for (const out of ['There were 0 items.', 'Growth was 0%.', 'Share of total was 100%.', 'The balance is $0.']) {
+      const r = trace(out, INVOICE, { preset: 'report' })
+      expect(r.verdict, out).toBe('unknown')
+      expect(only(r), out).toMatchObject({ status: 'unknown', reason: 'twin-operands' })
+    }
+    // Without the report preset a bare 0 has no amount to be derived from; the rest are the same.
+    for (const out of ['Growth was 0%.', 'Share of total was 100%.', 'The balance is $0.']) {
+      expect(only(trace(out, INVOICE, { derivations: [...ALL] })), out).toMatchObject({ status: 'unknown', reason: 'twin-operands' })
+    }
+    expect(trace('There were 0 items.', INVOICE, { derivations: [...ALL] }).verdict).toBe('untraced')
+  })
+  it('false-pass:F04 double the repeated total is unknown, never derived', () => {
+    for (const opts of [{ preset: 'report' as const }, { derivations: ['sum' as const] }]) {
+      const r = trace('Total is $2,598.00.', INVOICE, opts)
+      expect(r.verdict).toBe('unknown')
+      expect(only(r)).toMatchObject({ status: 'unknown', reason: 'twin-operands' })
+    }
+  })
+  it('false-pass:F04 two rows of the same value: their sum is unknown, a direct match and other derivations are not affected', () => {
+    expect(only(trace('15%', 'a 7.5% b 7.5%', { derivations: ['sum'] }))).toMatchObject({ status: 'unknown', reason: 'twin-operands' })
+    expect(trace('7.5%', 'a 7.5% b 7.5%', { derivations: [...ALL] }).verdict).toBe('clean')
+    // A value that no twin pair makes is still untraced.
+    expect(only(trace('There were 7 items.', INVOICE, { preset: 'report' })).status).toBe('untraced')
+    // A third number still combines with either copy of a twin (two ways to build it, under the cap of three).
+    const r = trace('Net was $150.', 'Rows: $100, $100 and $50.', { derivations: ['sum'] })
+    expect(only(r)).toMatchObject({ status: 'derived', derivation: { kind: 'sum', matches: 2 } })
+  })
+  it('false-pass:F04 distinct values still derive: the balance of a part payment is clean', () => {
+    const r = trace('The balance is $299.00.', 'Invoice 17: total due $1,299.00. Payment received: $1,000.00. 12 line items.', { derivations: ['difference', 'percent-of'] })
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers.map((n) => n.status)).toEqual(['derived'])
+  })
+  it('false-pass:F04 a twin inside a three-number derivation is unknown too', () => {
+    const ev = 'Rows: $100, $100 and $50.'
+    for (const out of ['Total is $250.', 'Average is $83.33.', 'Left is $0.', 'Left is -$150.']) {
+      const r = trace(out, ev, { derivations: ['sum', 'average', 'difference'], maxOperands: 3, maxCandidates: 100_000 })
+      expect(r.verdict, out).not.toBe('clean')
+      expect(only(r).status, out).toBe('unknown')
+    }
+  })
+  it('false-pass:F04 negative and signed twins are the same twin; zero is zero either way', () => {
+    expect(only(trace('There were 0 items.', 'Change -5 and change -5.', { derivations: [...ALL] }))).toMatchObject({ status: 'unknown', reason: 'twin-operands' })
+    expect(only(trace('Net was 0.', 'Gain 5 and loss -5.', { derivations: ['sum'] })).status).toBe('derived')
+    expect(only(trace('There were 0 items.', 'Rows 0 and -0.', { derivations: ['sum'] }))).toMatchObject({ status: 'traced' })
+  })
+  it('false-pass:F04 twin candidates do not add to the guard counts or to the search size', () => {
+    const base = trace('Net was $150.', 'Rows: $100 and $50.', { derivations: ['sum'], maxCandidates: 1 })
+    expect(only(base)).toMatchObject({ status: 'derived' })
+    // The same cap with a twin present: the candidate count is the same as before, so the cap result is too.
+    expect(trace('Net was $150.', 'Rows: $100, $100 and $50.', { derivations: ['sum'], maxCandidates: 2 }).candidateCapHit).toBe(true)
+  })
+})

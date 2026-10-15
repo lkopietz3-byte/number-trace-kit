@@ -185,8 +185,11 @@ describe('derivations', () => {
 
   it('a sum needs both operands in the same unit', () => {
     expect(only(trace('107.75', 'a $100.25 b 7.5%', { derivations: ['sum'] })).status).toBe('untraced')
-    // Two rows with the same value still add up.
-    expect(only(trace('15%', 'a 7.5% b 7.5%', { derivations: ['sum'] })).status).toBe('derived')
+    // Two rows with the same value used to add up. A pair of identical values cannot be told from one fact written
+    // twice (M3, false-pass:F04), so the sum is unknown; two different rows still add up.
+    expect(only(trace('15%', 'a 7.5% b 7.5%', { derivations: ['sum'] }))).toMatchObject({ status: 'unknown', reason: 'twin-operands' })
+    expect(only(trace('15%', 'a 7.5% b 7.5% c 4%', { derivations: ['sum'] }))).toMatchObject({ status: 'unknown', reason: 'twin-operands' })
+    expect(only(trace('15.5%', 'a 7.5% b 8%', { derivations: ['sum'] })).status).toBe('derived')
     expect(only(trace('22.5%', 'a 7.5% b 7.5% c 7.5%', { derivations: ['sum'] })).status).toBe('untraced') // three-way sums are out of scope
   })
 
@@ -239,7 +242,9 @@ describe('derivations', () => {
 
   it('ignores ambiguous, year and date operands', () => {
     // A number whose only doubt is thousands-versus-decimal still takes part with its primary reading.
-    expect(only(trace('2.5', 'a 1.250 b 1.250', { derivations: ['sum'] })).status).toBe('derived')
+    expect(only(trace('2.75', 'a 1.250 b 1.500', { derivations: ['sum'] })).status).toBe('derived')
+    // The same value twice is a twin pair (M3, false-pass:F04): unknown, not derived.
+    expect(only(trace('2.5', 'a 1.250 b 1.250', { derivations: ['sum'] }))).toMatchObject({ status: 'unknown', reason: 'twin-operands' })
     expect(only(trace('4000', 'x 2000 and 2000', { derivations: ['sum'] })).status).toBe('untraced')
   })
 

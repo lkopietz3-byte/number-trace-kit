@@ -791,7 +791,15 @@ interface DerivedAgg {
 class Matcher {
   private readonly rounded = new Map<string, Index>()
   private readonly derivedIdx = new Map<number, Map<string, DerivedAgg>>()
+  private readonly twinIdx = new Map<number, Map<string, DerivedAgg>>()
   readonly candidates: Candidate[] = []
+  /**
+   * Candidates built from two evidence numbers of the same value (a total and the payment that equals it).
+   * Such a pair says nothing about the claim (its difference is 0, its ratio 1, its percent 100) and could be one
+   * fact written twice or two real rows, so a match is `unknown` (`twin-operands`) and never counts toward
+   * `derivation.matches` or the density of the neighborhood.
+   */
+  readonly twinCandidates: Candidate[] = []
   capHit = false
 
   constructor(private readonly ev: Evidence, private readonly ctx: Ctx) {
@@ -868,6 +876,7 @@ class Matcher {
   private buildCandidates(): void {
     const seen = new Map<string, number>()
     const ops: Ent[] = []
+    const opKeys: string[] = []
     for (const e of this.ev.all) {
       const t = e.token
       // A number whose only doubt is thousands-versus-decimal ("1.250") still takes part, with its primary reading.
@@ -881,6 +890,7 @@ class Matcher {
       if (seenCount >= 2) continue
       seen.set(k, seenCount + 1)
       ops.push(e)
+      opKeys.push(k)
     }
     const m = ops.length
     if (m < 2) return
@@ -911,9 +921,10 @@ class Matcher {
       return e.neg ? { p: -r.p, q: r.q } : r
     }
     // `reversed` is given only for derivations whose value depends on the order of the operands.
+    let twin = false
     const push = (kind: Derivation, keys: Shape[], r: Rat, operands: Ent[], reversed?: boolean): void => {
       const neg = r.p < 0n
-      this.candidates.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed: reversed === true, ordered: reversed !== undefined })
+      ;(twin ? this.twinCandidates : this.candidates).push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed: reversed === true, ordered: reversed !== undefined })
     }
     const HUNDRED: Rat = { p: 100n, q: 1n }
     for (let i = 0; i < m; i++) {
@@ -923,6 +934,7 @@ class Matcher {
         const B = ops[j]
         if (B === undefined) continue
         const same = A.cls === B.cls && A.unit === B.unit
+        twin = opKeys[i] === opKeys[j]
         const a = signed(A)
         const b = signed(B)
         const own: Shape[] = [{ cls: A.cls, unit: A.unit }]
@@ -986,6 +998,7 @@ class Matcher {
           for (let k = j + 1; k < m; k++) {
             const C = ops[k]
             if (C === undefined || C.cls !== A.cls || C.unit !== A.unit) continue
+            twin = opKeys[i] === opKeys[j] || opKeys[i] === opKeys[k] || opKeys[j] === opKeys[k]
             const a = signed(A)
             const b = signed(B)
             const c = signed(C)
@@ -1010,14 +1023,15 @@ class Matcher {
    * reversed, exact or rounded), never a list, so many candidates landing on
    * one value cost nothing extra to look up.
    */
-  private derivedIndex(scale: number): Map<string, DerivedAgg> {
-    let idx = this.derivedIdx.get(scale)
+  private derivedIndex(scale: number, twin = false): Map<string, DerivedAgg> {
+    const cache = twin ? this.twinIdx : this.derivedIdx
+    let idx = cache.get(scale)
     if (idx !== undefined) return idx
     idx = new Map()
     // With rounding turned off only exact values count, but they are still found.
     const exactOnly = this.ctx.modes.length === 0
     const modes: readonly RoundingMode[] = exactOnly ? ['half-up'] : this.ctx.modes
-    for (const cand of this.candidates) {
+    for (const cand of twin ? this.twinCandidates : this.candidates) {
       const byMantissa = new Map<string, { modes: Set<RoundingMode>; exact: boolean }>()
       for (const mode of modes) {
         const r = roundRat(cand.abs, scale, mode)
@@ -1052,7 +1066,7 @@ class Matcher {
         }
       }
     }
-    this.derivedIdx.set(scale, idx)
+    cache.set(scale, idx)
     return idx
   }
 
@@ -1089,9 +1103,10 @@ class Matcher {
     outNeg: boolean,
     mantissa: bigint,
     strict = false,
+    twin = false,
   ): DerivedHit | null {
-    if (this.candidates.length === 0) return null
-    const idx = this.derivedIndex(scale)
+    if ((twin ? this.twinCandidates : this.candidates).length === 0) return null
+    const idx = this.derivedIndex(scale, twin)
     const tries: { cls: string; unit: string; unverified: boolean }[] = [{ cls: shape.cls, unit: shape.unit, unverified: false }]
     if (shape.cls === 'plain') {
       if (!strict) tries.push({ cls: 'plain', unit: shape.unit === '' ? '*' : '', unverified: true })
@@ -1278,7 +1293,7 @@ export function traceNumbers(
     skipped,
     counts,
     evidenceNumbers: ev.count,
-    derivationCandidates: matcher.candidates.length,
+    derivationCandidates: matcher.candidates.length + matcher.twinCandidates.length,
     candidateCapHit: matcher.capHit,
   }
 }
@@ -1392,6 +1407,12 @@ function traceOne(
       return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.unverified || hit.unitUnverified ? { unitUnverified: true as const } : {}), ...(hit.signDiffers ? { signDiffers: true as const } : {}) }
     }
     if (reversed) return unknownTrace(tok, 'derivation-direction')
+    // Only a pair of identical evidence values builds it: one fact written twice, or two real rows. Cannot tell.
+    if (matcher.twinCandidates.length > 0) {
+      for (const v of variants) {
+        if (matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa, v.bare, true) !== null) return unknownTrace(tok, 'twin-operands')
+      }
+    }
   }
 
   // 4. Matches only under another reading of an ambiguous number: cannot tell.

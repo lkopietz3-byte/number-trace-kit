@@ -49,6 +49,12 @@ source entry is `src/index.ts`; the package export resolves to generated
   the output's precision. Direction follows evidence order (or
   `evidenceOrder: 'newest-first'`); a match only in the reverse order is
   `unknown`.
+- **Identical values never form a derivation pair.** Candidates built from two
+  evidence numbers of the same class, unit and value (or a triple containing
+  such a pair) go to a separate twin list, not the candidate list. They cannot
+  make a number `derived`, count toward `derivation.matches` or the density,
+  and a number only they build is `unknown` (`twin-operands`). They are still
+  counted in `derivationCandidates` and in the cap.
 - **A derived match is checked for coincidence.** `derivation.matches` counts
   the candidates that produce the displayed value. More than
   `maxDerivationMatches`, or a neighborhood denser than

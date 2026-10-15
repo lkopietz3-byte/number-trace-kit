@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Revenue increased 8% to $4.2 billion` no longer gives the 8 the magnitude of the amount (8,000,000,000 percent), and `Subscribers rose 8% to 1,200` no longer reads 1,200 as a percent, so `Sales grew 1,200%` no longer traces to it. A percent beside an amount or a measured unit is never one range, and in the spoken forms (`to`, a spaced en dash, `between ... and`) a percent is carried only backward onto a bare number (`5 to 8%`). Tight dashes (`5%-10`) and the range controls (`5 to 8%`, `$4 to 5 million`, `$5 to 10`) are unchanged. README Known limits now says exactly what is shared.
 
+### Changed (M3): a deliberate contract change, not an API change
+
+- Identical values never form a derivation pair (false-pass:F04). An invoice total that is printed twice (total due and payment received) used to make `0`, `0%`, `100%`, `$0` and double the total come back `derived` and clean in the `report` preset, and the coincidence guard never fired because only one candidate matched. A number that only a pair of identical evidence values builds is now `unknown` with the new reason `twin-operands`; such candidates never count toward `derivation.matches` or the density. A direct, rounded or ordinary derived match is unchanged. Existing rows that asserted `derived` for the sum of two equal rows (`15%` from `7.5%` and `7.5%`; `2.5` from `1.250` and `1.250`, `trace-rules.test.ts`) now assert `unknown`, and each keeps a companion row with two different values that still derives. `derivationCandidates` still counts the twin candidates.
+- Checked against an independent oracle: 4,959 derivation outputs with 0 unsound results and 0 incomplete; 16,503 outputs on twin-rich evidence with 0 unsound and 0 incomplete, where 44 twin-only matches had been `derived` and are now `unknown`.
+
 ### Added (M1: an unread number is never silently dropped)
 
 - `traceNumbers` returns `skipped`: every stretch of the output that holds digits but was not read as a number, with `raw`, `start`, `end` and a `reason` (`identifier`, `unread-glued-form` or `ignored`), and `counts.skipped` (its length). New exported types: `SkippedNumber`, `SkipReason`, `TraceCounts`. `TraceResult.counts` is now a `TraceCounts`, which adds `skipped` to the six statuses.
