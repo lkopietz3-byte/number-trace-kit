@@ -3,7 +3,7 @@ import { extractNumbers } from '../src/index.js'
 import { SUPPORTED_LANGUAGES, resolveLocale } from '../src/locale.js'
 import { checkLocale, icuLocales } from '../scripts/crosscheck-lib.mjs'
 
-// Locale handling against this Node's own ICU/CLDR: for every locale of every supported language that ICU has data for, print 54 numbers
+// Locale handling against this Node's own ICU/CLDR: for every locale of every supported language that ICU has data for, print 51 numbers
 // (integers and decimals, both signs, four grouping modes, written as exact decimal strings) with Intl.NumberFormat, read them back with
 // extractNumbers, and compare the kit's decimal mark and numeric-date order with what ICU prints. A CLDR update that changes a
 // locale makes this fail on purpose: the kit's locale table is then out of date.

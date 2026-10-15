@@ -174,6 +174,39 @@ compares the exported names to `api-surface.json`, runs
   coincidence guard and other rows from reports and pricing pages.
 - `test/review-round*.test.ts`: regression rows for defects found in
   independent review, each reproduced before its fix.
+- `test/field-regression.test.ts`: real model answers (RAGTruth) with annotator
+  labels, run from the committed number-centered excerpts in `bench/data`. It
+  fails when a number is newly flagged `untraced`, newly `unknown`, or newly
+  passes, or when a response with an unsupported number newly comes back `clean`,
+  against `bench/data/field-regression-baseline.json`. A baseline moves only on
+  purpose (`node bench/build/make-regression-baseline.mjs`) and the commit says why.
+- `test/icu-crosscheck.test.ts`: every ICU locale of the supported languages
+  prints numbers; the kit reads them back and agrees with ICU on the decimal mark
+  and numeric-date order. A CLDR update that changes a locale fails it on purpose.
+- `test/decimal-crosscheck.test.ts`: 3,000 seeded cases answered by Python's
+  `decimal` and `fractions` (rounding, exact arithmetic, the seven derivations).
+
+## Benchmark and cross-checks
+
+`bench/` and `scripts/crosscheck*` are development tools. Neither is in the npm
+tarball (`files` lists `dist`, the README and the changelog), and nothing in
+`src` may import from them. `npm run bench` prints false-fail, catch and false-pass
+with denominators and 95% intervals; `bench/METHOD.md` says how every label was
+made. Rules:
+
+- The README's "Accuracy on real output" numbers are copied from `npm run bench`.
+  Change the kit, rerun, update the README; never quote a number the bench did not print.
+- Third-party data is committed only as derived data a license allows (model
+  answers, annotator labels, number-centered excerpts). FinanceBench (CC BY-NC) is
+  never committed. Raw downloads go through `npm run bench:fetch`, which checks pinned
+  SHA-256 hashes, and are never executed.
+- The fresh holdout (`bench/data/ragtruth-holdout.jsonl`, labels frozen in
+  `data/FROZEN-holdout.sha256`) was measured once. Tuning the kit against it spends
+  it: report new holdout numbers only from a new draw labeled before the run, and say
+  so.
+- `npm run crosscheck` compares the built package with Node's ICU (every locale of
+  the supported languages) and with Python's `decimal` (50,000 cases). Run it after
+  touching `src/locale.ts`, `src/decimal.ts` or the rounding and derivation code.
 
 ## Release
 

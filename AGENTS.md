@@ -15,6 +15,7 @@ Check that every number in an AI output traces to the evidence it was given, and
 - `npm run build`
 - `npm run verify:package` packs and installs the tarball offline; run `npm run build` first.
 - `npm run attw` and `npm run audit:dependencies` run in CI outside `verify`; run them before a release.
+- `npm run bench` prints the accuracy tables (`bench/README.md`, `bench/METHOD.md`); `npm run bench:fetch` downloads the raw third-party data it cannot commit. `npm run crosscheck` compares the build with ICU and Python decimal. All three are dev-only and outside `verify`; README accuracy numbers must come from `npm run bench`.
 
 ## Rules
 - Run `npm run verify` and read its output before calling work done. Report any step that did not run.

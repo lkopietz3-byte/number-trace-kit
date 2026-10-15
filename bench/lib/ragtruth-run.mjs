@@ -88,4 +88,8 @@ export function printRagtruth(name, s, form) {
   const e = s.responses.ALL.errorResponses
   console.log(`  honest responses (no annotation) not clean: ${pr(rate(h.untraced + h.unknown, h.n))} (untraced ${h.untraced}, unknown ${h.unknown})`)
   console.log(`  responses with an unsupported number that came back clean: ${pr(rate(e.clean, e.n))}`)
+  for (const [task, r] of Object.entries(s.responses)) {
+    if (task === 'ALL') continue
+    console.log(`    ${task.padEnd(9)} honest responses clean ${r.honestResponses.clean}/${r.honestResponses.n}; responses with an unsupported number clean ${r.errorResponses.clean}/${r.errorResponses.n}`)
+  }
 }
