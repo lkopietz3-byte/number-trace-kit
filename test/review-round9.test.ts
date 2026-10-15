@@ -575,3 +575,83 @@ describe('gate-hostile:G01 glued compound quantities', () => {
     expect(verdict('Runtime is 2 hours 45 minutes.', 'Runtime is 1 hour 30 minutes.')).toBe('untraced')
   })
 })
+
+describe('gate-review:F20 gate-hostile:G04 gate-false-pass:G5-F13 numeric characters that are not decimal digits', () => {
+  it('gate-false-pass:G5-F13 circled digits are an unread form, so the verdict is unknown', () => {
+    const r = trace('Revenue grew ⑤⓪% to $①② million.', 'Revenue grew 5% to $12 million.')
+    expect(r.verdict).toBe('unknown')
+    expect(r.skipped.map((s) => [s.raw, s.reason])).toEqual([['⑤⓪', 'unread-glued-form'], ['①②', 'unread-glued-form']])
+  })
+
+  it.each([['⑤⓪'], ['①②③'], ['❶❷'], ['➄➀'], ['㊿'], ['⑴'], ['⒈'], ['⓿'], ['Ⅻ'], ['〇'], ['\u{1F100}'], ['\u{10107}']])('gate-hostile:G04 %s is never silent', (glyph) => {
+    const r = trace(`Revenue was ${glyph} dollars.`, 'Revenue was 12 dollars.')
+    expect(r.verdict).toBe('unknown')
+    expect(r.skipped.length).toBe(1)
+  })
+
+  it.each([['¹²⁰'], ['⁵⁰'], ['₅₀'], ['₀']])('gate-hostile:G04 %s standing alone is an unread form', (glyph) => {
+    expect(trace(`The dose is ${glyph} mg.`, 'The dose is 12 mg.').verdict).toBe('unknown')
+    expect(trace(`Churn was ${glyph}%.`, 'Churn was 5%.').verdict).toBe('unknown')
+  })
+
+  it('gate-review:F20 a circled digit and the digits written against it are one form (never read as 0)', () => {
+    const r = trace('Revenue was ⑤00 dollars.', 'Revenue was 9 dollars.')
+    expect(r.numbers).toEqual([])
+    expect(r.skipped.map((s) => s.raw)).toEqual(['⑤00'])
+    expect(r.verdict).toBe('unknown')
+  })
+
+  it('gate-hostile:G04 footnote marks and chemical formulas do not change a verdict', () => {
+    const r = trace('Revenue grew.¹ See H₂O and the note² and CO₂.', 'x')
+    expect(r.verdict).toBe('clean')
+    expect(r.skipped.every((s) => s.reason === 'identifier')).toBe(true)
+  })
+
+  it('gate-false-pass:G5-F13 a number followed by a superscript is still an exponent, and a digit before a glyph is not hidden', () => {
+    expect(trace('It is 10² here', 'x').numbers[0]).toMatchObject({ status: 'unknown', reason: 'ambiguous-superscript' })
+    expect(trace('It is 5⑤ here', 'x').verdict).toBe('untraced')
+    expect(trace('It is 5⑤ here', '5').verdict).toBe('unknown')
+  })
+
+  it('gate-false-pass:G5-F13 every BMP and astral character of category No or Nl standing alone leaves a trace', () => {
+    const bad: string[] = []
+    for (let cp = 0xb2; cp <= 0x1ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue
+      const ch = String.fromCodePoint(cp)
+      if (!/^[\p{No}\p{Nl}]$/u.test(ch)) continue
+      const r = trace(`x ${ch} y`, 'x')
+      if (r.numbers.length === 0 && r.skipped.length === 0) bad.push(cp.toString(16))
+    }
+    expect(bad).toEqual([])
+  })
+})
+
+describe('gate-hostile:G09 typeset minus and plus look-alikes', () => {
+  it.each([['‒'], ['﹣'], ['➖'], ['⁃'], ['−'], ['‐'], ['‑'], ['－']])('gate-hostile:G09 U+%s before a number is a minus', (dash) => {
+    expect(extractNumbers(`The loss was ${dash}$300.`)[0]).toMatchObject({ value: '-300', signStyle: 'minus' })
+    expect(verdict(`The loss was ${dash}$300.`, 'The profit was $300.')).toBe('untraced')
+    expect(verdict(`The loss was ${dash}$300.`, 'The loss was -$300.')).toBe('clean')
+  })
+  it.each([['﹢'], ['➕'], ['＋']])('gate-hostile:G09 U+%s before a number is a plus', (plus) => {
+    expect(extractNumbers(`It rose ${plus}5%.`)[0]).toMatchObject({ value: '5', signStyle: 'plus' })
+  })
+})
+
+describe('gate-hostile:G02 a percent sign before the number', () => {
+  it('gate-hostile:G02 %12 is 12%, in Turkish and everywhere', () => {
+    expect(extractNumbers('Oran %12', { locale: 'tr' })[0]).toMatchObject({ kind: 'percent', value: '12', raw: '%12' })
+    expect(extractNumbers('Rate %12')[0]).toMatchObject({ kind: 'percent', value: '12' })
+    expect(verdict('Oran %12', 'Oran 12%', { locale: 'tr' })).toBe('clean')
+    expect(verdict('Oran 12%', 'Oran %12', { locale: 'tr' })).toBe('clean')
+    expect(verdict('Oran %12', 'Oran %13', { locale: 'tr' })).toBe('untraced')
+  })
+  it('gate-hostile:G02 %12 is never a bare 12 that traces to a count', () => {
+    expect(verdict('Oran %12', 'Toplam 12 adet', { locale: 'tr' })).toBe('untraced')
+    expect(verdict('Rate %12', 'Headcount 12')).toBe('untraced')
+  })
+  it('gate-hostile:G02 a percent sign that belongs to something else is left alone', () => {
+    expect(extractNumbers('x%12 and 100%12 and 5%').map((t) => [t.raw, t.kind])).toEqual([['12', 'count'], ['100%', 'percent'], ['12', 'count'], ['5%', 'percent']])
+    expect(extractNumbers('Oran %.5')[0]?.kind).toBe('decimal')
+    expect(extractNumbers('q=a%20b and =%3D and /%20').map((t) => t.kind)).not.toContain('percent')
+  })
+})

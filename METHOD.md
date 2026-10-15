@@ -90,7 +90,7 @@ Against plain checkers, on the 150-answer holdout (Reported: the full holdout ne
 
 - It checks numbers, not sentences. A right number in the wrong place, a direction flip (`rose` for `fell`) and swapped fields pass. On the labeled benchmark 0 of 18 such items were caught under the default settings. On 153 FinanceBench answers with a wrong headline number, 8 (5.2%) came back `clean` (Reported); the audit found the values on the page, in the wrong row or rounded from another cell.
 - It does not know whether the evidence is true or complete.
-- It does not read number words (`twelve`), fractions it cannot value (`⅓`), a scale stated elsewhere (`in thousands`; you set `scale`), a percent sign before the number, or currency written as prose other than dollars, euros and codes.
+- It does not read number words (`twelve`), fractions it cannot value (`⅓`), a scale stated elsewhere (`in thousands`; you set `scale`), or currency written as prose other than dollars, euros and codes.
 - The word lists for units, currencies and month names are short and mostly English. Month names are read in English and seven other languages.
 - Some honest answers are flagged. About one honest RAGTruth response in seven needs a person under `strict` with list markers ignored (20 of 135, Reported). Claims about the answer itself (`in 46 words`) are `untraced`.
 - A derived match is not proof the model derived the number. Treat `derived` with a high `matches` count as weak.

@@ -439,6 +439,62 @@ const ASTRAL_DIGITS: readonly (readonly [number, number])[] = [
   [0x1e5f1, 10], [0x1e950, 10], [0x1fbf0, 10],
 ]
 
+/**
+ * Characters of Unicode category No or Nl that are not decimal digits (circled and dingbat digits, superscripts,
+ * subscripts, roman numeral signs, the ideographic zero, and the astral numerals), as [first, last] code points.
+ * They carry a number the scanner does not read, so each is listed in `skipped` and never dropped quietly.
+ * The vulgar fractions are in the table too; they are read (or listed) by their own rule before this one is asked.
+ * Generated from the Unicode data of Node 26.3.0; a test checks every code point the running Node has against it.
+ */
+const NUMERIC_GLYPHS: readonly (readonly [number, number])[] = [
+  [0xb2, 0xb3], [0xb9, 0xb9], [0xbc, 0xbe], [0x9f4, 0x9f9], [0xb72, 0xb77], [0xbf0, 0xbf2], [0xc78, 0xc7e],
+  [0xd58, 0xd5e], [0xd70, 0xd78], [0xf2a, 0xf33], [0x1369, 0x137c], [0x16ee, 0x16f0], [0x17f0, 0x17f9],
+  [0x19da, 0x19da], [0x2070, 0x2070], [0x2074, 0x2079], [0x2080, 0x2089], [0x2150, 0x2182], [0x2185, 0x2189],
+  [0x2460, 0x249b], [0x24ea, 0x24ff], [0x2776, 0x2793], [0x2cfd, 0x2cfd], [0x3007, 0x3007], [0x3021, 0x3029],
+  [0x3038, 0x303a], [0x3192, 0x3195], [0x3220, 0x3229], [0x3248, 0x324f], [0x3251, 0x325f], [0x3280, 0x3289],
+  [0x32b1, 0x32bf], [0xa6e6, 0xa6ef], [0xa830, 0xa835], [0x10107, 0x10133], [0x10140, 0x10178], [0x1018a, 0x1018b],
+  [0x102e1, 0x102fb], [0x10320, 0x10323], [0x10341, 0x10341], [0x1034a, 0x1034a], [0x103d1, 0x103d5],
+  [0x10858, 0x1085f], [0x10879, 0x1087f], [0x108a7, 0x108af], [0x108fb, 0x108ff], [0x10916, 0x1091b],
+  [0x109bc, 0x109bd], [0x109c0, 0x109cf], [0x109d2, 0x109ff], [0x10a40, 0x10a48], [0x10a7d, 0x10a7e],
+  [0x10a9d, 0x10a9f], [0x10aeb, 0x10aef], [0x10b58, 0x10b5f], [0x10b78, 0x10b7f], [0x10ba9, 0x10baf],
+  [0x10cfa, 0x10cff], [0x10e60, 0x10e7e], [0x10f1d, 0x10f26], [0x10f51, 0x10f54], [0x10fc5, 0x10fcb],
+  [0x11052, 0x11065], [0x111e1, 0x111f4], [0x1173a, 0x1173b], [0x118ea, 0x118f2], [0x11c5a, 0x11c6c],
+  [0x11fc0, 0x11fd4], [0x12400, 0x1246e], [0x16b5b, 0x16b61], [0x16e80, 0x16e96], [0x16ff4, 0x16ff6],
+  [0x1d2c0, 0x1d2d3], [0x1d2e0, 0x1d2f3], [0x1d360, 0x1d378], [0x1e8c7, 0x1e8cf], [0x1ec71, 0x1ecab],
+  [0x1ecad, 0x1ecaf], [0x1ecb1, 0x1ecb4], [0x1ed01, 0x1ed2d], [0x1ed2f, 0x1ed3d], [0x1f100, 0x1f10c],
+]
+
+/** The length in code units of the numeric glyph at k (1 or 2), or 0. */
+function numericGlyphAt(f: Uint16Array, k: number): number {
+  const hi = f[k] ?? 0
+  let cp = hi
+  let len = 1
+  if (hi >= 0xd800 && hi <= 0xdbff) {
+    const lo = f[k + 1] ?? 0
+    if (lo < 0xdc00 || lo > 0xdfff) return 0
+    cp = ((hi - 0xd800) << 10) + (lo - 0xdc00) + 0x10000
+    len = 2
+  } else if (hi < 0xb2) {
+    return 0
+  }
+  let a = 0
+  let b = NUMERIC_GLYPHS.length - 1
+  while (a <= b) {
+    const mid = (a + b) >> 1
+    const range = NUMERIC_GLYPHS[mid]
+    if (range === undefined) return 0
+    if (cp < range[0]) b = mid - 1
+    else if (cp > range[1]) a = mid + 1
+    else return len
+  }
+  return 0
+}
+
+/** Superscript and subscript digits and signs: a footnote mark or a chemical formula when written against a word. */
+function isSupSubGlyph(c: number): boolean {
+  return c === 0xb2 || c === 0xb3 || c === 0xb9 || (c >= 0x2070 && c <= 0x2079) || (c >= 0x2080 && c <= 0x2089)
+}
+
 /** True when the code point is a decimal digit outside the Basic Multilingual Plane. */
 function isAstralDigit(cp: number): boolean {
   let lo = 0
@@ -492,7 +548,8 @@ function fold(text: string): Uint16Array {
       else if (c === 0x066b) c = 0x2e
       else if (c === 0x066c) c = 0x2c
       else if (c === 0x066a || c === 0xfe6a) c = 0x25
-      else if (c === 0x2212 || c === 0x2010 || c === 0x2011) c = 0x2d
+      else if (c === 0x2212 || c === 0x2010 || c === 0x2011 || c === 0x2012 || c === 0xfe63 || c === 0x2796 || c === 0x2043) c = 0x2d // minus sign and its look-alikes
+      else if (c === 0xfe62 || c === 0x2795) c = 0x2b // small plus sign and heavy plus sign
       else if (c === 0xb5) c = 0x3bc // micro sign: the Greek letter mu, as in unit prefixes
       else if (c === 0x212a) c = 0x4b // Kelvin sign: canonically K
       else if (c === 0x212b) c = 0xc5 // Angstrom sign: canonically \u00c5
@@ -2086,6 +2143,25 @@ export function scan(
           continue
         }
       }
+      const glyph = numericGlyphAt(f, i)
+      if (glyph > 0) {
+        // Circled, dingbat, superscript, subscript and roman numerals hold a number the kit does not read: listed.
+        // Written against a word they are a footnote mark or a formula (H₂O); otherwise they are an unread form.
+        let e = i + glyph
+        for (;;) {
+          const g = numericGlyphAt(f, e)
+          if (g > 0) e += g
+          else if (e < n && (isAlnum(f[e] ?? 0) || isMark(f[e] ?? 0))) e++
+          else break
+        }
+        const before = at(i - 1)
+        const wordy = i > floor && (isLetter(before) || isMark(before))
+        const note = isSupSubGlyph(c) && i > floor && before !== -1 && !isGap(before) && before !== 0x0a && before !== 0x0d && !isDigit(before)
+        if (wordy || note) skip(wordy ? wordStart(i) : i, e, 'identifier')
+        else skip(i, e, 'unread-glued-form')
+        i = e
+        continue
+      }
       i++
       continue
     }
@@ -2119,6 +2195,11 @@ export function scan(
     if (isDigit(c) || isLetter(c) || isMark(c) || c === 0x2e || c === 0x2026) return false
     const prev = lastPlain()
     return !(prev !== undefined && prev.end === m + 1)
+  }
+
+  /** True when a percent sign can open a number after this character: the start, a space, a line break, an opening bracket or quote, a colon, a comma. */
+  function percentOpens(before: number): boolean {
+    return before === -1 || isGap(before) || before === 0x0a || before === 0x0d || before === 0x28 || before === 0x5b || before === 0x22 || before === 0x27 || before === 0x3a || before === 0x2c || before === 0x201c
   }
 
   function handle(d0: number): number {
@@ -2158,7 +2239,12 @@ export function scan(
       // "+/-5%" and "+-5%" are a tolerance, read like "\u00b15%": the number has no sign.
       if (signValid && at(signPos) !== 0x2b && (pc === 0x2b || (pc === 0x2f && at(signPos - 2) === 0x2b))) signValid = false
     }
+    // A percent sign before the number ("%12", the Turkish form) is the number's own: 12%. A percent that ends a word or a
+    // number ("x%12", "100%12") is something else.
+    const pctFirst =
+      !bare && !lead && cur === null && !signValid && i0 - 1 >= floor && at(i0 - 1) === 0x25 && percentOpens(at(i0 - 2))
     let start = i0
+    if (pctFirst) start = i0 - 1
     if (cur !== null) start = cur.start
     if (signValid && signPos < start) start = signPos
     // The dash that is not a sign: a range separator between two numbers.
@@ -2214,7 +2300,7 @@ export function scan(
     }
 
     // ---- dates, times, month names -----------------------------------------------
-    if (cur === null && !signValid && !bare) {
+    if (cur === null && !signValid && !bare && !pctFirst) {
       const d = !lead ? tryDate(i0, rangeDash >= 0) : -1
       if (d >= 0) {
         // "5-6:30pm": the time that ends a range shares its meridiem with the number that starts it.
@@ -2457,9 +2543,9 @@ export function scan(
 
       // ---- kind and unit ---------------------------------------------------------------------
       let kind: NumberKind
-      if (sfx?.percent !== undefined) {
+      if (sfx?.percent !== undefined || (pctFirst && isFirst)) {
         kind = 'percent'
-        tok.unit = sfx.percent
+        tok.unit = sfx?.percent ?? '%'
       } else if (currency !== undefined) {
         kind = 'currency'
         tok.currency = currency
