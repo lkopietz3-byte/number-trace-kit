@@ -118,12 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - unreleased
 
-### Fixed (final release review)
-
-- A derivation found only in the reverse order no longer hides a permitted derivation in the stated order that matches under another unit reading.
-- The 60-digit limit counts the expanded value, so a long mantissa with an exponent or magnitude is `unknown` on the text path as it already was on the token path.
-- Currency symbols are looked up in a `Map`, so an inherited property on `Object.prototype` cannot read as a symbol.
-
 First version. Private (`"private": true`, `UNLICENSED`) and not published
 anywhere.
 

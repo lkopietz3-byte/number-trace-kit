@@ -1,6 +1,6 @@
 import { add, cmp, formatDec, fromParts, isDecimalString, parseDecimal, sub } from './decimal.js'
 import type { Dec } from './decimal.js'
-import { describe, getOwn, isRecord, readBoolean, readInteger, readOptions, snapshotArray } from './input.js'
+import { describe, getOwn, isRecord, nearMiss, readBoolean, readInteger, readOptions, show, snapshotArray } from './input.js'
 import type {
   ReconcileComponentsInput,
   ReconcileInput,
@@ -12,14 +12,21 @@ const FLOAT_WITH_EXPONENT = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/
 
 const CURRENCY_SIGNS = new Set(['$', '\u20ac', '\u00a3', '\u00a5', '\u20b9'])
 
+const ROW_KEYS: readonly string[] = ['label', 'amount']
+
+type Mark = '.' | ','
+
+const GROUP_SPACES = new Set([' ', '\u00a0', '\u202f', "'"])
+
 /**
  * An amount as a report prints it: an optional minus or plus, an optional currency sign, digits
- * with comma thousands groups (exactly three digits per group) and an optional decimal part, all
- * of it optionally inside accounting parentheses. "38,400", "$600.00", "(557)", "-$557.50",
- * ".5". Anything it cannot read exactly (a comma in the wrong place, a decimal comma,
- * spaces, an exponent, other digit systems) is null.
+ * with thousands groups (exactly three digits per group) and an optional decimal part, all of it
+ * optionally inside accounting parentheses. With the mark `.`: "38,400", "$600.00", "(557)",
+ * "-$557.50", ".5". With the mark `,` (a comma-decimal table): "38.400", "600,00 ", "1 234,50",
+ * "(0,50)", "€ 1.234,50". Anything it cannot read exactly (a group in the wrong place, the other
+ * mark twice, an exponent, other digit systems) is null. `sign` is the currency sign, if any.
  */
-function parsePrinted(text: string): Dec | null {
+function parsePrinted(text: string, mark: Mark): { dec: Dec; sign?: string } | null {
   if (text.length === 0 || text.length > 120) return null
   let s = text
   let negative = false
@@ -40,18 +47,32 @@ function parsePrinted(text: string): Dec | null {
     return true
   }
   if (!sign()) return null
+  let currency: string | undefined
   if (s.length > 0 && CURRENCY_SIGNS.has(s[0] ?? '')) {
+    currency = s[0]
     s = s.slice(1)
+    // Comma-decimal tables print "\u20ac 1.234,50".
+    if (mark === ',' && (s[0] === ' ' || s[0] === '\u00a0')) s = s.slice(1)
     if (!sign()) return null
   }
-  const dot = s.indexOf('.')
-  const whole = dot < 0 ? s : s.slice(0, dot)
-  const fraction = dot < 0 ? '' : s.slice(dot + 1)
-  if (dot >= 0 && fraction.length === 0) return null
+  const at = s.indexOf(mark)
+  if (at >= 0 && s.indexOf(mark, at + 1) >= 0) return null
+  const whole = at < 0 ? s : s.slice(0, at)
+  const fraction = at < 0 ? '' : s.slice(at + 1)
+  if (at >= 0 && fraction.length === 0) return null
   if (!/^[0-9]*$/.test(fraction)) return null
+  const groupMark = mark === '.' ? ',' : '.'
   let digits: string
-  if (whole.includes(',')) {
-    const groups = whole.split(',')
+  // The marks that group digits: the other mark, and in a comma-decimal table a space or an apostrophe, one kind per number.
+  let groupChar: string | undefined
+  for (const c of whole) {
+    if (c === groupMark || (mark === ',' && GROUP_SPACES.has(c))) {
+      if (groupChar !== undefined && groupChar !== c) return null
+      groupChar = c
+    }
+  }
+  if (groupChar !== undefined) {
+    const groups = whole.split(groupChar)
     const first = groups[0] ?? ''
     if (first.length < 1 || first.length > 3 || !/^[0-9]+$/.test(first)) return null
     for (const g of groups.slice(1)) if (g.length !== 3 || !/^[0-9]{3}$/.test(g)) return null
@@ -61,7 +82,8 @@ function parsePrinted(text: string): Dec | null {
     digits = whole
   }
   if (digits === '' && fraction === '') return null
-  return parseDecimal(`${negative ? '-' : ''}${digits === '' ? '0' : digits}${fraction === '' ? '' : `.${fraction}`}`)
+  const dec = parseDecimal(`${negative ? '-' : ''}${digits === '' ? '0' : digits}${fraction === '' ? '' : `.${fraction}`}`)
+  return currency === undefined ? { dec } : { dec, sign: currency }
 }
 
 /**
@@ -71,16 +93,19 @@ function parsePrinted(text: string): Dec | null {
  * is set, and then every number is read as a major-unit decimal through its
  * shortest round-trip text.
  */
-function readAmount(value: unknown, name: string, minorDigits: number, allowFloat: boolean): Dec {
+function readAmount(value: unknown, name: string, o: Read, signs?: Set<string>): Dec {
+  const { minorDigits, allowFloat } = o
   if (typeof value === 'string') {
-    if (isDecimalString(value, 120)) return parseDecimal(value)
-    const printed = parsePrinted(value)
+    // A plain "12.34" is the machine form; a table printed with a decimal comma is only ever read as printed.
+    if (o.mark === '.' && isDecimalString(value, 120)) return parseDecimal(value)
+    const printed = parsePrinted(value, o.mark)
     if (printed === null) {
       throw new TypeError(
         `${name} must be an exact amount such as "12.34", "38,400", "$600.00" or "(557)", got ${JSON.stringify(value.slice(0, 40))}.`,
       )
     }
-    return printed
+    if (printed.sign !== undefined) signs?.add(printed.sign)
+    return printed.dec
   }
   if (typeof value === 'bigint') return { n: value, s: minorDigits }
   if (typeof value === 'number') {
@@ -101,11 +126,28 @@ function readAmount(value: unknown, name: string, minorDigits: number, allowFloa
   throw new TypeError(`${name} must be a decimal string, an integer or a bigint, got ${describe(value)}.`)
 }
 
-function readReconcileOptions(options: unknown): { minorDigits: number; allowFloat: boolean } {
-  const o = readOptions(options, ['minorUnitDigits', 'allowFloat'] as const, 'reconcile')
+interface Read {
+  readonly minorDigits: number
+  readonly allowFloat: boolean
+  readonly mark: Mark
+}
+
+function readReconcileOptions(options: unknown): Read {
+  const o = readOptions(options, ['minorUnitDigits', 'allowFloat', 'decimalMark'] as const, 'reconcile')
+  if (o.decimalMark !== undefined && o.decimalMark !== '.' && o.decimalMark !== ',') {
+    throw new RangeError('decimalMark must be "." or ",".')
+  }
   return {
     minorDigits: readInteger(o.minorUnitDigits, 'minorUnitDigits', 0, 8, 2),
     allowFloat: readBoolean(o.allowFloat, 'allowFloat', false),
+    mark: o.decimalMark === ',' ? ',' : '.',
+  }
+}
+
+/** Amounts in two currencies are not one sum. */
+function checkSigns(signs: ReadonlySet<string>): void {
+  if (signs.size > 1) {
+    throw new TypeError(`reconcile: the amounts mix currency signs (${[...signs].join(' and ')}); add up one currency at a time.`)
   }
 }
 
@@ -136,23 +178,28 @@ function finish(
  * malformed input rather than guessing.
  */
 export function reconcile(input: ReconcileInput, options?: ReconcileOptions): ReconcileResult {
-  const { minorDigits, allowFloat } = readReconcileOptions(options)
+  const read = readReconcileOptions(options)
   const bag = readOptions(input, ['rows', 'total', 'tolerance'] as const, 'reconcile input')
   if (bag.rows === undefined) throw new TypeError('reconcile: rows is required.')
   if (bag.total === undefined) throw new TypeError('reconcile: total is required.')
   const rows = snapshotArray(bag.rows, 'rows')
   if (rows.length === 0) throw new RangeError('reconcile: rows is empty, so there is nothing to add up.')
   const amounts: Dec[] = []
+  const signs = new Set<string>()
   rows.forEach((row, i) => {
-    if (!isRecord(row)) throw new TypeError(`rows[${i}] must be an object with label and amount.`)
+    if (!isRecord(row) || describe(row) !== 'object') throw new TypeError(`rows[${i}] must be an object with label and amount, got ${describe(row)}.`)
+    for (const key of Object.keys(row)) {
+      const meant = nearMiss(key, ROW_KEYS)
+      if (meant !== undefined) throw new RangeError(`rows[${i}]: unknown key ${show(key)}, did you mean "${meant}"? Known keys: label, amount.`)
+    }
     const label = getOwn(row, 'label')
     const amount = getOwn(row, 'amount')
-    if (label !== undefined && typeof label !== 'string') throw new TypeError(`rows[${i}].label must be a string.`)
-    amounts.push(readAmount(amount, `rows[${i}].amount`, minorDigits, allowFloat))
+    if (typeof label !== 'string') throw new TypeError(`rows[${i}].label must be a string, got ${describe(label)}.`)
+    amounts.push(readAmount(amount, `rows[${i}].amount`, read, signs))
   })
-  const total = readAmount(bag.total, 'total', minorDigits, allowFloat)
-  const tolerance =
-    bag.tolerance === undefined ? { n: 0n, s: 0 } : readAmount(bag.tolerance, 'tolerance', minorDigits, allowFloat)
+  const total = readAmount(bag.total, 'total', read, signs)
+  checkSigns(signs)
+  const tolerance = bag.tolerance === undefined ? { n: 0n, s: 0 } : readAmount(bag.tolerance, 'tolerance', read)
   return finish(amounts, total, tolerance)
 }
 
@@ -161,7 +208,7 @@ export function reconcile(input: ReconcileInput, options?: ReconcileOptions): Re
  * to the total. Parts are the own enumerable string keys of `parts`.
  */
 export function reconcileComponents(input: ReconcileComponentsInput, options?: ReconcileOptions): ReconcileResult {
-  const { minorDigits, allowFloat } = readReconcileOptions(options)
+  const read = readReconcileOptions(options)
   const bag = readOptions(input, ['parts', 'total', 'tolerance'] as const, 'reconcileComponents input')
   if (bag.parts === undefined) throw new TypeError('reconcileComponents: parts is required.')
   if (bag.total === undefined) throw new TypeError('reconcileComponents: total is required.')
@@ -170,9 +217,10 @@ export function reconcileComponents(input: ReconcileComponentsInput, options?: R
   const names = Object.keys(parts)
   if (names.length === 0) throw new RangeError('reconcileComponents: parts is empty, so there is nothing to add up.')
   const amounts: Dec[] = []
-  for (const name of names) amounts.push(readAmount(parts[name], `parts.${name}`, minorDigits, allowFloat))
-  const total = readAmount(bag.total, 'total', minorDigits, allowFloat)
-  const tolerance =
-    bag.tolerance === undefined ? { n: 0n, s: 0 } : readAmount(bag.tolerance, 'tolerance', minorDigits, allowFloat)
+  const signs = new Set<string>()
+  for (const name of names) amounts.push(readAmount(parts[name], `parts[${show(name)}]`, read, signs))
+  const total = readAmount(bag.total, 'total', read, signs)
+  checkSigns(signs)
+  const tolerance = bag.tolerance === undefined ? { n: 0n, s: 0 } : readAmount(bag.tolerance, 'tolerance', read)
   return finish(amounts, total, tolerance)
 }

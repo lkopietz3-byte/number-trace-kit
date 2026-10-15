@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractNumbers, traceNumbers } from '../src/index.js'
+import { extractNumbers, reconcile, reconcileComponents, traceNumbers } from '../src/index.js'
 import type { TraceOptions } from '../src/index.js'
 
 // Regression rows from the round 1 audit of the should-fix items (S1 to S9) and the
@@ -417,5 +417,135 @@ describe('S9 docs-release:F1 docs-release:F2 hostile:F7 hostile:F10: error messa
     expect(() => extractNumbers('1', { locale: 'en-u' })).toThrow(RangeError)
     expect(() => extractNumbers('1', { locale: 'zz-ZZ' })).toThrow(/language "zz" is not supported/)
     expect(() => extractNumbers('1', { locale: 'e' })).toThrow(/not a language tag/)
+  })
+})
+
+describe('triage false-pass:F18 units, decades and an ordinal day', () => {
+  const unitOf = (text: string): string[] => extractNumbers(text).map((t) => `${t.value}:${t.unit ?? ''}`)
+
+  it('false-pass:F18 area and volume units are not length units', () => {
+    expect(unitOf('800 m\u00b2')).toEqual(['800:m2'])
+    expect(unitOf('800 m2')).toEqual(['800:m2'])
+    expect(unitOf('800m2')).toEqual(['800:m2'])
+    expect(unitOf('800 ft2 and 3 km\u00b3')).toEqual(['800:ft2', '3:km3'])
+    expect(unitOf('5 sqft')).toEqual(['5:ft2'])
+    expect(verdict('The lot is 800 m\u00b2.', 'The lot is 800 m.')).toBe('untraced')
+    expect(verdict('The lot is 800 m2.', 'The lot is 800 m\u00b2.')).toBe('clean')
+    expect(verdict('The lot is 800 ft2.', 'The lot is 800 m2.')).toBe('untraced')
+    // A capital is a code, not a unit: M2 chips, A4 paper.
+    expect(unitOf('the M2 chip')).toEqual([])
+  })
+
+  it('false-pass:F18 ppm, ppb, rpm and similar are units when spaced too', () => {
+    expect(verdict('Lead was 10 ppm.', 'Lead was 10 ppb.')).toBe('untraced')
+    expect(verdict('Lead was 10 ppm.', 'Lead was 10 ppm.')).toBe('clean')
+    expect(verdict('It spins at 60 rpm.', 'It spins at 60 bpm.')).toBe('untraced')
+    expect(verdict('It holds 5 gal.', 'It holds 5 gallons.')).toBe('clean')
+    expect(verdict('It is 5 yd.', 'It is 5 yards.')).toBe('clean')
+    expect(verdict('It is 5 yd.', 'It is 5 m.')).toBe('untraced')
+  })
+
+  it('false-pass:F18 a decade is not seconds', () => {
+    expect(unitOf('the 1990s')).toEqual(['1990:decade'])
+    expect(unitOf('in the 2020s')).toEqual(['2020:decade'])
+    expect(unitOf('a 1200s timeout and 90s')).toEqual(['1200:second', '90:second'])
+    expect(verdict('Popular in the 1990s.', 'Popular in the 1990s.')).toBe('clean')
+    expect(verdict('Popular in the 1990s.', 'Popular in 1990.')).not.toBe('clean')
+    expect(verdict('It timed out after 30s.', 'It timed out after 30 seconds.')).toBe('clean')
+  })
+
+  it('false-pass:F18 an ordinal day is not untraced when the evidence has that day of a date', () => {
+    const r = traceNumbers('Due on the 30th.', 'Due June 30, 2026.')
+    expect(r.numbers[0]).toMatchObject({ status: 'unknown', reason: 'ordinal-date' })
+    expect(verdict('Due on the 29th.', 'Due June 30, 2026.')).toBe('untraced')
+    expect(verdict('Due on the 30th.', 'Due on the 30th.')).toBe('clean')
+  })
+})
+
+describe('triage false-pass:F14 reconcile reads one currency and the decimal mark you name', () => {
+  it('false-pass:F14 rows in two currencies are a TypeError, not a sum', () => {
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '\u20ac1,000' }, { label: 'b', amount: '$5' }], total: '1005' })).toThrow(/mix currency signs/)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '\u20ac1,000' }, { label: 'b', amount: '5' }], total: '\u20ac1,005' })).not.toThrow()
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '$1,000' }], total: '\u00a31,000' })).toThrow(/mix currency signs/)
+    expect(reconcile({ rows: [{ label: 'a', amount: '$1,000' }, { label: 'b', amount: '$5.50' }], total: '$1,005.50' }).ok).toBe(true)
+  })
+
+  it('false-pass:F14 decimalMark reads a comma-decimal table as it is printed', () => {
+    const rows = [{ label: 'a', amount: '1.500,25' }, { label: 'b', amount: '2.500' }]
+    expect(reconcile({ rows, total: '4.000,25' }, { decimalMark: ',' })).toMatchObject({ ok: true, sum: '4000.25' })
+    expect(reconcile({ rows: [{ label: 'a', amount: '1,500' }, { label: 'b', amount: '2,500' }], total: '4' }, { decimalMark: ',' })).toMatchObject({ ok: true, sum: '4.000' })
+    expect(reconcile({ rows: [{ label: 'a', amount: '\u20ac 1.234,50' }, { label: 'b', amount: '(0,50)' }], total: '1.234,00' }, { decimalMark: ',' }).ok).toBe(true)
+    expect(reconcile({ rows: [{ label: 'a', amount: '1 234,50' }], total: '1 234,50' }, { decimalMark: ',' }).ok).toBe(true)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '1,50,0' }], total: '1' }, { decimalMark: ',' })).toThrow(TypeError)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '1,5,5' }], total: '1' }, { decimalMark: ',' })).toThrow(TypeError)
+    expect(reconcileComponents({ parts: { a: '1.000,5', b: '0,5' }, total: '1.001' }, { decimalMark: ',' }).ok).toBe(true)
+    // The default still reads a comma as a thousands mark, and a lone decimal comma is refused.
+    expect(reconcile({ rows: [{ label: 'a', amount: '1,500' }, { label: 'b', amount: '2,500' }], total: '4,000' }).ok).toBe(true)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '1,5' }], total: '1.5' })).toThrow(TypeError)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '1' }], total: '1' }, { decimalMark: ';' as never })).toThrow(RangeError)
+  })
+})
+
+describe('triage hostile:F8 hostile:F9 docs-release:F4 input checks and messages', () => {
+  it('hostile:F8 a typo in an evidence document key is a RangeError, and a missing text says so', () => {
+    expect(() => traceNumbers('5', [{ id: 'a', text: 'Sales 5', scael: 'million' } as never])).toThrow(/unknown key "scael", did you mean "scale"\? Known keys: id, text, scale, currency, scaleApplies/)
+    expect(() => traceNumbers('5', [{ id: 'a', text: 'Sales 5', currency: 'USD' }])).not.toThrow()
+    // Other data on a document (a thenable, a database field) is not a typo.
+    expect(() => traceNumbers('5', [{ id: 'a', text: 'Sales 5', source: 'db', then: 1 } as never])).not.toThrow()
+    expect(() => traceNumbers('5', [{ id: 'a', text: 'Sales 5', Currency: 'USD' } as never])).toThrow(/did you mean "currency"/)
+    expect(() => traceNumbers('5', [{ id: 'a', txt: 'Sales 5' } as never])).toThrow(/evidence\[0\] has an id but no text/)
+    expect(() => traceNumbers('5', [{ id: 'a' } as never])).toThrow(/evidence\[0\] has an id but no text/)
+  })
+
+  it('hostile:F9 an options bag must be a plain object, not a Map', () => {
+    expect(() => traceNumbers('5 and 7', '5', new Map([['preset', 'report']]) as never)).toThrow(/options must be an object, got Map/)
+    expect(() => traceNumbers('5', '5', [] as never)).toThrow(/options must be an object, got array/)
+    expect(() => extractNumbers('5', new Set() as never)).toThrow(TypeError)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '1' }], total: '1' }, new Map() as never)).toThrow(TypeError)
+    expect(() => traceNumbers('5', '5', Object.create(null) as never)).not.toThrow()
+  })
+
+  it('hostile:F9 reconcile rows are plain objects with a label and an amount and nothing else', () => {
+    expect(() => reconcile({ rows: [['a', '1']] as never, total: '1' })).toThrow(/rows\[0\] must be an object with label and amount, got array/)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '1', amout: '6' } as never], total: '1' })).toThrow(/rows\[0\]: unknown key "amout", did you mean "amount"\? Known keys: label, amount/)
+    expect(() => reconcile({ rows: [{ amount: '1' } as never], total: '1' })).toThrow(/rows\[0\].label must be a string/)
+    expect(() => reconcile({ rows: [{ label: 1, amount: '1' } as never], total: '1' })).toThrow(/rows\[0\].label must be a string/)
+    expect(reconcile({ rows: [{ label: '', amount: '1' }], total: '1' }).ok).toBe(true)
+    expect(reconcile({ rows: [{ label: 'a', amount: '1', id: 7, date: '2026-01-01' } as never], total: '1' }).ok).toBe(true)
+  })
+
+  it('hostile:F9 messages never run a caller toString and never echo a long caller string', () => {
+    let called = false
+    const sneaky = { toString(): string { called = true; return 'sum' } }
+    expect(() => traceNumbers('5', '5', { derivations: [sneaky] as never })).toThrow(RangeError)
+    expect(called).toBe(false)
+    expect(() => traceNumbers('5', '5', { derivations: [Object.create(null)] as never })).toThrow(RangeError)
+    for (const bad of [() => traceNumbers('5', '5', { derivations: ['x'.repeat(100_000)] as never }), () => traceNumbers('5', '5', { ignoreKinds: ['y'.repeat(100_000)] as never }), () => traceNumbers('5', '5', { locale: 'z'.repeat(100_000) }), () => traceNumbers('5', '5', { preset: 'p'.repeat(100_000) as never })]) {
+      try {
+        bad()
+        throw new Error('did not throw')
+      } catch (e) {
+        expect((e as Error).message.length).toBeLessThan(300)
+      }
+    }
+  })
+
+  it('docs-release:F4 evidence ids need not be unique: a result cites the id of the document it matched', () => {
+    const r = traceNumbers('5', [{ id: 'a', text: '5' }, { id: 'a', text: '6' }])
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers[0]?.evidence.map((e) => e.id)).toEqual(['a'])
+  })
+})
+
+describe('triage field:F9 the documented recipe for counts about the answer itself', () => {
+  it('field:F9 ignorePattern skips "106 words", and every other number followed by those words', () => {
+    const pattern = /\d+ (?:words?|sentences?|characters?|paragraphs?|bullets?)\b/i
+    const evidence = 'Revenue was $48.2 million in 2025.'
+    const answer = 'In 3 sentences: revenue was $48.2 million in 2025. This summary is 106 words long.'
+    expect(verdict(answer, evidence)).toBe('untraced')
+    expect(verdict(answer, evidence, { ignorePattern: pattern })).toBe('clean')
+    expect(verdict('Revenue was $48.3 million.', evidence, { ignorePattern: pattern })).toBe('untraced')
+    // The cost, as the README says: a wrong count of words in the evidence is skipped too.
+    expect(verdict('There were 7 words in the headline.', 'The headline had 9 words.', { ignorePattern: pattern })).toBe('clean')
   })
 })

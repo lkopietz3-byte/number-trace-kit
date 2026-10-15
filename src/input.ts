@@ -10,7 +10,22 @@ export const MAX_ITEMS = 1_000_000
 export function describe(value: unknown): string {
   if (value === null) return 'null'
   if (Array.isArray(value)) return 'array'
+  if (typeof value === 'object') {
+    // "Map", "Set", "Date" and so on say more than "object" when someone passes the wrong thing.
+    const tag = Object.prototype.toString.call(value).slice(8, -1)
+    return tag === 'Object' ? 'object' : tag
+  }
   return typeof value
+}
+
+/**
+ * A caller value as an error message may show it: a string is quoted and cut at 40 characters, a number or
+ * boolean is printed, anything else is only named. It never calls the value's own `toString`.
+ */
+export function show(value: unknown, max = 40): string {
+  if (typeof value === 'string') return JSON.stringify(value.length > max ? `${value.slice(0, max)}...` : value)
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint' || value === undefined || value === null) return String(value)
+  return describe(value)
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -29,13 +44,14 @@ export function readOptions<K extends string>(
   // No prototype: a key the caller did not set must read as absent, not as something planted on Object.prototype.
   const out = noProto({}) as Partial<Record<K, unknown>>
   if (options === undefined || options === null) return out
-  if (typeof options !== 'object' || Array.isArray(options)) {
+  // A plain object only: a Map or a Set has no own keys, so its settings would be dropped without a word.
+  if (typeof options !== 'object' || describe(options) !== 'object') {
     throw new TypeError(`${where}: options must be an object, got ${describe(options)}.`)
   }
   const bag = options as Record<string, unknown>
   for (const key of Object.keys(bag)) {
     if (!(allowed as readonly string[]).includes(key)) {
-      throw new RangeError(`${where}: unknown option "${key}". Known options: ${allowed.join(', ')}.`)
+      throw new RangeError(`${where}: unknown option ${show(key)}. Known options: ${allowed.join(', ')}.`)
     }
   }
   for (const key of allowed) {
@@ -59,6 +75,42 @@ export function noProto<T extends object>(value: T): T {
  */
 class NoProtoRecord {}
 Object.setPrototypeOf(NoProtoRecord.prototype, null)
+
+/**
+ * A key the caller wrote that is a near miss of one the kit knows ("scael" for "scale", "amout" for "amount", "Id"
+ * for "id"), or undefined. An object may carry other data (a database row, a thenable), so only a probable typo is
+ * an error: it would otherwise silently turn a hint off.
+ */
+export function nearMiss(key: string, known: readonly string[]): string | undefined {
+  if (known.includes(key) || key.length > 24) return undefined
+  const lower = key.toLowerCase()
+  for (const k of known) {
+    if (lower === k.toLowerCase()) return k
+    const limit = k.length <= 5 ? 1 : 2
+    if (Math.abs(k.length - key.length) <= limit && editDistance(lower, k.toLowerCase()) <= limit) return k
+  }
+  return undefined
+}
+
+/** Damerau-Levenshtein distance (insert, delete, replace, swap two neighbors) of two short strings. */
+function editDistance(a: string, b: string): number {
+  const d: number[][] = []
+  for (let i = 0; i <= a.length; i++) d.push(new Array<number>(b.length + 1).fill(0))
+  for (let i = 0; i <= a.length; i++) (d[i] as number[])[0] = i
+  for (let j = 0; j <= b.length; j++) (d[0] as number[])[j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const row = d[i] as number[]
+      const prev = d[i - 1] as number[]
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      row[j] = Math.min((prev[j] as number) + 1, (row[j - 1] as number) + 1, (prev[j - 1] as number) + cost)
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        row[j] = Math.min(row[j] as number, ((d[i - 2] as number[])[j - 2] as number) + 1)
+      }
+    }
+  }
+  return (d[a.length] as number[])[b.length] as number
+}
 
 /**
  * Read a property the caller set on this very object. An inherited property (one planted on `Object.prototype`, or

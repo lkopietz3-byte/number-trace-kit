@@ -19,13 +19,15 @@ import { NumberLimitError, scan } from './extract.js'
 import type { SkipRecord } from './extract.js'
 import {
   MAX_TEXT_LENGTH,
-  noProto,
   describe,
   getOwn,
   isRecord,
+  nearMiss,
+  noProto,
   readBoolean,
   readInteger,
   readOptions,
+  show,
   snapshotArray,
 } from './input.js'
 import { resolveLocale } from './locale.js'
@@ -53,6 +55,8 @@ import type {
 
 const KINDS: readonly NumberKind[] = ['percent', 'currency', 'count', 'decimal', 'year', 'date-part', 'time', 'ordinal']
 const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long', 'magnitude', 'currency', 'meridiem', 'date', 'sign']
+/** The keys an evidence document may have. */
+const DOCUMENT_KEYS: readonly string[] = ['id', 'text', 'scale', 'currency', 'scaleApplies']
 const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average', 'product']
 const DATE_PARTS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 const MAX_LIST = 8
@@ -335,7 +339,7 @@ const SCALE_WORDS: Readonly<Record<string, number>> = { thousand: 3, million: 6,
 function scaleExponent(value: unknown, name: string): number {
   if (typeof value === 'string') {
     const e = Object.hasOwn(SCALE_WORDS, value) ? SCALE_WORDS[value] : undefined
-    if (e === undefined) throw new RangeError(`${name} "${value}" is not one of thousand, million, billion, trillion or an exponent of ten.`)
+    if (e === undefined) throw new RangeError(`${name} ${show(value)} is not one of thousand, million, billion, trillion or an exponent of ten.`)
     return e
   }
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 12) return value
@@ -391,7 +395,7 @@ function readContext(options: unknown): Ctx {
   if (o['derivations'] !== undefined) {
     for (const d of snapshotArray(o['derivations'], 'derivations')) {
       if (typeof d !== 'string' || !(DERIVATIONS as readonly string[]).includes(d)) {
-        throw new RangeError(`derivations: "${String(d)}" is not one of ${DERIVATIONS.join(', ')}.`)
+        throw new RangeError(`derivations: ${show(d)} is not one of ${DERIVATIONS.join(', ')}.`)
       }
       derivations.add(d as Derivation)
     }
@@ -435,7 +439,7 @@ function readContext(options: unknown): Ctx {
   const ignoreKinds = new Set<NumberKind>()
   if (o['ignoreKinds'] !== undefined) {
     for (const k of snapshotArray(o['ignoreKinds'], 'ignoreKinds')) {
-      if (typeof k !== 'string' || !(KINDS as readonly string[]).includes(k)) throw new RangeError(`ignoreKinds: "${String(k)}" is not a kind.`)
+      if (typeof k !== 'string' || !(KINDS as readonly string[]).includes(k)) throw new RangeError(`ignoreKinds: ${show(k)} is not a kind.`)
       ignoreKinds.add(k as NumberKind)
     }
   }
@@ -747,6 +751,12 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
       }
       const text = getOwn(item, 'text')
       if (text !== undefined) {
+        for (const key of Object.keys(item)) {
+          const meant = nearMiss(key, DOCUMENT_KEYS)
+          if (meant !== undefined) {
+            throw new RangeError(`evidence[${index}]: unknown key ${show(key)}, did you mean "${meant}"? Known keys: ${DOCUMENT_KEYS.join(', ')}.`)
+          }
+        }
         flush()
         const id = readString(getOwn(item, 'id'), `evidence[${index}].id`)
         const docScale = getOwn(item, 'scale')
@@ -762,6 +772,9 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
           docApplies === undefined ? ctx.evScaleCurrency : scaleAppliesFlag(docApplies, `evidence[${index}].scaleApplies`),
         )
       } else {
+        if (getOwn(item, 'raw') === undefined && getOwn(item, 'id') !== undefined) {
+          throw new TypeError(`evidence[${index}] has an id but no text: a document is { id, text }, a number token has raw, start, end, value, scale, kind and ambiguous.`)
+        }
         const { token, evidenceId } = readToken(item, `evidence[${index}]`)
         const prev = batch[batch.length - 1]
         if (prev !== undefined && (batchDoc !== evidenceId || token.start < prev.end)) flush()
@@ -1762,6 +1775,9 @@ function traceOne(
   // 5. The search was too large to run.
   if (ctx.derivations.size > 0 && matcher.capHit) return unknownTrace(tok, 'candidate-cap')
   if (matcher.scaleCapped) return unknownTrace(tok, 'scale-cap')
+
+  // "the 30th" next to a date whose day is 30: a day of the month or a rank, the kit cannot tell.
+  if (tok.kind === 'ordinal' && lookup(ev.strong, { cls: 'date', unit: 'day' }, false, key).length > 0) return unknownTrace(tok, 'ordinal-date')
 
   // A bare hour with am or pm ("5pm") is not cleared by a unit-less number of the same size (a 5.0 rating): cannot tell.
   if (tok.kind === 'time' && bareHourMatches(tok, ev)) return unknownTrace(tok, 'unit-unverified')

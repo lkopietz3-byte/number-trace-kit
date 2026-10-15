@@ -169,7 +169,11 @@ const SPACED_UNITS: Record<string, string> = {
   kbit: 'Kb', mbit: 'Mb', gbit: 'Gb', tbit: 'Tb',
   kilobyte: 'KB', kilobytes: 'KB', megabyte: 'MB', megabytes: 'MB', gigabyte: 'GB', gigabytes: 'GB', terabyte: 'TB', terabytes: 'TB',
   petabyte: 'PB', petabytes: 'PB', kbyte: 'KB', mbyte: 'MB', gbyte: 'GB', tbyte: 'TB',
+  ppm: 'ppm', ppb: 'ppb', rpm: 'rpm', bpm: 'bpm', fps: 'fps', psi: 'psi', kpa: 'kPa', mpa: 'MPa', hp: 'hp', gal: 'gal',
+  yd: 'yd', yds: 'yd', yard: 'yd', yards: 'yd', acre: 'ac', acres: 'ac', ha: 'ha', hectare: 'ha', hectares: 'ha', sqft: 'ft2', sqm: 'm2',
 }
+// Length units that square or cube when a 2 or 3 (or a superscript) follows: "800 m2", "3 km\u00b3". Lower case only: "M2" is a chip.
+const POWER_BASES: ReadonlySet<string> = new Set(['m', 'cm', 'mm', 'km', 'ft', 'in', 'yd', 'mi'])
 // Units written right against the number only ("250W"). A spaced single letter is too often a label
 // ("5 W" is not watts), so these are not read as the next word.
 const GLUED_EXTRA: Record<string, string> = {
@@ -178,7 +182,7 @@ const GLUED_EXTRA: Record<string, string> = {
   Hz: 'Hz', kHz: 'kHz', MHz: 'MHz', GHz: 'GHz', THz: 'THz', dB: 'dB', dBm: 'dBm',
   rpm: 'rpm', bpm: 'bpm', fps: 'fps', ppm: 'ppm', ppb: 'ppb', psi: 'psi', kPa: 'kPa', MPa: 'MPa', Pa: 'Pa',
   nm: 'nm', kbps: 'kbps', Kbps: 'kbps', Mbps: 'Mbps', Gbps: 'Gbps', Tbps: 'Tbps',
-  d: 'day', wk: 'week', wks: 'week', y: 'year', bp: 'bp', X: 'x',
+  d: 'day', wk: 'week', wks: 'week', y: 'year', bp: 'bp', X: 'x', sqft: 'ft2', sqm: 'm2', hp: 'hp', gal: 'gal', yd: 'yd', ha: 'ha',
 }
 // Glued units whose capitals never change the meaning (KG is kg, MHZ is MHz). Keys are lower case.
 // Units where a capital does (mW and MW, Mb and MB, mm and MM) are exact-case entries above.
@@ -1433,6 +1437,24 @@ export function scan(
     return exp === undefined ? null : { end: r, exp }
   }
 
+  /** "m2", "ft\u00b2", "km3": a length unit squared or cubed. Returns the unit and where it ends, or null. */
+  const powerUnitAt = (w: string, we: number): { unit: string; end: number } | null => {
+    if (!POWER_BASES.has(w)) return null
+    const c = at(we)
+    const power = c === 0xb2 || c === 0x32 ? '2' : c === 0xb3 || c === 0x33 ? '3' : ''
+    if (power === '') return null
+    const next = at(we + 1)
+    if (isDigit(next) || isLetter(next)) return null
+    return { unit: w + power, end: we + 1 }
+  }
+
+  /** The four digits before e are a decade year (1900 to 2090, ending in 0): "the 1990s". */
+  const decadeBefore = (e: number): boolean => {
+    if (!isDigit(at(e - 1)) || !isDigit(at(e - 4)) || isDigit(at(e - 5)) || at(e - 5) === 0x2e || at(e - 5) === 0x2c) return false
+    const year = Number(slice(e - 4, e))
+    return year >= 1900 && year <= 2090 && year % 10 === 0
+  }
+
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
     const sfx: Suffix = noProto({
       end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false, dollarWord: false,
@@ -1535,8 +1557,20 @@ export function scan(
         // 3x4: a multiplication sign, so the 3 has no suffix.
         return sfx
       }
+      const power = powerUnitAt(w, we)
+      if (power !== null) {
+        sfx.unit = power.unit
+        sfx.end = power.end
+        return sfx
+      }
       if (w.length > 16 || isDigit(at(we)) || isLetter(at(we))) {
         sfx.skipTo = skipIdentifier(we)
+        return sfx
+      }
+      if (w === 's' && isInteger && !isLetter(at(we)) && decadeBefore(e)) {
+        // "the 1990s": a decade, not seconds.
+        sfx.unit = 'decade'
+        sfx.end = we
         return sfx
       }
       const lower = w.toLowerCase()
@@ -1615,6 +1649,11 @@ export function scan(
       const w = readWord(s, 20)
       if (w.length > 20) return -1
       const we = s + w.length
+      const power = powerUnitAt(w, we)
+      if (power !== null) {
+        sfx.unit = power.unit
+        return power.end
+      }
       if (isDigit(at(we))) return -1
       const lower = w.toLowerCase()
       if (!scientific) {

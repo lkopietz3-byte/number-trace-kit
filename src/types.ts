@@ -319,6 +319,12 @@ export interface ReconcileOptions {
    * major-unit decimal through its shortest round-trip text. Default false.
    */
   readonly allowFloat?: boolean
+  /**
+   * The decimal mark of amounts written as strings. `'.'` (the default): "1,234.50", with commas grouping
+   * thousands, and the plain machine form "1234.5". `','`: a table printed with a decimal comma, "1.234,50" or
+   * "1 234,50", read exactly as printed (so "1,500" is 1.5, not 1,500). Integer and bigint amounts are minor units either way.
+   */
+  readonly decimalMark?: '.' | ','
 }
 
 export interface ReconcileRow {
