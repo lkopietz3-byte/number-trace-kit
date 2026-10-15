@@ -197,3 +197,54 @@ describe('release-review:P2-bench-report the benchmark labeled report measures t
     }
   })
 })
+
+describe('release-review:F1-rate-bucket-cap an unrated figure is not hidden by many figures of another rate', () => {
+  const many = (text: string): string => `${text} `.repeat(8)
+
+  it.each([
+    // rounded: the rated output reads the unrated evidence
+    ['$29/month', many('$28.99/year') + '$28.99', 'rounded'],
+    ['8% per year', many('7.96% per month') + '7.96%', 'rounded'],
+    ['€29 per month', many('€28.99/year') + '€28.99', 'rounded'],
+    ['$29/month', many('$28.99/year') + 'The plan costs $28.99 today.', 'rounded'],
+    ['$29/month', '$28.99/year '.repeat(30) + '$28.99', 'rounded'],
+    // exact: the same shape of evidence one step earlier in the lookup
+    ['$29/month', many('$29/year') + '$29', 'traced'],
+    ['8% per year', many('8% per month') + '8%', 'traced'],
+    ['2 pp per year', many('2 pp per month') + '2 pp', 'traced'],
+  ])('release-review:F1-rate-bucket-cap %s traces to the unrated figure behind many rated ones', (output, evidence, status) => {
+    const r = trace(output, evidence)
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers[0]?.status).toBe(status)
+  })
+
+  it.each([
+    ['$29/month', '$28.99', '$28.99/year'],
+    ['8% per year', '7.96%', '7.96% per month'],
+  ])('release-review:F1-rate-bucket-cap the verdict does not depend on the order of the evidence: %s', (output, bare, rated) => {
+    const first = trace(output, `${bare} ${many(rated)}`)
+    const last = trace(output, `${many(rated)}${bare}`)
+    expect(first.verdict).toBe('clean')
+    expect(last.verdict).toBe(first.verdict)
+    expect(last.numbers[0]?.status).toBe(first.numbers[0]?.status)
+  })
+
+  it.each([
+    ['$29/month', many('$28.99/year')],
+    ['$29/month', many('$28.99/year') + '$30'],
+    ['8% per year', many('7.96% per month')],
+    ['$29/month', many('$28.99/year') + '$28.99/month/seat'],
+  ])('release-review:F1-rate-bucket-cap %s is still not cleared by rated figures of another rate alone', (output, evidence) => {
+    const r = trace(output, evidence)
+    expect(r.verdict).not.toBe('clean')
+    expect(r.numbers[0]?.status).not.toBe('traced')
+    expect(r.numbers[0]?.status).not.toBe('rounded')
+  })
+
+  it('release-review:F1-rate-bucket-cap an unrated output still finds its figure among rated ones', () => {
+    for (const evidence of [many('$28.99/year') + '$28.99', '$28.99 ' + many('$28.99/year'), many('$28.99/year')]) {
+      const r = trace('$29', evidence)
+      expect(r.verdict).toBe('clean')
+    }
+  })
+})

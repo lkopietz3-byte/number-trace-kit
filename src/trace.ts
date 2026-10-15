@@ -518,11 +518,22 @@ function unratedClass(e: Ent): string | undefined {
   return e.cls.startsWith('cur:') || e.cls.startsWith('pct') || e.cls.startsWith('pp') ? e.cls.slice(0, e.cls.length - rate.length) : undefined
 }
 
+/** The class a figure written without any rate is filed under for a rated output to find, kept apart from rated figures so they cannot fill its list. */
+function exactClassKey(cls: string): string {
+  return `exact\u0001${cls}`
+}
+
+/** Whether `e` is a percent or an amount written with no rate, the one kind a rated output may read as its unrated twin. */
+function isUnratedFigure(e: Ent): boolean {
+  return e.token.rate === undefined && (e.cls.startsWith('cur:') || e.cls.startsWith('pct') || e.cls.startsWith('pp'))
+}
+
 function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
   const target = weak ? ev.weak : ev.strong
   for (const u of regKeys(ent.cls, ent.unit)) target.add(entKey(ent.cls, u, ent.neg, ent.key), ent)
   const unrated = unratedClass(ent)
   if (unrated !== undefined) target.add(entKey(unrated, '', ent.neg, ent.key), ent)
+  if (isUnratedFigure(ent)) target.add(entKey(exactClassKey(ent.cls), '', ent.neg, ent.key), ent)
   // For allowBareOutput: a bare output number may match an amount in any currency.
   if (ent.cls.startsWith('cur:')) target.add(entKey('curany', '', ent.neg, ent.key), ent)
   if (weak) {
@@ -532,7 +543,9 @@ function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
     ev.byValue.add(ent.key, ent)
     // A bare "(557)" is read as positive but may be an accounting negative: it also answers to a minus sign.
     if (ent.token.parenthesized === true && !ent.neg) {
-      for (const u of regKeys(ent.cls, ent.unit)) ev.strong.add(entKey(ent.cls, u, true, ent.key), { ...ent, neg: true })
+      const negated = { ...ent, neg: true }
+      for (const u of regKeys(ent.cls, ent.unit)) ev.strong.add(entKey(ent.cls, u, true, ent.key), negated)
+      if (isUnratedFigure(ent)) ev.strong.add(entKey(exactClassKey(ent.cls), '', true, ent.key), negated)
     }
   }
 }
@@ -1148,6 +1161,7 @@ class Matcher {
         if (ent.cls.startsWith('cur:')) idx.add(`${mode}\u0000${entKey('curany', '', ent.neg, r.mantissa.toString())}`, ent)
         const unrated = unratedClass(ent)
         if (unrated !== undefined) idx.add(`${mode}\u0000${entKey(unrated, '', ent.neg, r.mantissa.toString())}`, ent)
+        if (isUnratedFigure(ent)) idx.add(`${mode}\u0000${entKey(exactClassKey(ent.cls), '', ent.neg, r.mantissa.toString())}`, ent)
       }
     }
     this.rounded.set(cacheKey, idx)
@@ -1166,7 +1180,6 @@ class Matcher {
     outNeg: boolean,
     mantissa: bigint,
     bare = false,
-    onlyCls?: string,
   ): { ents: Ent[]; label: RoundLabel } | null {
     if (this.ctx.modes.length === 0) return null
     const idx = this.roundedIndex(source, scale)
@@ -1177,8 +1190,6 @@ class Matcher {
           const list = idx.get(`${mode}\u0000${entKey(shape.cls, u, neg, mantissa.toString())}`)
           if (list === undefined) continue
           for (const e of list) {
-            // `onlyCls`: evidence of exactly that class, not a rated figure filed under it as well.
-            if (onlyCls !== undefined && e.cls !== onlyCls) continue
             if (!signAllowed(signTok, outNeg, e.neg, this.ctx.signMode)) continue
             const modes = hits.get(e) ?? new Set<RoundingMode>()
             modes.add(mode)
@@ -1931,7 +1942,7 @@ function traceOne(
       : undefined
   if (unratedBase !== undefined) {
     const baseCls = unratedBase
-    const unrated = lookup(ev.strong, { cls: baseCls, unit: '' }, outNeg, key).filter((e) => e.cls === baseCls).filter(allow)
+    const unrated = lookup(ev.strong, { cls: exactClassKey(baseCls), unit: '' }, outNeg, key).filter(allow)
     if (unrated.length > 0) return matched(tok, 'traced', unrated, outNeg, undefined, false, ctx, aside)
   }
 
@@ -1942,7 +1953,7 @@ function traceOne(
   }
   // The same leniency for a rounded figure: "$29/month" from "$28.99", never from "$28.99/year".
   if (unratedBase !== undefined) {
-    const rounded = matcher.findRounded('strong', tok, tok.scale, { cls: unratedBase, unit: '' }, outNeg, mantissa, false, unratedBase)
+    const rounded = matcher.findRounded('strong', tok, tok.scale, { cls: exactClassKey(unratedBase), unit: '' }, outNeg, mantissa)
     if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, false, ctx, aside)
   }
 

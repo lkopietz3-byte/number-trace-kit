@@ -69,7 +69,7 @@ source entry is `src/index.ts`; the package export resolves to generated
   BigInt. Rounding indexes are built lazily, once per distinct output scale.
   Evidence indexes cap each key's list at eight entries (a unit-less output reads
   the exact unit-less list before the capped list of every plain figure, so
-  figures with units cannot crowd out a bare one); the derivation index
+  figures with units cannot crowd out a bare one; a rated output reads the figure written without a rate from a list of its own, so eight figures of another rate cannot crowd out that one either); the derivation index
   keeps a count and the first candidate of each kind per key, so candidates that
   collide on one value cost one lookup, not a rescan.
   Cost, stated exactly: extraction is linear in characters; the evidence heap is
