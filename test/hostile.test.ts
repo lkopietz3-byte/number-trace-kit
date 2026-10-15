@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { extractNumbers, reconcile, reconcileComponents, traceNumbers } from '../src/index.js'
+import { GROWTH_LIMIT, growthRatio } from './growth.js'
 import type { EvidenceInput, NumberToken, TraceOptions } from '../src/index.js'
 
 /** CPU seconds spent running `fn` (best of a few runs, to damp scheduler noise). */
@@ -14,30 +15,35 @@ function cpu(fn: () => void, runs = 3): number {
   return best
 }
 
-/**
- * CPU time for 4x the input divided by CPU time for 1x. Linear code lands near
- * 4; a quadratic slip lands near 16. Both sizes are run once first so the
- * measurement is of warmed-up code, and the small time has a floor so timer
- * noise on a sub-millisecond run cannot inflate the ratio.
- */
-function ratio(make: (n: number) => () => void): number {
-  // 40k vs 160k characters: at 20k some shapes ran in a few milliseconds, where allocation
-  // and garbage-collection noise alone pushed a linear function past the limit under load.
-  const small = make(40_000)
-  const large = make(160_000)
-  small()
-  large()
-  return cpu(large, 5) / Math.max(cpu(small, 5), 0.005)
-}
-
 describe('linear time on hostile text', { timeout: 60_000 }, () => {
+  // The harness in test/growth.ts must keep failing a quadratic function at GROWTH_LIMIT, and keep
+  // passing a linear one, however its repeat count or floor are tuned.
   it('the ratio harness can tell a quadratic function from a linear one', () => {
-    const quadratic = ratio((n) => () => {
+    const quadratic = growthRatio((n) => () => {
       let acc = 0
       for (let i = 0; i < n; i++) for (let j = 0; j < i / 64; j++) acc = (acc + j) | 0
       expect(acc).not.toBe(-1)
     })
-    expect(quadratic).toBeGreaterThan(10)
+    expect(quadratic).toBeGreaterThan(GROWTH_LIMIT)
+    const linear = growthRatio((n) => () => {
+      let acc = 0
+      for (let i = 0; i < n * 40; i++) acc = (acc + i) | 0
+      expect(acc).not.toBe(-1)
+    })
+    expect(linear).toBeLessThan(GROWTH_LIMIT)
+  })
+
+  it('the ratio harness fails a cheap quadratic function that needs many repeats to measure', () => {
+    // 40k characters cost only a few milliseconds here, the case that needs the repeat count.
+    const quadratic = growthRatio((n) => {
+      const text = '1 '.repeat(n / 2)
+      return () => {
+        let acc = 0
+        for (let i = 0; i < text.length; i += 2) for (let j = 0; j < i / 512; j++) acc = (acc + text.charCodeAt(j)) | 0
+        expect(acc).not.toBe(-1)
+      }
+    })
+    expect(quadratic).toBeGreaterThan(GROWTH_LIMIT)
   })
 
   const shapes: Record<string, (n: number) => string> = {
@@ -87,13 +93,13 @@ describe('linear time on hostile text', { timeout: 60_000 }, () => {
 
   for (const [name, make] of Object.entries(shapes)) {
     it(`extractNumbers: ${name}`, () => {
-      const r = ratio((n) => {
+      const r = growthRatio((n) => {
         const text = make(n)
         return () => {
           extractNumbers(text)
         }
       })
-      expect(r).toBeLessThan(10)
+      expect(r).toBeLessThan(GROWTH_LIMIT)
     })
   }
 
@@ -109,36 +115,36 @@ describe('linear time on hostile text', { timeout: 60_000 }, () => {
   }
   for (const [name, make] of Object.entries(skipShapes)) {
     it(`traceNumbers: skipped forms stay linear: ${name}`, () => {
-      const r = ratio((n) => {
+      const r = growthRatio((n) => {
         const text = make(n)
         return () => {
           traceNumbers(text, 'x 12 5.5% 100 days')
         }
       })
-      expect(r).toBeLessThan(10)
+      expect(r).toBeLessThan(GROWTH_LIMIT)
     })
   }
 
   it('traceNumbers: 200k characters of output against matching evidence', () => {
     const chunk = 'Revenue was $1,234.50 (up 12.5%) across 3 regions on 2026-10-10. '
-    const r = ratio((n) => {
+    const r = growthRatio((n) => {
       const text = chunk.repeat(Math.ceil(n / chunk.length))
       return () => {
         traceNumbers(text, chunk)
       }
     })
-    expect(r).toBeLessThan(10)
+    expect(r).toBeLessThan(GROWTH_LIMIT)
   })
 
   it('traceNumbers: many untraced numbers that each need a rounding lookup', () => {
     const evidence = Array.from({ length: 2000 }, (_, i) => `${i}.${String(i % 997).padStart(3, '0')}`).join(' ; ')
-    const r = ratio((n) => {
+    const r = growthRatio((n) => {
       const text = '1.23456 '.repeat(n / 8) + '5 million '.repeat(n / 40)
       return () => {
         traceNumbers(text, evidence)
       }
     })
-    expect(r).toBeLessThan(10)
+    expect(r).toBeLessThan(GROWTH_LIMIT)
   })
 
   it('a 200,000-character output finishes in well under a few seconds', () => {
@@ -152,13 +158,13 @@ describe('linear time on hostile text', { timeout: 60_000 }, () => {
   })
 
   it('ignorePattern is applied to a short window, so total work stays linear', () => {
-    const r = ratio((n) => {
+    const r = growthRatio((n) => {
       const text = 'item 12 and '.repeat(n / 12)
       return () => {
         traceNumbers(text, 'x', { ignorePattern: /item \d+ and item \d+ and/ })
       }
     })
-    expect(r).toBeLessThan(10)
+    expect(r).toBeLessThan(GROWTH_LIMIT)
   })
 
   it('a derivation search over many evidence numbers is capped, not quadratic', () => {

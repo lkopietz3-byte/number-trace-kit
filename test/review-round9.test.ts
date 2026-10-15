@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extractNumbers, reconcile, traceNumbers } from '../src/index.js'
 import { resolveLocale } from '../src/locale.js'
+import { GROWTH_LIMIT, growthRatio } from './growth.js'
 import type { TraceOptions } from '../src/index.js'
 
 // Regression rows from the release-gate review of 0.1.0 (head 464d7ec). Each row names its finding id
@@ -957,25 +958,7 @@ describe('gate-fix:T1 tokens the kit made are accepted back (found by the fuzz s
   })
 })
 
-// Time grows with the text: 4x the characters costs about 4x the CPU for every new construct (CPU time, growth ratio).
-function cpuSeconds(fn: () => void, runs: number): number {
-  let best = Infinity
-  for (let i = 0; i < runs; i++) {
-    const before = process.cpuUsage()
-    fn()
-    const used = process.cpuUsage(before)
-    best = Math.min(best, (used.user + used.system) / 1e6)
-  }
-  return best
-}
-function growth(make: (n: number) => () => void): number {
-  const small = make(40_000)
-  const large = make(160_000)
-  small()
-  large()
-  return cpuSeconds(large, 5) / Math.max(cpuSeconds(small, 5), 0.005)
-}
-
+// Time grows with the text: 4x the characters costs about 4x the CPU for every new construct (see test/growth.ts).
 describe('gate-fix:T2 linear time on the constructs added after the review', { timeout: 120_000 }, () => {
   const shapes: Record<string, (n: number) => string> = {
     'underscore groups in one chain': (n) => '1' + '_000'.repeat(n / 4),
@@ -1008,36 +991,36 @@ describe('gate-fix:T2 linear time on the constructs added after the review', { t
   for (const [name, make] of Object.entries(shapes)) {
     it(`extractNumbers: ${name}`, () => {
       expect(
-        growth((n) => {
+        growthRatio((n) => {
           const text = make(n)
           return () => {
             extractNumbers(text)
           }
         }),
-      ).toBeLessThan(10)
+      ).toBeLessThan(GROWTH_LIMIT)
     })
   }
 
   it('traceNumbers: many skipped forms in the evidence and the output, with checkIdentifiers', () => {
     expect(
-      growth((n) => {
+      growthRatio((n) => {
         const text = 'Q3 2h45m AED199 '.repeat(n / 16)
         return () => {
           traceNumbers(text, text, { checkIdentifiers: true })
         }
       }),
-    ).toBeLessThan(10)
+    ).toBeLessThan(GROWTH_LIMIT)
   })
 
   it('traceNumbers: extract then trace the tokens', () => {
     expect(
-      growth((n) => {
+      growthRatio((n) => {
         const text = '$5/month 2h45m ① '.repeat(n / 17)
         return () => {
           traceNumbers(extractNumbers(text), text)
         }
       }),
-    ).toBeLessThan(10)
+    ).toBeLessThan(GROWTH_LIMIT)
   })
 })
 

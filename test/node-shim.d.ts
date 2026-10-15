@@ -5,6 +5,8 @@ declare const process: {
   cpuUsage(previous?: { user: number; system: number }): { user: number; system: number }
 }
 
+declare const performance: { now(): number }
+
 // Vite's ?raw imports, used by the field regression test to read the committed benchmark data.
 declare module '*?raw' {
   const text: string

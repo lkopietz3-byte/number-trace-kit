@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { extractNumbers, traceNumbers } from '../src/index.js'
 import type { NumberToken, TraceOptions } from '../src/index.js'
 import { BENCH203_CONFIGS } from '../bench/lib/bench203.mjs'
+import { GROWTH_LIMIT, growthRatio } from './growth.js'
 
 // Regression rows from the whole-branch review of the 0.1.0 release (70c6450..7152d68). Each row names its finding
 // and was seen failing before its fix.
@@ -10,18 +11,6 @@ type Evidence = Parameters<typeof traceNumbers>[1]
 type Output = Parameters<typeof traceNumbers>[0]
 const trace = (output: Output, evidence: Evidence, options?: TraceOptions): ReturnType<typeof traceNumbers> =>
   traceNumbers(output, evidence, options)
-
-/** CPU seconds spent running `fn` (best of a few runs, to damp scheduler noise). */
-function cpu(fn: () => void, runs = 3): number {
-  let best = Infinity
-  for (let i = 0; i < runs; i++) {
-    const before = process.cpuUsage()
-    fn()
-    const used = process.cpuUsage(before)
-    best = Math.min(best, (used.user + used.system) / 1e6)
-  }
-  return best
-}
 
 describe('release-review:P1-pair-iteration candidate generation visits only compatible pairs', { timeout: 120_000 }, () => {
   const base = extractNumbers('12 kg')[0] as NumberToken
@@ -42,13 +31,8 @@ describe('release-review:P1-pair-iteration candidate generation visits only comp
         expect(r.candidateCapHit).toBe(false)
       }
     }
-    const small = run(2_000)
-    const large = run(8_000)
-    small()
-    large()
     // 4x the tokens: about 4x the time when linear, about 16x when every pair is visited.
-    const growth = cpu(large, 3) / Math.max(cpu(small, 3), 0.01)
-    expect(growth).toBeLessThan(9)
+    expect(growthRatio(run, { small: 2_000, large: 8_000 })).toBeLessThan(GROWTH_LIMIT)
   })
 
   it('release-review:P1-pair-iteration three-operand candidates are listed from their group, not searched for in every pair', () => {
@@ -62,12 +46,7 @@ describe('release-review:P1-pair-iteration candidate generation visits only comp
         expect(r.derivationCandidates).toBe(60 * 59 / 2 + 60 * 59 * 58 / 6)
       }
     }
-    const small = run(2_000)
-    const large = run(8_000)
-    small()
-    large()
-    const growth = cpu(large, 3) / Math.max(cpu(small, 3), 0.01)
-    expect(growth).toBeLessThan(9)
+    expect(growthRatio(run, { small: 2_000, large: 8_000 })).toBeLessThan(GROWTH_LIMIT)
   })
 })
 
