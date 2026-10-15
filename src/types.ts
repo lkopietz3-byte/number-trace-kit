@@ -190,6 +190,13 @@ export interface TraceOptions {
   /** Skip unit-less whole numbers from 0 up to this value. Default off. */
   readonly ignoreSmallIntegersUpTo?: number
   /**
+   * Skip the numbers that label the answer's own structure and make no claim: list markers (`1.`, `2)` at the
+   * start of a line, after an optional bullet), bracket citations (`[3]`, `[1, 2]`, `[1-3]`) and the number
+   * after Step, Passage, Figure, Option, Question or Section. Plain whole numbers of up to three digits only.
+   * Default off. Unlike `ignoreSmallIntegersUpTo`, it does not hide a wrong small count (`7 offices`).
+   */
+  readonly ignoreStructure?: boolean
+  /**
    * Skip an output number when this pattern matches a text window that
    * overlaps the number. The window is the number plus at most 32 characters
    * before it and 16 after, so the pattern never sees more than that.

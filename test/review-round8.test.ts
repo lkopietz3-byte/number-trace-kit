@@ -136,3 +136,55 @@ describe('S2 field:F2: clock times are read as minutes of the day', () => {
     expect(verdict('at 17:00', 'We have 17 and 0 items')).toBe('untraced')
   })
 })
+
+describe('S3 false-pass:F15: ignoreStructure skips list markers, citation numbers and step labels', () => {
+  const list = '1. **Revenue:** $48.2 million.\n2. **Cash:** $19.5 million.'
+  const evidence = 'Revenue $48.2 million. Cash $19.5 million.'
+
+  it('S3 false-pass:F15 a numbered answer is untraced by default and clean with ignoreStructure', () => {
+    expect(verdict(list, evidence)).toBe('untraced')
+    const r = traceNumbers(list, evidence, { ignoreStructure: true })
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers.filter((n) => n.status === 'ignored').map((n) => [n.token.raw, n.reason])).toEqual([['1', 'structure'], ['2', 'structure']])
+  })
+
+  it('S3 false-pass:F15 the first marker of the text and the bullet forms are covered', () => {
+    expect(verdict('1. Revenue $5 million.', 'Revenue $5 million.', { ignoreStructure: true })).toBe('clean')
+    expect(verdict('Summary:\n  - 2) Revenue $5 million.\n* 3. Cash $5 million.', 'Revenue $5 million. Cash $5 million.', { ignoreStructure: true })).toBe('clean')
+    expect(verdict('1) Revenue $5 million.\r\n2) Cash $5 million.', 'Revenue $5 million. Cash $5 million.', { ignoreStructure: true })).toBe('clean')
+  })
+
+  it('S3 false-pass:F15 bracket citations and Step, Passage, Figure, Option, Question, Section labels', () => {
+    const o = { ignoreStructure: true }
+    expect(verdict('Revenue was $5 million [3].', 'Revenue $5 million.', o)).toBe('clean')
+    expect(verdict('Revenue was $5 million [1, 2].', 'Revenue $5 million.', o)).toBe('clean')
+    expect(verdict('Revenue was $5 million [1-3].', 'Revenue $5 million.', o)).toBe('clean')
+    for (const label of ['Step 4', 'Passage 12', 'Figure 2', 'Option 3', 'Question 7', 'Section 5', 'Fig. 2', 'step 4', 'Passages 2']) {
+      expect(verdict(`In ${label}, revenue was $5 million.`, 'Revenue $5 million.', o), label).toBe('clean')
+    }
+  })
+
+  it('S3 false-pass:F15 a real small count is still checked', () => {
+    const o = { ignoreStructure: true }
+    expect(verdict('We have 7 offices.', 'We have 9 offices.', o)).toBe('untraced')
+    expect(verdict('1. We have 7 offices.', '1 office. We have 9 offices.', o)).toBe('untraced')
+    expect(verdict('7. offices were closed', 'We have 9 offices.', o)).toBe('clean')
+    expect(verdict('Revenue grew [5 apples] and 7 offices.', 'x 5 apples', o)).toBe('untraced')
+    // A sum of three digits is a count, a four-digit year-like or longer number is not a marker.
+    expect(verdict('2026. Revenue was $5 million.', 'Revenue $5 million.', o)).toBe('untraced')
+    // A legal section citation is a claim: an invented "Section 50(1)" must not pass (RAGTruth RT-12765).
+    expect(verdict('Under Section 50(1) of the Act.', 'Under Section 12(2) of the Act.', o)).toBe('untraced')
+    expect(verdict('Option 3 costs 3 dollars.', 'Option 3 costs 4 dollars.', o)).toBe('untraced')
+  })
+
+  it('S3 false-pass:F15 it is off by default, and ignoreSmallIntegersUpTo still hides a wrong small count', () => {
+    expect(verdict('We have 7 offices.', 'We have 9 offices.', { ignoreSmallIntegersUpTo: 10 })).toBe('clean')
+    expect(verdict('1. Revenue $5 million.', 'Revenue $5 million.')).toBe('untraced')
+    expect(() => traceNumbers('1', '1', { ignoreStructure: 'yes' as unknown as boolean })).toThrow(TypeError)
+  })
+
+  it('S3 false-pass:F15 caller tokens carry no text, so nothing is skipped', () => {
+    const toks = extractNumbers('1. Revenue $5 million.')
+    expect(traceNumbers(toks, 'Revenue $5 million.', { ignoreStructure: true }).verdict).toBe('untraced')
+  })
+})

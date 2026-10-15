@@ -84,6 +84,10 @@ source entry is `src/index.ts`; the package export resolves to generated
   measured unit never is, and in the spoken forms ("to", a spaced en dash,
   "between ... and") a percent is never carried forward and never with a
   magnitude ("rose 8% to $4.2 billion" is a change and its result).
+- **Structure numbers are an opt-in, bounded scan.** `ignoreStructure` skips a plain whole number of at most three digits
+  that labels the answer's own structure (a line-start list marker, a bracket citation, the number after Step, Passage,
+  Figure, Option, Question or Section). Each check looks at a fixed window around the number and never runs a regex.
+  A legal citation (`Section 50(1)`) is not structure. Numbers from caller-supplied tokens carry no text and are never skipped this way.
 - **Every option applies on every path.** `allowBareEvidence`, `rounding`,
   `signMode` and `derivations` are honored by the exact, rounded, derived and
   weak (`unknown`) paths alike.

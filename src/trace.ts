@@ -252,6 +252,7 @@ interface Ctx {
   readonly ignoreKinds: ReadonlySet<NumberKind>
   readonly ignoreYears: boolean
   readonly ignoreSmall: number
+  readonly ignoreStructure: boolean
   readonly pattern: RegExp | null
 }
 
@@ -356,7 +357,7 @@ function readContext(options: unknown): Ctx {
     [
       'preset', 'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates', 'maxOperands',
       'maxDerivationMatches', 'maxDerivationDensity', 'roundSums', 'evidenceOrder', 'evidenceScale', 'evidenceCurrency', 'allowBareOutput',
-      'allowBareEvidence', 'signMode', 'ignore', 'ignoreKinds', 'ignoreYears', 'ignoreSmallIntegersUpTo', 'ignorePattern',
+      'allowBareEvidence', 'signMode', 'ignore', 'ignoreKinds', 'ignoreYears', 'ignoreSmallIntegersUpTo', 'ignoreStructure', 'ignorePattern',
     ] as const,
     'traceNumbers',
   )
@@ -423,6 +424,7 @@ function readContext(options: unknown): Ctx {
   }
   const ignoreYears = readBoolean(o['ignoreYears'], 'ignoreYears', false)
   const ignoreSmall = readInteger(o['ignoreSmallIntegersUpTo'], 'ignoreSmallIntegersUpTo', 0, 1_000_000, -1)
+  const ignoreStructure = readBoolean(o['ignoreStructure'], 'ignoreStructure', false)
 
   let pattern: RegExp | null = null
   if (o['ignorePattern'] !== undefined) {
@@ -435,7 +437,7 @@ function readContext(options: unknown): Ctx {
   return {
     loc, evLoc, parenNeg, derivations, modes, maxCandidates, maxOperands, signMode, allowBare, allowBareOut, maxMatches, maxDensity,
     roundSums, newestFirst: order === 'newest-first', evScale, evCurrency,
-    ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, pattern,
+    ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, ignoreStructure, pattern,
   }
 }
 
@@ -1221,6 +1223,74 @@ function isWholeNumberAtMost(value: string, limit: number): boolean {
   return Number(value) <= limit
 }
 
+const STRUCTURE_WORDS: ReadonlySet<string> = new Set([
+  'step', 'steps', 'passage', 'passages', 'figure', 'figures', 'fig', 'option', 'options', 'question', 'questions', 'section', 'sections',
+])
+
+function isSpaceCode(c: number): boolean {
+  return c === 0x20 || c === 0x09 || c === 0xa0
+}
+
+/**
+ * A number that labels the answer's own structure and makes no claim: a list marker ("1." or "2)" at the start of
+ * a line, after an optional bullet), a bracket citation ("[3]", "[1, 2]", "[1-3]") or the number of a step, passage,
+ * figure, option, question or section ("Step 4"; "Section 50(1)" is a legal citation and is checked). Only a plain whole number of at most three digits can be one.
+ * Every scan is bounded, so this costs a constant amount per number.
+ */
+function isStructureNumber(tok: NumberToken, text: string): boolean {
+  if (tok.kind !== 'count' || tok.unit !== undefined || tok.ambiguous || tok.signStyle !== undefined) return false
+  const len = tok.end - tok.start
+  if (len < 1 || len > 3 || tok.end > text.length) return false
+  for (let i = tok.start; i < tok.end; i++) {
+    const c = text.charCodeAt(i)
+    if (c < 0x30 || c > 0x39) return false
+  }
+  const after = tok.end < text.length ? text.charCodeAt(tok.end) : -1
+  // "1. text", "2) text": a marker at the start of a line.
+  if ((after === 0x2e || after === 0x29) && tok.end + 1 < text.length) {
+    const next = text.charCodeAt(tok.end + 1)
+    if (next === 0x20 || next === 0x09 || next === 0x0a || next === 0x0d || next === 0xa0) {
+      let p = tok.start - 1
+      let guard = 0
+      while (p >= 0 && isSpaceCode(text.charCodeAt(p)) && guard++ < 32) p--
+      if (p >= 0 && (text.charCodeAt(p) === 0x2d || text.charCodeAt(p) === 0x2a || text.charCodeAt(p) === 0x2022)) {
+        p--
+        while (p >= 0 && isSpaceCode(text.charCodeAt(p)) && guard++ < 64) p--
+      }
+      if (guard < 64 && (p < 0 || text.charCodeAt(p) === 0x0a || text.charCodeAt(p) === 0x0d)) return true
+    }
+  }
+  // "[3]", "[1, 2]", "[1-3]": a bracket that holds only numbers.
+  const isListChar = (c: number): boolean => (c >= 0x30 && c <= 0x39) || c === 0x2c || c === 0x20 || c === 0x2d || c === 0x2013
+  let b = tok.start - 1
+  let steps = 0
+  while (b >= 0 && isListChar(text.charCodeAt(b)) && steps++ < 24) b--
+  if (b >= 0 && text.charCodeAt(b) === 0x5b) {
+    let e = tok.end
+    steps = 0
+    while (e < text.length && isListChar(text.charCodeAt(e)) && steps++ < 24) e++
+    if (e < text.length && text.charCodeAt(e) === 0x5d) return true
+  }
+  // "Step 4", "Figure 2", "Fig. 2", "Passage 12".
+  let q = tok.start - 1
+  if (q >= 0 && isSpaceCode(text.charCodeAt(q))) {
+    while (q >= 0 && isSpaceCode(text.charCodeAt(q)) && q > tok.start - 4) q--
+    if (q >= 0 && text.charCodeAt(q) === 0x2e) q--
+    let w = q
+    while (w >= 0 && q - w < 10 && isLetterCode(text.charCodeAt(w))) w--
+    if (w < q && !(w >= 0 && isLetterCode(text.charCodeAt(w)))) {
+      const word = text.slice(w + 1, q + 1).toLowerCase()
+      // "Section 50(1)" is a legal citation, a claim that can be invented; a lone "Section 4" points into the answer.
+      if (STRUCTURE_WORDS.has(word) && !(word.startsWith('section') && after === 0x28)) return true
+    }
+  }
+  return false
+}
+
+function isLetterCode(c: number): boolean {
+  return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)
+}
+
 function ignoreReason(tok: NumberToken, text: string | null, ctx: Ctx): string | undefined {
   if (ctx.ignoreKinds.has(tok.kind)) return 'kind'
   if (ctx.ignoreYears && (tok.kind === 'year' || (tok.kind === 'date-part' && tok.part === 'year'))) return 'year'
@@ -1230,6 +1300,7 @@ function ignoreReason(tok: NumberToken, text: string | null, ctx: Ctx): string |
   ) {
     return 'small-integer'
   }
+  if (ctx.ignoreStructure && text !== null && isStructureNumber(tok, text)) return 'structure'
   if (ctx.ignoreRaw.has(tok.raw.trim())) return 'ignore-list'
   if (ctx.ignoreKeys.size > 0 && (tok.kind === 'count' || tok.kind === 'decimal' || tok.kind === 'year') && tok.unit === undefined) {
     if (ctx.ignoreKeys.has(signedKey(tok.value))) return 'ignore-list'
