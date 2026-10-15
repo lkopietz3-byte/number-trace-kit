@@ -551,3 +551,27 @@ describe('gate-false-pass:G5-F03 gate-hostile:G13 the denominator of a rate', ()
     expect(() => traceNumbers('x 1', [{ ...token, rate: 5 }] as never)).toThrow(TypeError)
   })
 })
+
+describe('gate-hostile:G01 glued compound quantities', () => {
+  const compounds: [string, string][] = [
+    ['2h45m', '1h30m'], ['5m30s', '1m10s'], ['3d4h', '1d2h'], ['2h30min', '1h15min'], ['6ft2in', '5ft10in'], ['5lb3oz', '7lb2oz'], ['10st4lb', '7st2lb'],
+  ]
+  it.each(compounds)('gate-hostile:G01 %s against %s is an unread form, so never clean', (a, b) => {
+    const r = trace(`Runtime is ${a}.`, `Runtime is ${b}.`)
+    expect(r.verdict).toBe('unknown')
+    expect(r.skipped.map((s) => [s.raw, s.reason])).toEqual([[a, 'unread-glued-form']])
+  })
+
+  it('gate-hostile:G01 1h30 against 2h15 is a wrong time of day, untraced', () => {
+    expect(verdict('Runtime is 1h30.', 'Runtime is 2h15.')).toBe('untraced')
+  })
+
+  it('gate-hostile:G01 single glued units and names keep their reading', () => {
+    expect(extractNumbers('250W and 45days and 5kg and 3D and 5G and 4WD and x86_64 and H2O').map((t) => t.raw)).toEqual(['250W', '45days', '5kg'])
+    expect(trace('Runtime is 2h45m and 5G', 'x').skipped.map((s) => s.reason)).toEqual(['unread-glued-form', 'identifier'])
+  })
+
+  it('gate-hostile:G01 the spelled-out compound is still caught element by element', () => {
+    expect(verdict('Runtime is 2 hours 45 minutes.', 'Runtime is 1 hour 30 minutes.')).toBe('untraced')
+  })
+})

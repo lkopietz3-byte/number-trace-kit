@@ -207,7 +207,7 @@ const GLUED_EXTRA: Record<string, string> = {
   rpm: 'rpm', bpm: 'bpm', fps: 'fps', ppm: 'ppm', ppb: 'ppb', psi: 'psi', kPa: 'kPa', MPa: 'MPa', Pa: 'Pa',
   nm: 'nm', kbps: 'kbps', Kbps: 'kbps', Mbps: 'Mbps', Gbps: 'Gbps', Tbps: 'Tbps',
   d: 'day', wk: 'week', wks: 'week', y: 'year', bp: 'bp', X: 'x', sqft: 'ft2', sqm: 'm2', hp: 'hp', gal: 'gal', yd: 'yd', ha: 'ha',
-  V: 'V', A: 'A', kA: 'kA', MV: 'MV', bar: 'bar', ns: 'ns', pF: 'pF', nF: 'nF', 'μF': 'μF', MP: 'MP', BR: 'bed', bd: 'bed', ba: 'bath',
+  st: 'st', V: 'V', A: 'A', kA: 'kA', MV: 'MV', bar: 'bar', ns: 'ns', pF: 'pF', nF: 'nF', 'μF': 'μF', MP: 'MP', BR: 'bed', bd: 'bed', ba: 'bath',
 }
 // Glued units whose capitals never change the meaning (KG is kg, MHZ is MHz). Keys are lower case.
 // Units where a capital does (mW and MW, Mb and MB, mm and MM) are exact-case entries above.
@@ -1747,6 +1747,9 @@ export function scan(
       }
       if (w.length > 16 || isDigit(at(we)) || isLetter(at(we))) {
         sfx.skipTo = skipIdentifier(we)
+        // A unit and then more digits (2h45m, 5m30s, 6ft2in, 5lb3oz) is a compound quantity: a duration, a height or a
+        // weight the kit does not read as one number, so it is never a pass. Any other glued word is a name.
+        if (isDigit(at(we)) && w.length <= 4 && !IDENT_SUFFIXES.has(w) && w !== 'x' && w !== 'X' && glueUnit(w) !== undefined) sfx.skipReason = 'unread-glued-form'
         return sfx
       }
       if (w === 's' && isInteger && !isLetter(at(we)) && decadeBefore(e)) {
