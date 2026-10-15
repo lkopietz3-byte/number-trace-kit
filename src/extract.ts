@@ -81,6 +81,11 @@ const CURRENCY_SYMBOLS: ReadonlyMap<number, string> = new Map([
   [0x24, 'USD'], [0x20ac, 'EUR'], [0xa3, 'GBP'], [0xa5, '¥'], [0x20b9, 'INR'], [0x20a9, 'KRW'],
   [0x20bd, 'RUB'], [0x20ba, 'TRY'], [0x20ab, 'VND'], [0x20aa, 'ILS'], [0x20b1, 'PHP'], [0xe3f, 'THB'],
   [0x20b4, 'UAH'], [0x20a6, 'NGN'],
+  // Symbols that name one currency, then the ones several currencies share (kept as the symbol, like the yen sign).
+  [0x20bf, 'BTC'], [0x20b8, 'KZT'], [0x20b5, 'GHS'], [0x20bc, 'AZN'], [0x20be, 'GEL'], [0x58f, 'AMD'], [0x20ae, 'MNT'],
+  [0x20ad, 'LAK'], [0x17db, 'KHR'], [0x20a1, 'CRC'], [0x20b2, 'PYG'], [0x20a8, '\u20a8'], [0xfdfc, '\ufdfc'], [0xa4, '\u00a4'],
+  [0x20a0, '\u20a0'], [0x20a2, '\u20a2'], [0x20a3, '\u20a3'], [0x20a4, '\u20a4'], [0x20a5, '\u20a5'], [0x20a7, '\u20a7'],
+  [0x20af, '\u20af'], [0x20b0, '\u20b0'], [0x20b3, '\u20b3'], [0x20b6, '\u20b6'], [0x20b7, '\u20b7'], [0x20bb, '\u20bb'],
 ])
 // ISO 4217 codes in use, plus the few crypto and market codes that are written like them. Matched in capitals only.
 // Left out on purpose, because they are also words or names in capitals (TOP 10, ALL 5, PEN 5, COP26, AMD 5, NIO 5, PHP 8):
@@ -180,6 +185,16 @@ const SPACED_UNITS: Record<string, string> = {
   petabyte: 'PB', petabytes: 'PB', kbyte: 'KB', mbyte: 'MB', gbyte: 'GB', tbyte: 'TB',
   ppm: 'ppm', ppb: 'ppb', rpm: 'rpm', bpm: 'bpm', fps: 'fps', psi: 'psi', kpa: 'kPa', mpa: 'MPa', hp: 'hp', gal: 'gal',
   yd: 'yd', yds: 'yd', yard: 'yd', yards: 'yd', acre: 'ac', acres: 'ac', ha: 'ha', hectare: 'ha', hectares: 'ha', sqft: 'ft2', sqm: 'm2',
+  // Units of the same dimension as the ones above, so that a different one never traces to another (milligrams and micrograms).
+  milligram: 'mg', milligrams: 'mg', microgram: 'μg', micrograms: 'μg', centimeter: 'cm', centimeters: 'cm', centimetre: 'cm', centimetres: 'cm',
+  millimeter: 'mm', millimeters: 'mm', millimetre: 'mm', millimetres: 'mm', milliliter: 'ml', milliliters: 'ml', millilitre: 'ml', millilitres: 'ml',
+  teaspoon: 'tsp', teaspoons: 'tsp', tsp: 'tsp', tablespoon: 'tbsp', tablespoons: 'tbsp', tbsp: 'tbsp', cup: 'cup', cups: 'cup',
+  quart: 'qt', quarts: 'qt', pint: 'pint', pints: 'pint', byte: 'byte', bytes: 'byte', bit: 'bit', bits: 'bit',
+  millisecond: 'ms', milliseconds: 'ms', microsecond: 'μs', microseconds: 'μs', nanosecond: 'ns', nanoseconds: 'ns',
+  calorie: 'cal', calories: 'cal', kilocalorie: 'kcal', kilocalories: 'kcal', watt: 'W', watts: 'W', kilowatt: 'kW', kilowatts: 'kW',
+  megawatt: 'MW', megawatts: 'MW', gigawatt: 'GW', gigawatts: 'GW', volt: 'V', volts: 'V', amp: 'A', amps: 'A', ampere: 'A', amperes: 'A',
+  ohm: 'ohm', ohms: 'ohm', hertz: 'Hz', pcs: 'pc', pc: 'pc', knot: 'kn', knots: 'kn', megapixel: 'MP', megapixels: 'MP',
+  mpg: 'mpg', mmhg: 'mmHg', mol: 'mol', mmol: 'mmol', pf: 'pF', nf: 'nF',
 }
 // Length units that square or cube when a 2 or 3 (or a superscript) follows: "800 m2", "3 km\u00b3". Lower case only: "M2" is a chip.
 const POWER_BASES: ReadonlySet<string> = new Set(['m', 'cm', 'mm', 'km', 'ft', 'in', 'yd', 'mi'])
@@ -192,6 +207,7 @@ const GLUED_EXTRA: Record<string, string> = {
   rpm: 'rpm', bpm: 'bpm', fps: 'fps', ppm: 'ppm', ppb: 'ppb', psi: 'psi', kPa: 'kPa', MPa: 'MPa', Pa: 'Pa',
   nm: 'nm', kbps: 'kbps', Kbps: 'kbps', Mbps: 'Mbps', Gbps: 'Gbps', Tbps: 'Tbps',
   d: 'day', wk: 'week', wks: 'week', y: 'year', bp: 'bp', X: 'x', sqft: 'ft2', sqm: 'm2', hp: 'hp', gal: 'gal', yd: 'yd', ha: 'ha',
+  V: 'V', A: 'A', kA: 'kA', MV: 'MV', bar: 'bar', ns: 'ns', pF: 'pF', nF: 'nF', 'μF': 'μF', MP: 'MP', BR: 'bed', bd: 'bed', ba: 'bath',
 }
 // Glued units whose capitals never change the meaning (KG is kg, MHZ is MHz). Keys are lower case.
 // Units where a capital does (mW and MW, Mb and MB, mm and MM) are exact-case entries above.
@@ -463,7 +479,7 @@ function fold(text: string): Uint16Array {
       else if (c === 0x2044 || c === 0x2215) c = 0x2f // fraction slash and division slash: a slash
       else if (c === 0x066b) c = 0x2e
       else if (c === 0x066c) c = 0x2c
-      else if (c === 0x066a) c = 0x25
+      else if (c === 0x066a || c === 0xfe6a) c = 0x25
       else if (c === 0x2212 || c === 0x2010 || c === 0x2011) c = 0x2d
       else if (c === 0xb5) c = 0x3bc // micro sign: the Greek letter mu, as in unit prefixes
       else if (c === 0x212a) c = 0x4b // Kelvin sign: canonically K
@@ -1618,6 +1634,21 @@ export function scan(
       sfx.end = p + 2
       return sfx
     }
+    // Per mille and per ten thousand: 12‰, 3‱ (a unit of their own, never a percent).
+    {
+      const q = isGap(at(p)) ? p + 1 : p
+      if (at(q) === 0x2030 || at(q) === 0x2031) {
+        sfx.unit = at(q) === 0x2030 ? '‰' : '‱'
+        sfx.end = q + 1
+        return sfx
+      }
+    }
+    // 10×: a multiple, like 10x. Before a digit (3×4) it is the sign of a dimension and not part of this number.
+    if (at(p) === 0xd7 && !isDigit(at(p + 1)) && !(at(p + 1) === 0x2e && isDigit(at(p + 2))) && !scientific) {
+      sfx.unit = 'x'
+      sfx.end = p + 1
+      return sfx
+    }
     const degrees = temperatureAt(p)
     if (degrees !== null) {
       sfx.unit = degrees.unit
@@ -1757,6 +1788,20 @@ export function scan(
       }
       if (isDigit(at(we))) return -1
       const lower = w.toLowerCase()
+      // "25 square meters", "25 sq ft", "3 cubic feet": a length unit squared or cubed.
+      if (lower === 'square' || lower === 'sq' || lower === 'cubic') {
+        let q = we
+        if (at(q) === 0x2e) q++
+        if (isGap(at(q)) && isLetter(at(q + 1))) {
+          const w2 = readWord(q + 1, 14)
+          const e2 = q + 1 + w2.length
+          const base = w2.length <= 14 && !isLetter(at(e2)) && !isDigit(at(e2)) ? (spacedUnit(w2) ?? own(GLUED_UNITS, w2.toLowerCase())) : undefined
+          if (base !== undefined && POWER_BASES.has(base)) {
+            sfx.unit = base + (lower === 'cubic' ? '3' : '2')
+            return e2
+          }
+        }
+      }
       if (!scientific) {
         // "$5 M": a lone magnitude letter after a currency amount, when it does not start or continue a word.
         // Without a currency only a capital K, M, B or T counts, and it may also be a label ("5 M").

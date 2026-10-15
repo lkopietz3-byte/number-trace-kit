@@ -429,3 +429,66 @@ describe('gate-false-pass:G5-F08 a magnitude after the closing parenthesis of an
     expect(extractNumbers('Loss ($14.2) and ($3.5) total')[0]).toMatchObject({ value: '-14.2', raw: '($14.2)' })
   })
 })
+
+describe('gate-false-pass:G5-F04 gate-hostile:G17 gate-false-pass:G5-P3 unit words that were not units', () => {
+  const pairs: [string, string][] = [
+    ['2 tablespoons', '2 teaspoons'], ['2 tbsp', '2 tsp'], ['25 milligrams', '25 micrograms'], ['25 megawatts', '25 gigawatts'],
+    ['25 megawatts', '25 kilowatts'], ['25 millimeters', '25 centimeters'], ['25 bytes', '25 bits'], ['25 milliseconds', '25 microseconds'],
+    ['25 cups', '25 quarts'], ['25 calories', '25 kilocalories'], ['25 pF', '25 nF'], ['25 square meters', '25 square kilometers'],
+    ['25 sq ft', '25 sq mi'], ['25 milliliters', '25 liters'], ['25 nanoseconds', '25 milliseconds'], ['230V', '230A'], ['5 volts', '5 amps'],
+  ]
+  it.each(pairs)('gate-false-pass:G5-F04 %s is not %s', (a, b) => {
+    expect(verdict(`Use ${a} of it.`, `Use ${b} of it.`)).toBe('untraced')
+    expect(verdict(`Use ${a} of it.`, `Use ${a} of it.`)).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-F04 a unit word and its abbreviation are the same unit', () => {
+    expect(verdict('Dose 25 milligrams.', 'Dose 25 mg.')).toBe('clean')
+    expect(verdict('Dose 25 mg.', 'Dose 25 milligrams.')).toBe('clean')
+    expect(verdict('Width 5 centimeters.', 'Width 5 cm.')).toBe('clean')
+    expect(verdict('Add 2 tablespoons.', 'Add 2 tbsp.')).toBe('clean')
+    expect(verdict('Takes 5 milliseconds.', 'Takes 5 ms.')).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-F04 milligrams against a bare number is unknown, like kilograms', () => {
+    expect(verdict('Dose 25 milligrams.', 'Dose 25.')).toBe('unknown')
+    expect(verdict('Dose 25 kilograms.', 'Dose 25.')).toBe('unknown')
+  })
+
+  it.each([['24MP'], ['3BR'], ['2bd'], ['25mpg'], ['5bar'], ['230V'], ['5A'], ['3.3V'], ['5pcs']])('gate-hostile:G17 gate-false-pass:G5-P3 %s is a unit, so the same text traces and another amount does not', (spec) => {
+    expect(verdict(`The spec is ${spec} here.`, `The spec is ${spec} here.`)).toBe('clean')
+    expect(verdict(`The spec is ${spec} here.`, `The spec is ${spec.replace(/[^\d.]/g, '')} here.`)).toBe('unknown')
+    expect(verdict(`The spec is ${spec} here.`, `The spec is ${spec.replace(/\d/, '9')} here.`)).toBe('untraced')
+  })
+
+  it('gate-hostile:G17 names with a letter before the digits stay identifiers', () => {
+    expect(trace('The V8 and A4 and K3', 'x').skipped.map((s) => s.reason)).toEqual(['identifier', 'identifier', 'identifier'])
+  })
+})
+
+describe('gate-false-pass:G5-P3 currency symbols, per mille and the multiplication sign', () => {
+  const symbols = ['₿', '₨', '₸', '₵', '₼', '₾', '֏', '₮', '₭', '៛', '₡', '₲', '﷼', '¤', '₠', '₢', '₣', '₤', '₥', '₧', '₯', '₰', '₳', '₶', '₷']
+  it.each(symbols)('gate-false-pass:G5-P3 %s before an amount is a currency', (sym) => {
+    expect(extractNumbers(`Cost ${sym}500 now`)[0]).toMatchObject({ kind: 'currency', value: '500' })
+    expect(verdict(`Cost ${sym}500 now`, 'Cost 500 now')).toBe('untraced')
+    expect(verdict(`Cost ${sym}500 now`, `Cost ${sym}900 now`)).toBe('untraced')
+    expect(verdict(`Cost ${sym}500 now`, `Cost ${sym}500 now`)).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-P3 per mille is its own unit, and the small percent sign is a percent', () => {
+    expect(extractNumbers('Rate 12‰ and 3‱')).toMatchObject([{ value: '12', unit: '‰' }, { value: '3', unit: '‱' }])
+    expect(verdict('Rate 12‰.', 'Rate 12.')).toBe('unknown')
+    expect(verdict('Rate 12‰.', 'Rate 12‰.')).toBe('clean')
+    expect(verdict('Rate 12‰.', 'Rate 12%.')).toBe('untraced')
+    expect(extractNumbers('Rate 12﹪')[0]).toMatchObject({ kind: 'percent', value: '12' })
+    expect(verdict('Rate 12﹪.', 'Rate 12%.')).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-P3 10× is a multiple like 10x, and 3×4 is still a dimension', () => {
+    expect(extractNumbers('It is 10× faster')[0]).toMatchObject({ value: '10', unit: 'x' })
+    expect(verdict('It is 10× faster.', 'It is 10 employees.')).toBe('unknown')
+    expect(verdict('It is 1.5× faster.', 'It is 1.5x faster.')).toBe('clean')
+    expect(verdict('It is 11× faster.', 'It is 12x faster.')).toBe('untraced')
+    expect(extractNumbers('A 3×4 cm card').map((t) => [t.value, t.unit])).toEqual([['3', 'cm'], ['4', 'cm']])
+  })
+})
