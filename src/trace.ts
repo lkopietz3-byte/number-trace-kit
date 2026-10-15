@@ -788,18 +788,22 @@ interface DerivedAgg {
   zero?: DerivedSlot
 }
 
+type HeldReason = 'twin-operands' | 'zero-operand'
+const HELD_REASONS: readonly HeldReason[] = ['twin-operands', 'zero-operand']
+
 class Matcher {
   private readonly rounded = new Map<string, Index>()
   private readonly derivedIdx = new Map<number, Map<string, DerivedAgg>>()
-  private readonly twinIdx = new Map<number, Map<string, DerivedAgg>>()
   readonly candidates: Candidate[] = []
   /**
-   * Candidates built from two evidence numbers of the same value (a total and the payment that equals it).
-   * Such a pair says nothing about the claim (its difference is 0, its ratio 1, its percent 100) and could be one
-   * fact written twice or two real rows, so a match is `unknown` (`twin-operands`) and never counts toward
-   * `derivation.matches` or the density of the neighborhood.
+   * Candidates that must never make a number `derived`, filed by the reason a match is `unknown` instead.
+   * `twin-operands`: built from two evidence numbers of the same value (a total and the payment that equals it),
+   * whose difference is 0, ratio 1, percent 100 and sum double whatever the claim. `zero-operand`: a product, a
+   * ratio or a percent of that is zero only because an operand is zero. Neither counts toward `derivation.matches`
+   * or the density, and each says nothing about the claim: it could be one fact written twice or two real rows.
    */
-  readonly twinCandidates: Candidate[] = []
+  readonly held: Record<HeldReason, Candidate[]> = { 'twin-operands': [], 'zero-operand': [] }
+  private readonly heldIdx: Record<HeldReason, Map<number, Map<string, DerivedAgg>>> = { 'twin-operands': new Map(), 'zero-operand': new Map() }
   capHit = false
 
   constructor(private readonly ev: Evidence, private readonly ctx: Ctx) {
@@ -924,7 +928,10 @@ class Matcher {
     let twin = false
     const push = (kind: Derivation, keys: Shape[], r: Rat, operands: Ent[], reversed?: boolean): void => {
       const neg = r.p < 0n
-      ;(twin ? this.twinCandidates : this.candidates).push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed: reversed === true, ordered: reversed !== undefined })
+      // A product, a ratio or a percent of is zero only through a zero operand, which tells nothing about the claim.
+      const zero = r.p === 0n && (kind === 'product' || kind === 'ratio' || kind === 'percent-of')
+      const target = twin ? this.held['twin-operands'] : zero ? this.held['zero-operand'] : this.candidates
+      target.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed: reversed === true, ordered: reversed !== undefined })
     }
     const HUNDRED: Rat = { p: 100n, q: 1n }
     for (let i = 0; i < m; i++) {
@@ -1023,15 +1030,15 @@ class Matcher {
    * reversed, exact or rounded), never a list, so many candidates landing on
    * one value cost nothing extra to look up.
    */
-  private derivedIndex(scale: number, twin = false): Map<string, DerivedAgg> {
-    const cache = twin ? this.twinIdx : this.derivedIdx
+  private derivedIndex(scale: number, held?: HeldReason): Map<string, DerivedAgg> {
+    const cache = held === undefined ? this.derivedIdx : this.heldIdx[held]
     let idx = cache.get(scale)
     if (idx !== undefined) return idx
     idx = new Map()
     // With rounding turned off only exact values count, but they are still found.
     const exactOnly = this.ctx.modes.length === 0
     const modes: readonly RoundingMode[] = exactOnly ? ['half-up'] : this.ctx.modes
-    for (const cand of twin ? this.twinCandidates : this.candidates) {
+    for (const cand of held === undefined ? this.candidates : this.held[held]) {
       const byMantissa = new Map<string, { modes: Set<RoundingMode>; exact: boolean }>()
       for (const mode of modes) {
         const r = roundRat(cand.abs, scale, mode)
@@ -1103,10 +1110,10 @@ class Matcher {
     outNeg: boolean,
     mantissa: bigint,
     strict = false,
-    twin = false,
+    held?: HeldReason,
   ): DerivedHit | null {
-    if ((twin ? this.twinCandidates : this.candidates).length === 0) return null
-    const idx = this.derivedIndex(scale, twin)
+    if ((held === undefined ? this.candidates : this.held[held]).length === 0) return null
+    const idx = this.derivedIndex(scale, held)
     const tries: { cls: string; unit: string; unverified: boolean }[] = [{ cls: shape.cls, unit: shape.unit, unverified: false }]
     if (shape.cls === 'plain') {
       if (!strict) tries.push({ cls: 'plain', unit: shape.unit === '' ? '*' : '', unverified: true })
@@ -1293,7 +1300,7 @@ export function traceNumbers(
     skipped,
     counts,
     evidenceNumbers: ev.count,
-    derivationCandidates: matcher.candidates.length + matcher.twinCandidates.length,
+    derivationCandidates: matcher.candidates.length + matcher.held['twin-operands'].length + matcher.held['zero-operand'].length,
     candidateCapHit: matcher.capHit,
   }
 }
@@ -1394,6 +1401,9 @@ function traceOne(
       }
       // So many ways to build the number that matching one says little.
       if (hit.matches > ctx.maxMatches || hit.density >= ctx.maxDensity) return unknownTrace(tok, 'derivation-too-likely')
+      // A ratio rounded to a single digit ("5") lands on a candidate by chance: ratios of unrelated numbers cluster
+      // among small integers, and one digit says too little to tell a derivation from luck.
+      if (!hit.exact && hit.cand.kind === 'ratio' && mantissa > 0n && mantissa < 10n) return unknownTrace(tok, 'coarse-derivation')
       const detail: DerivationDetail = {
         kind: hit.cand.kind,
         operands: hit.cand.operands.map((o) => o.ref),
@@ -1404,13 +1414,17 @@ function traceOne(
       // A derivation is already guarded and counted (`matches`, density), so a unit on one side only stays a marked
       // match here; a sign the output dropped is unknown in strict sign mode.
       if (hit.signDiffers && ctx.signMode === 'strict') return unknownTrace(tok, 'sign-differs')
+      // A year or an ordinal (2031, 3rd) is a label. A derivation can build one by coincidence, and a count between
+      // 1900 and 2100 written without a separator reads as a year, so the kit cannot tell: never a pass.
+      if (isLabel(tok)) return unknownTrace(tok, 'label-derivation')
       return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.unverified || hit.unitUnverified ? { unitUnverified: true as const } : {}), ...(hit.signDiffers ? { signDiffers: true as const } : {}) }
     }
     if (reversed) return unknownTrace(tok, 'derivation-direction')
-    // Only a pair of identical evidence values builds it: one fact written twice, or two real rows. Cannot tell.
-    if (matcher.twinCandidates.length > 0) {
+    // Only a pair of identical evidence values, or a zero operand, builds it: that says nothing about the claim.
+    for (const why of HELD_REASONS) {
+      if (matcher.held[why].length === 0) continue
       for (const v of variants) {
-        if (matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa, v.bare, true) !== null) return unknownTrace(tok, 'twin-operands')
+        if (matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa, v.bare, why) !== null) return unknownTrace(tok, why)
       }
     }
   }
@@ -1424,6 +1438,10 @@ function traceOne(
   // 6. Positive finding: not in the evidence.
   const near = nearMisses(tok, shape, outNeg, key, ev, ctx)
   return { token: tok, status: 'untraced', evidence: [], ...(near.length > 0 ? { nearMisses: near } : {}) }
+}
+
+function isLabel(tok: NumberToken): boolean {
+  return tok.kind === 'year' || tok.kind === 'ordinal'
 }
 
 function isClockUnit(tok: NumberToken): boolean {

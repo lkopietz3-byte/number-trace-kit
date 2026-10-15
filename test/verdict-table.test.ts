@@ -194,13 +194,13 @@ describe('laundering outputs are flagged on positive evidence', () => {
     // 30 evidence numbers make 435 pairs; a cap of 50 cannot be searched.
     const evidence = Array.from({ length: 30 }, (_, i) => `item ${i * 7 + 1000}`).join('. ')
     // 1000 + 1007 = 2007 would be a real sum, but the search is capped.
-    const r = trace('The total was 2007.', evidence, { derivations: ['sum'], maxCandidates: 50, ignoreYears: false })
-    expect(find(r, '2007')).toMatchObject({ status: 'unknown', reason: 'candidate-cap' })
+    const r = trace('The total was 2,007.', evidence, { derivations: ['sum'], maxCandidates: 50, ignoreYears: false })
+    expect(find(r, '2,007')).toMatchObject({ status: 'unknown', reason: 'candidate-cap' })
     expect(r.verdict).toBe('unknown')
     expect(r.candidateCapHit).toBe(true)
     // With room to search the same sum is found.
-    const roomy = trace('The total was 2007.', evidence, { derivations: ['sum'], maxCandidates: 5000, ignoreYears: false })
-    expect(find(roomy, '2007').status).toBe('derived')
+    const roomy = trace('The total was 2,007.', evidence, { derivations: ['sum'], maxCandidates: 5000, ignoreYears: false })
+    expect(find(roomy, '2,007').status).toBe('derived')
   })
 
   it('an unrelated number is still untraced when the cap is hit only if the search was complete', () => {
@@ -1084,5 +1084,60 @@ describe('M3 false-pass:F04: identical values never form a derivation pair', () 
     expect(only(base)).toMatchObject({ status: 'derived' })
     // The same cap with a twin present: the candidate count is the same as before, so the cap result is too.
     expect(trace('Net was $150.', 'Rows: $100, $100 and $50.', { derivations: ['sum'], maxCandidates: 2 }).candidateCapHit).toBe(true)
+  })
+})
+
+describe('M3 audit: derivation paths that pass a number the evidence says nothing about', () => {
+  const only = (r: TraceResult): NumberTrace => {
+    expect(r.numbers.length).toBe(1)
+    return r.numbers[0] as NumberTrace
+  }
+  const ALL = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average', 'product'] as const
+
+  it('audit:D1 a year or an ordinal in the output is a label: a derivation never passes it', () => {
+    for (const opts of [{ derivations: ['sum' as const] }, { preset: 'report' as const }]) {
+      for (const [out, ev] of [
+        ['The program started in 2025.', 'Costs were 1,000 and 1,025.'],
+        ['In 2031 sales fell.', 'Units 2,000 and 31 shipped.'],
+        ['He finished 3rd.', 'Scores were 1 and 2.'],
+        ['On the 7th.', 'We had 3 and 4.'],
+      ] as const) {
+        const r = trace(out, ev, opts)
+        expect(r.verdict, out).toBe('unknown')
+        expect(only(r), out).toMatchObject({ status: 'unknown', reason: 'label-derivation' })
+      }
+    }
+    // A year or an ordinal that is in the evidence still traces, and an ordinary count is still derived.
+    expect(trace('It started in 2025.', 'Started 2025. Costs 1,000 and 1,025.', { derivations: ['sum'] }).verdict).toBe('clean')
+    expect(trace('That is 2,025 in all.', 'Costs were 1,000 and 1,025.', { derivations: ['sum'] }).numbers[0]?.status).toBe('derived')
+    // A year nothing builds is still untraced.
+    expect(trace('It started in 2031.', 'Costs were 1,000 and 1,025.', { derivations: ['sum'] }).verdict).toBe('untraced')
+  })
+  it('audit:D2 a zero that only a zero operand builds is unknown, never derived', () => {
+    const EV = '0 outages this quarter. Revenue was $5,000.'
+    const r = trace('Profit was $0.', EV, { derivations: ['product'] })
+    expect(only(r)).toMatchObject({ status: 'unknown', reason: 'zero-operand' })
+    expect(only(trace('Profit was $0.', 'Churn was 0%. Revenue was $5,000.', { derivations: ['percent-of'] }))).toMatchObject({ status: 'unknown', reason: 'zero-operand' })
+    expect(only(trace('Growth was 0%.', '0 outages. 5 sites.', { derivations: ['percent-of'] }))).toMatchObject({ status: 'unknown', reason: 'zero-operand' })
+    expect(only(trace('Ratio was 0.', 'Churn 0%, growth 5%.', { derivations: ['ratio'] }))).toMatchObject({ status: 'unknown', reason: 'zero-operand' })
+    // A zero that two different values build, a drop to zero, and a zero in the evidence are not affected.
+    expect(only(trace('Net was 0.', 'Gain 5 and loss -5.', { derivations: ['sum'] })).status).toBe('derived')
+    expect(only(trace('Revenue fell 100%.', 'Revenue was $5,000, then $0.', { derivations: ['percent-change'] })).status).toBe('derived')
+    expect(only(trace('There were 0 outages.', EV, { derivations: [...ALL] })).status).toBe('traced')
+    // A number nothing builds is still untraced.
+    expect(only(trace('Profit was $7.', EV, { derivations: [...ALL] })).status).toBe('untraced')
+  })
+  it('audit:D3 an inexact ratio shown with one significant digit is unknown: a small integer lands on a ratio by chance', () => {
+    const EV = 'Row A is 123. Row B is 25.'
+    for (const opts of [{ derivations: ['ratio' as const] }, { preset: 'report' as const }, { derivations: [...ALL] }]) {
+      expect(only(trace('We saw 5 issues.', EV, opts)), JSON.stringify(opts)).toMatchObject({ status: 'unknown', reason: 'coarse-derivation' })
+    }
+    expect(only(trace('That is 0.5 of it.', 'Row A is 21. Row B is 40.', { derivations: ['ratio'] }))).toMatchObject({ status: 'unknown', reason: 'coarse-derivation' })
+    // Two significant digits, an exact result, and the other derivations are unchanged.
+    expect(only(trace('The mean was 5.', 'Row A is 3. Row B is 6.', { derivations: ['average'] })).status).toBe('derived')
+    expect(only(trace('The ratio was 4.9x.', EV, { derivations: ['ratio'] })).status).toBe('derived')
+    expect(only(trace('The ratio was 3x.', 'Row A is 12. Row B is 4.', { derivations: ['ratio'] })).status).toBe('derived')
+    expect(only(trace('Total was 5.', 'Row A is 2. Row B is 3.', { derivations: ['sum'] })).status).toBe('derived')
+    expect(only(trace('That is 35% of it.', 'Row A is 35. Row B is 100.', { derivations: ['percent-of'] })).status).toBe('derived')
   })
 })

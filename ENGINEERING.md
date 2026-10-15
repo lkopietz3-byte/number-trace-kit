@@ -53,8 +53,12 @@ source entry is `src/index.ts`; the package export resolves to generated
   evidence numbers of the same class, unit and value (or a triple containing
   such a pair) go to a separate twin list, not the candidate list. They cannot
   make a number `derived`, count toward `derivation.matches` or the density,
-  and a number only they build is `unknown` (`twin-operands`). They are still
-  counted in `derivationCandidates` and in the cap.
+  and a number only they build is `unknown` (`twin-operands`). A product, ratio
+  or percent-of that is zero only through a zero operand is held the same way
+  (`zero-operand`). They are still counted in `derivationCandidates` and in the
+  cap. A year or ordinal in the output is never `derived`: it is `unknown`
+  (`label-derivation`), and so is an inexact ratio shown with one significant
+  digit (`coarse-derivation`).
 - **A derived match is checked for coincidence.** `derivation.matches` counts
   the candidates that produce the displayed value. More than
   `maxDerivationMatches`, or a neighborhood denser than
