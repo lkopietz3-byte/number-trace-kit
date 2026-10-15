@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (S5: own properties only)
+
+- Options, evidence documents, caller tokens and reconcile rows are read as own properties only (hostile:F6). With `Object.prototype.ignoreSmallIntegersUpTo`, `.tolerance`, `.text` or `.amount` planted, `traceNumbers('Revenue was 9999.', 'Revenue was 5.')` came back `clean` and `reconcile({ rows: [{ amount: '1' }], total: '999' })` came back `ok: true`; both now give the verdict the caller's own values give. The tokens, suffix and group records and currency matches the kit builds have no prototype for the same reason (a planted `unit`, `currency`, `part` or `percent` changed verdicts), so **returned tokens have no prototype**: `token.hasOwnProperty` is not there, and everything else (spread, `JSON.stringify`, `Object.keys`, property reads) behaves as before.
+
 ### Added (S4: scale hints for currency cells)
 
 - New evidence document field `scaleApplies` and option `evidenceScaleApplies`: `'bare'` (the default, unchanged) or `'bare-and-currency'`. With the second value an evidence `scale` also applies to cells that print a currency without a magnitude, so a 10-K table in millions that prints `$` on its first row and its totals (`$ 1,577`, `$1,577`, `$ (1,577)`) traces `Capital expenditures were $1,577 million`. A cell with its own magnitude, a percent or a unit is never rescaled, and a cell keeps the currency it prints. README's table paragraph no longer implies the default handles this case (field:F5).

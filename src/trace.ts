@@ -18,7 +18,9 @@ import { scan } from './extract.js'
 import type { SkipRecord } from './extract.js'
 import {
   MAX_TEXT_LENGTH,
+  noProto,
   describe,
+  getOwn,
   isRecord,
   readBoolean,
   readInteger,
@@ -147,19 +149,19 @@ function readOptionalString(value: unknown, name: string): string | undefined {
 
 /** Copy a caller-supplied token into a validated snapshot. Every field is read once. */
 function readToken(item: Record<string, unknown>, name: string): { token: NumberToken; evidenceId?: string } {
-  const raw = readString(item['raw'], `${name}.raw`)
-  const start = item['start']
-  const end = item['end']
+  const raw = readString(getOwn(item, 'raw'), `${name}.raw`)
+  const start = getOwn(item, 'start')
+  const end = getOwn(item, 'end')
   if (typeof start !== 'number' || !Number.isSafeInteger(start) || start < 0) throw new TypeError(`${name}.start must be a non-negative integer.`)
   if (typeof end !== 'number' || !Number.isSafeInteger(end) || end < start) throw new TypeError(`${name}.end must be an integer at or after start.`)
-  const value = readString(item['value'], `${name}.value`)
-  const scale = item['scale']
+  const value = readString(getOwn(item, 'value'), `${name}.value`)
+  const scale = getOwn(item, 'scale')
   if (typeof scale !== 'number' || !Number.isInteger(scale) || scale < -100 || scale > 400) throw new TypeError(`${name}.scale must be an integer.`)
-  const kind = item['kind']
+  const kind = getOwn(item, 'kind')
   if (typeof kind !== 'string' || !(KINDS as readonly string[]).includes(kind)) throw new TypeError(`${name}.kind is not a known kind.`)
-  const ambiguous = item['ambiguous']
+  const ambiguous = getOwn(item, 'ambiguous')
   if (typeof ambiguous !== 'boolean') throw new TypeError(`${name}.ambiguous must be a boolean.`)
-  const ambiguity = item['ambiguity']
+  const ambiguity = getOwn(item, 'ambiguity')
   if (ambiguity !== undefined && (typeof ambiguity !== 'string' || !(AMBIGUITIES as readonly string[]).includes(ambiguity))) {
     throw new TypeError(`${name}.ambiguity is not a known reason.`)
   }
@@ -170,27 +172,27 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
   }
   // The 60-digit policy holds whatever the caller's flags say.
   const tooLong = ambiguity === 'too-long' || value.length - (value.startsWith('-') || value.startsWith('+') ? 1 : 0) - (value.includes('.') ? 1 : 0) > MAX_DIGITS
-  const unit = readOptionalString(item['unit'], `${name}.unit`)
-  const currency = readOptionalString(item['currency'], `${name}.currency`)
+  const unit = readOptionalString(getOwn(item, 'unit'), `${name}.unit`)
+  const currency = readOptionalString(getOwn(item, 'currency'), `${name}.currency`)
   if (kind === 'currency' && currency === undefined) throw new TypeError(`${name}.currency is required for currency tokens.`)
-  const signStyle = item['signStyle']
+  const signStyle = getOwn(item, 'signStyle')
   if (signStyle !== undefined && signStyle !== 'minus' && signStyle !== 'plus' && signStyle !== 'parentheses') {
     throw new TypeError(`${name}.signStyle is not valid.`)
   }
-  const part = item['part']
+  const part = getOwn(item, 'part')
   if (part !== undefined && (typeof part !== 'string' || !DATE_PARTS.includes(part))) throw new TypeError(`${name}.part is not valid.`)
-  const groupRaw = readOptionalString(item['groupRaw'], `${name}.groupRaw`)
-  const range = item['range']
+  const groupRaw = readOptionalString(getOwn(item, 'groupRaw'), `${name}.groupRaw`)
+  const range = getOwn(item, 'range')
   if (range !== undefined && range !== 'start' && range !== 'end') throw new TypeError(`${name}.range is not valid.`)
-  const alternatesRaw = item['alternates']
+  const alternatesRaw = getOwn(item, 'alternates')
   const alternates: Reading[] = []
   if (alternatesRaw !== undefined) {
     const list = snapshotArray(alternatesRaw, `${name}.alternates`)
     if (list.length > 4) throw new TypeError(`${name}.alternates has too many readings.`)
     list.forEach((alt, k) => {
       if (!isRecord(alt)) throw new TypeError(`${name}.alternates[${k}] must be an object.`)
-      const altValue = readString(alt['value'], `${name}.alternates[${k}].value`)
-      const altScale = alt['scale']
+      const altValue = readString(getOwn(alt, 'value'), `${name}.alternates[${k}].value`)
+      const altScale = getOwn(alt, 'scale')
       if (!isDecimalString(altValue, MAX_DIGITS + 2) || typeof altScale !== 'number' || !Number.isInteger(altScale) || altScale < -100 || altScale > 400) {
         throw new TypeError(`${name}.alternates[${k}] is not a valid reading.`)
       }
@@ -198,20 +200,20 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
     })
   }
   if (alternates.length > 0 && !ambiguous) throw new TypeError(`${name}: alternates need ambiguous: true.`)
-  const localeGuess = item['localeGuess']
+  const localeGuess = getOwn(item, 'localeGuess')
   if (localeGuess !== undefined && localeGuess !== true) throw new TypeError(`${name}.localeGuess must be true when present.`)
   if (localeGuess === true && !ambiguous) throw new TypeError(`${name}: localeGuess needs ambiguous: true.`)
-  const parenthesized = item['parenthesized']
+  const parenthesized = getOwn(item, 'parenthesized')
   if (parenthesized !== undefined && parenthesized !== true) throw new TypeError(`${name}.parenthesized must be true when present.`)
   if (parenthesized === true && (signStyle !== undefined || value.startsWith('-'))) {
     throw new TypeError(`${name}: parenthesized is for a bare number read as positive; it cannot also be signed.`)
   }
-  const magnitude = item['magnitude']
+  const magnitude = getOwn(item, 'magnitude')
   if (magnitude !== undefined && (typeof magnitude !== 'number' || !Number.isInteger(magnitude) || magnitude === 0 || magnitude < -400 || magnitude > 400)) {
     throw new TypeError(`${name}.magnitude must be a non-zero integer.`)
   }
-  const evidenceId = readOptionalString(item['evidenceId'], `${name}.evidenceId`)
-  const token: NumberToken = {
+  const evidenceId = readOptionalString(getOwn(item, 'evidenceId'), `${name}.evidenceId`)
+  const token: NumberToken = noProto({
     raw, start, end, value, scale, kind: kind as NumberKind, ambiguous: ambiguous || tooLong,
     ...(tooLong ? { ambiguity: 'too-long' as const } : ambiguity !== undefined ? { ambiguity: ambiguity as AmbiguityReason } : {}),
     ...(unit !== undefined ? { unit } : {}),
@@ -224,7 +226,7 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
     ...(range !== undefined ? { range } : {}),
     ...(localeGuess === true ? { localeGuess: true as const } : {}),
     ...(alternates.length > 0 && !tooLong ? { alternates } : {}),
-  }
+  })
   return { token, ...(evidenceId !== undefined ? { evidenceId } : {}) }
 }
 
@@ -375,7 +377,7 @@ function readContext(options: unknown): Ctx {
   }
   // The preset supplies defaults; anything passed explicitly wins.
   const base = PRESETS[raw.preset ?? 'strict']
-  const o: Record<string, unknown> = { ...base }
+  const o = Object.assign(Object.create(null) as Record<string, unknown>, base)
   for (const [k, v] of Object.entries(raw)) if (v !== undefined && k !== 'preset') o[k] = v
   const loc = resolveLocale(o['locale'])
   const evLoc = o['evidenceLocale'] === undefined ? loc : resolveLocale(o['evidenceLocale'], 'evidenceLocale')
@@ -516,7 +518,7 @@ function ingest(ev: Evidence, token: NumberToken, id: string): void {
     if (token.groupRaw !== undefined) ev.groupRaw.add(token.groupRaw, primary.key, primary)
     if (token.part === 'year') {
       // A year inside a date can vouch for a bare year elsewhere.
-      const asPlain = makeEnt({ ...token, kind: 'year' }, { cls: 'plain', unit: '' }, token.value, token.scale, id)
+      const asPlain = makeEnt(noProto({ ...token, kind: 'year' as const }), { cls: 'plain', unit: '' }, token.value, token.scale, id)
       if (asPlain !== null) addEnt(ev, asPlain, false)
     }
     return
@@ -624,17 +626,17 @@ function applyHints(token: NumberToken, exp: number, currency: string | undefine
       const ad = parseDecimal(a.value)
       return { value: formatDec({ n: ad.n * 10n ** BigInt(exp), s: ad.s }), scale: a.scale - exp }
     })
-    const base = { ...token, value: formatDec({ n: d.n * 10n ** BigInt(exp), s: d.s }), scale: token.scale - exp }
-    return alternates === undefined ? base : { ...base, alternates }
+    const base = noProto({ ...token, value: formatDec({ n: d.n * 10n ** BigInt(exp), s: d.s }), scale: token.scale - exp })
+    return alternates === undefined ? base : noProto({ ...base, alternates })
   }
   const shift = (v: string): string => {
     const d = parseDecimal(v)
     return formatDec({ n: d.n * 10n ** BigInt(exp), s: d.s })
   }
   const alternates = token.alternates?.map((a) => ({ value: shift(a.value), scale: a.scale - exp }))
-  const base = { ...token, value: shift(token.value), scale: token.scale - exp }
-  const scaled = alternates === undefined ? base : { ...base, alternates }
-  return currency === undefined ? scaled : { ...scaled, kind: 'currency' as const, currency }
+  const base = noProto({ ...token, value: shift(token.value), scale: token.scale - exp })
+  const scaled = alternates === undefined ? base : noProto({ ...base, alternates })
+  return currency === undefined ? scaled : noProto({ ...scaled, kind: 'currency' as const, currency })
 }
 
 function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
@@ -689,7 +691,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
         const minute = tuple.tokens.find((t) => t.part === 'minute')
         if (hour !== undefined && minute !== undefined && !hour.ambiguous && !minute.ambiguous) {
           const minutes = Number(absKey(hour.value)) * 60 + Number(absKey(minute.value))
-          ingest(ev, { raw, start: lo.start, end: hi.end, value: String(minutes), scale: 0, kind: 'time', ambiguous: false }, idOf(first))
+          ingest(ev, noProto({ raw, start: lo.start, end: hi.end, value: String(minutes), scale: 0, kind: 'time' as const, ambiguous: false }), idOf(first))
         }
       }
     }
@@ -715,13 +717,13 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     }
     items.forEach((item, index) => {
       if (!isRecord(item)) throw new TypeError(`evidence[${index}] must be a { id, text } object or a number token.`)
-      const text = item['text']
+      const text = getOwn(item, 'text')
       if (text !== undefined) {
         flush()
-        const id = readString(item['id'], `evidence[${index}].id`)
-        const docScale = item['scale']
-        const docCurrency = item['currency']
-        const docApplies = item['scaleApplies']
+        const id = readString(getOwn(item, 'id'), `evidence[${index}].id`)
+        const docScale = getOwn(item, 'scale')
+        const docCurrency = getOwn(item, 'currency')
+        const docApplies = getOwn(item, 'scaleApplies')
         const body = takeText(readString(text, `evidence[${index}].text`))
         feed(
           scan(body, ctx.evLoc, ctx.parenNeg, true),

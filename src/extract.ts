@@ -1,5 +1,5 @@
 import { MAX_DIGITS } from './decimal.js'
-import { MAX_TEXT_LENGTH, readBoolean, readOptions } from './input.js'
+import { MAX_TEXT_LENGTH, noProto, readBoolean, readOptions } from './input.js'
 import { resolveLocale } from './locale.js'
 import type { LocaleInfo } from './locale.js'
 import type {
@@ -422,7 +422,7 @@ function decimalString(neg: boolean, int: string, frac: string, exp10: number): 
 }
 
 function makeToken(raw: string, start: number, end: number, value: string, scale: number, kind: NumberKind): Tok {
-  return { raw, start, end, value, scale, kind, ambiguous: false }
+  return noProto({ raw, start, end, value, scale, kind, ambiguous: false })
 }
 
 /** A whole hour from 1 to 12 written as a plain integer, or -1. */
@@ -1099,6 +1099,11 @@ export function scan(
   }
 
   const matchCurrencyEnding = (pos: number): CurrencyMatch | null => {
+    const found = matchCurrencyEndingRaw(pos)
+    return found === null ? null : noProto(found)
+  }
+
+  const matchCurrencyEndingRaw = (pos: number): CurrencyMatch | null => {
     let p = pos - 1
     if (p >= floor && (at(p) === 0x20 || at(p) === NBSP)) p--
     if (p < floor) return null
@@ -1223,9 +1228,9 @@ export function scan(
   }
 
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
-    const sfx: Suffix = {
+    const sfx: Suffix = noProto({
       end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false, dollarWord: false,
-    }
+    })
     let p = e
     if (at(p) === 0x5f) {
       let q = p
@@ -1585,11 +1590,11 @@ export function scan(
         alt = { int: head + second, frac: '' }
         ambiguity = 'separator'
       }
-      tokens.push({
+      tokens.push(noProto({
         first, last, int, frac,
         ...(ambiguity !== undefined ? { ambiguity } : {}),
-        ...(alt !== undefined ? { alt } : {}),
-      })
+        ...(alt !== undefined ? { alt: noProto(alt) } : {}),
+      }))
       k = last + 1
     }
     return { tokens, skippedRest: false, restStart: -1 }
@@ -2124,7 +2129,7 @@ export function scan(
   function joinGroup(kind: 'range' | 'dimension', prev: Tok, tok: Tok): void {
     let g = kind === 'range' ? rangeGroup : dimensionGroup
     if (g === null || g.members[g.members.length - 1] !== prev) {
-      g = { kind, members: [prev], exp: 0, loose: false }
+      g = noProto({ kind, members: [prev], exp: 0, loose: false })
       if (kind === 'range') rangeGroup = g
       else dimensionGroup = g
       learn(g, prev)

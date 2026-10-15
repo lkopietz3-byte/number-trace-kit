@@ -1,6 +1,6 @@
 import { add, cmp, formatDec, fromParts, isDecimalString, parseDecimal, sub } from './decimal.js'
 import type { Dec } from './decimal.js'
-import { describe, isRecord, readBoolean, readInteger, readOptions, snapshotArray } from './input.js'
+import { describe, getOwn, isRecord, readBoolean, readInteger, readOptions, snapshotArray } from './input.js'
 import type {
   ReconcileComponentsInput,
   ReconcileInput,
@@ -145,8 +145,8 @@ export function reconcile(input: ReconcileInput, options?: ReconcileOptions): Re
   const amounts: Dec[] = []
   rows.forEach((row, i) => {
     if (!isRecord(row)) throw new TypeError(`rows[${i}] must be an object with label and amount.`)
-    const label = row['label']
-    const amount = row['amount']
+    const label = getOwn(row, 'label')
+    const amount = getOwn(row, 'amount')
     if (label !== undefined && typeof label !== 'string') throw new TypeError(`rows[${i}].label must be a string.`)
     amounts.push(readAmount(amount, `rows[${i}].amount`, minorDigits, allowFloat))
   })

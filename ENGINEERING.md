@@ -97,7 +97,12 @@ source entry is `src/index.ts`; the package export resolves to generated
   bounded before the walk. Errors thrown by a caller's getter or proxy
   propagate unchanged. Unknown option names are a `RangeError`.
 - **No prototype reach.** Lookup tables keyed by text from the caller go
-  through `own()`.
+  through `own()`. Every caller value (option, evidence document field, token field,
+  reconcile row field) is read as an own property (`getOwn`, `readOptions`), and the
+  records the kit builds with optional fields (tokens, suffix and group records,
+  currency matches) have no prototype (`noProto`), so a polluted `Object.prototype`
+  (`ignoreSmallIntegersUpTo`, `tolerance`, `text`, `amount`, `unit`, `currency`) cannot
+  change a verdict. Returned tokens have no prototype for the same reason.
 - **Text policy.** ASCII, full-width and every BMP script's decimal digits are
   numbers (folded one code unit to one code unit); digits outside the BMP are
   not. Numbers glued to Latin letters on the left, or to unknown Latin letters

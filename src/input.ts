@@ -26,7 +26,8 @@ export function readOptions<K extends string>(
   allowed: readonly K[],
   where: string,
 ): Partial<Record<K, unknown>> {
-  const out: Partial<Record<K, unknown>> = {}
+  // No prototype: a key the caller did not set must read as absent, not as something planted on Object.prototype.
+  const out = Object.create(null) as Partial<Record<K, unknown>>
   if (options === undefined || options === null) return out
   if (typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError(`${where}: options must be an object, got ${describe(options)}.`)
@@ -38,10 +39,26 @@ export function readOptions<K extends string>(
     }
   }
   for (const key of allowed) {
-    const value = bag[key]
+    const value = getOwn(bag, key)
     if (value !== undefined) out[key] = value
   }
   return out
+}
+
+/**
+ * A copy with no prototype. Objects the kit builds with optional fields (tokens, groups, suffix records) read a
+ * missing field as undefined, never as something planted on `Object.prototype`.
+ */
+export function noProto<T extends object>(value: T): T {
+  return Object.assign(Object.create(null) as T, value)
+}
+
+/**
+ * Read a property the caller set on this very object. An inherited property (one planted on `Object.prototype`, or
+ * a getter on a class prototype) reads as absent, so nothing outside the caller's own object can change a verdict.
+ */
+export function getOwn(object: object, key: string): unknown {
+  return Object.hasOwn(object, key) ? (object as Record<string, unknown>)[key] : undefined
 }
 
 export function readBoolean(value: unknown, name: string, fallback: boolean): boolean {

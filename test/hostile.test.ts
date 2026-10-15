@@ -398,3 +398,86 @@ describe('proxies, getters and single reads', { timeout: 60_000 }, () => {
     expect(options).toEqual({ derivations: ['sum'], ignore: ['1'] })
   })
 })
+
+describe('S5 hostile:F6 options, documents and rows are read as own properties only', () => {
+  const proto = Object.prototype as unknown as Record<string, unknown>
+  const polluted = (name: string, value: unknown, fn: () => void): void => {
+    proto[name] = value
+    try {
+      fn()
+    } finally {
+      delete proto[name]
+    }
+  }
+
+  it('S5 hostile:F6 an inherited ignoreSmallIntegersUpTo never turns untraced into clean', () => {
+    polluted('ignoreSmallIntegersUpTo', 100_000, () => {
+      expect(traceNumbers('Revenue was 9999.', 'Revenue was 5.').verdict).toBe('untraced')
+      expect(traceNumbers('Revenue was 9999.', 'Revenue was 5.', {}).verdict).toBe('untraced')
+    })
+  })
+
+  it('S5 hostile:F6 an inherited option name is not an option', () => {
+    for (const name of ['derivations', 'preset', 'locale', 'ignoreYears', 'ignoreStructure', 'allowBareEvidence', 'signMode', 'maxCandidates']) {
+      const value: unknown = name === 'derivations' ? ['sum'] : name === 'preset' ? 'report' : name === 'locale' ? 'de-DE' : name === 'signMode' ? 'magnitude' : name === 'maxCandidates' ? 1 : true
+      polluted(name, value, () => {
+        expect(traceNumbers('Total was 12.', 'a 5 and 7.').verdict, name).toBe('untraced')
+        expect(() => extractNumbers('1,5', {}), name).not.toThrow()
+      })
+    }
+    polluted('locale', 'de-DE', () => {
+      expect(extractNumbers('1,5')[0]?.value).toBe('1.5')
+      expect(extractNumbers('1,5')[0]?.localeGuess).toBe(true)
+    })
+  })
+
+  it('S5 hostile:F6 an inherited tolerance, amount, label, total or rows never changes a reconcile', () => {
+    polluted('tolerance', '1000', () => {
+      expect(reconcile({ rows: [{ label: 'a', amount: '1' }], total: '999' }).ok).toBe(false)
+      expect(reconcile({ rows: [{ label: 'a', amount: '1' }], total: '999' }, {}).ok).toBe(false)
+      expect(reconcileComponents({ parts: { a: '1' }, total: '999' }).ok).toBe(false)
+    })
+    polluted('amount', '999', () => {
+      expect(reconcile({ rows: [{ label: 'a', amount: '1' }], total: '999' }).ok).toBe(false)
+      expect(() => reconcile({ rows: [{ label: 'a' } as never], total: '999' })).toThrow(TypeError)
+    })
+    polluted('total', '1', () => {
+      expect(() => reconcile({ rows: [{ label: 'a', amount: '1' }] } as never)).toThrow(TypeError)
+    })
+    polluted('rows', [{ label: 'a', amount: '1' }], () => {
+      expect(() => reconcile({ total: '1' } as never)).toThrow(TypeError)
+    })
+  })
+
+  it('S5 hostile:F6 an inherited text, id, scale or currency never makes a document or changes one', () => {
+    polluted('text', 'Revenue was 9999.', () => {
+      expect(() => traceNumbers('Revenue was 9999.', [{ id: 'a' } as never])).toThrow(TypeError)
+    })
+    polluted('scale', 'million', () => {
+      expect(traceNumbers('Sales were $5 million.', [{ id: 'a', text: 'Sales 5', currency: 'USD' }]).verdict).toBe('untraced')
+    })
+    polluted('currency', 'EUR', () => {
+      expect(traceNumbers('Sales were $5.', [{ id: 'a', text: 'Sales 5' }]).verdict).toBe('untraced')
+    })
+    polluted('id', 'x', () => {
+      expect(() => traceNumbers('5', [{ text: '5' } as never])).toThrow(TypeError)
+    })
+  })
+
+  it('S5 hostile:F6 an inherited token field is not read from a caller token', () => {
+    const tok = extractNumbers('5')[0] as NumberToken
+    polluted('part', 'month', () => {
+      expect(traceNumbers([tok], '5').verdict).toBe('clean')
+    })
+    polluted('unit', 'kg', () => {
+      expect(traceNumbers([tok], '5').verdict).toBe('clean')
+    })
+    polluted('currency', 'USD', () => {
+      expect(traceNumbers([tok], '5').verdict).toBe('clean')
+    })
+  })
+
+  it('S5 hostile:F6 a doc with no text is a TypeError that says what is missing', () => {
+    expect(() => traceNumbers('5', [{ id: 'a' } as never])).toThrow(TypeError)
+  })
+})
