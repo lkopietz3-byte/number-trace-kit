@@ -118,12 +118,18 @@ source entry is `src/index.ts`; the package export resolves to generated
 - **The output is bounded too.** `maxOutputNumbers` (default and maximum 500,000) stops the scan of an output text the moment it holds more numbers
   and skipped forms; a 5,000,000-character text of single digits would otherwise be millions of tokens.
 - **Text policy.** ASCII, full-width and every BMP script's decimal digits are
-  numbers (folded one code unit to one code unit); digits outside the BMP are
-  not. Numbers glued to Latin letters on the left, or to unknown Latin letters
-  on the right, are identifiers and are skipped in the output (evidence keeps
-  their digits as weak tokens). Letters of other scripts never glue, so a
-  look-alike letter cannot hide a number. Invisible characters split numbers
-  rather than hiding them.
+  numbers (folded one code unit to one code unit); digits outside the BMP, and
+  every other character of Unicode category No or Nl (circled, dingbat,
+  superscript, subscript and roman numerals), are not, and are listed in `skipped`
+  as unread forms, so none of them can hide a figure. Numbers glued to Latin
+  letters on the left, or to unknown Latin letters on the right, are identifiers
+  and are skipped in the output (evidence keeps their digits as weak tokens, and
+  the text of every skipped form, so the output can be checked against it). A
+  skip never reaches back into a number already read, and a stretch that was
+  skipped closes the look-behind for what follows. Letters of other scripts never
+  glue, so a look-alike letter cannot hide a number. Invisible characters split
+  numbers, and between a number and its unit, percent or magnitude word they
+  count as the space they stand for; a line break is not a space.
 
 ## Setup and verification
 
