@@ -144,3 +144,36 @@ describe('release-review:P2-rate-rounding the rate leniency reaches rounded matc
     expect(r.numbers[0]?.status).toBe('rounded')
   })
 })
+
+describe('release-review:P2-wildcard-cap a bare number is looked up by its exact unit-less key before the capped wildcard list', () => {
+  const eight = '7 kg '.repeat(8)
+  const eightRounded = '7.04 kg '.repeat(8)
+
+  it.each([
+    ['7', eight + '7'],
+    ['7', '7 kg '.repeat(20) + 'Rating 7'],
+    ['7.0', eightRounded + '7.04'],
+    ['7', '7 m '.repeat(8) + '7 kg ' + '7'],
+  ])('release-review:P2-wildcard-cap %s traces to the bare figure after many unit figures', (output, evidence) => {
+    const r = trace(output, evidence)
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers[0]?.unitUnverified).toBeUndefined()
+  })
+
+  it('release-review:P2-wildcard-cap the verdict does not depend on the order of the evidence', () => {
+    const first = trace('7', '7 ' + '7 kg '.repeat(8))
+    const last = trace('7', eight + '7')
+    expect(last.verdict).toBe(first.verdict)
+    expect(last.numbers[0]?.status).toBe(first.numbers[0]?.status)
+  })
+
+  it('release-review:P2-wildcard-cap a bare 7 with only unit figures behind it is still unknown, never traced', () => {
+    const r = trace('7', eight)
+    expect(r.numbers[0]).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
+  })
+
+  it('release-review:P2-wildcard-cap a unit figure is still not cleared by a bare one', () => {
+    const r = trace('7 kg', '7 m '.repeat(8) + '7')
+    expect(r.numbers[0]?.status).toBe('unknown')
+  })
+})

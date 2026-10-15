@@ -136,9 +136,13 @@ function regKeys(cls: string, unit: string): string[] {
   return cls === 'plain' ? (unit === '' ? ['', '*'] : [unit, '*']) : [unit]
 }
 
-/** Keys an output number looks under: evidence with its unit, and evidence with no unit at all. */
+/**
+ * Keys an output number looks under: evidence with its unit, and evidence with no unit at all. A unit-less output
+ * looks under the unit-less key first: the `*` list holds every plain figure and is capped, so eight figures with
+ * units must not hide a bare one that is there.
+ */
 function lookupKeys(cls: string, unit: string): string[] {
-  return cls === 'plain' ? (unit === '' ? ['*'] : [unit, '']) : [unit]
+  return cls === 'plain' ? (unit === '' ? ['', '*'] : [unit, '']) : [unit]
 }
 
 function refOf(id: string, t: NumberToken): EvidenceRef {
@@ -917,11 +921,18 @@ function signAllowed(tok: NumberToken, outNeg: boolean, entNeg: boolean, mode: S
 
 function lookup(index: Index, shape: Shape, outNeg: boolean, key: string, bare = false): Ent[] {
   const found: Ent[] = []
+  const seen = new Set<Ent>()
   for (const neg of [outNeg, !outNeg]) {
     // A bare lookup finds only evidence that has no unit at all.
     for (const u of bare ? [''] : lookupKeys(shape.cls, shape.unit)) {
       const list = index.get(entKey(shape.cls, u, neg, key))
-      if (list !== undefined) for (const e of list) found.push(e)
+      if (list !== undefined) {
+        for (const e of list) {
+          if (seen.has(e)) continue
+          seen.add(e)
+          found.push(e)
+        }
+      }
     }
   }
   return found
