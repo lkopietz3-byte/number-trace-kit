@@ -21,7 +21,7 @@ Two groups are reported apart from the headline: **swapped numbers and flipped d
 
 What it cannot show: the errors are programmatic edits, cleaner than model errors; the answers use sentence templates written for the benchmark; each item holds one error; spelled-out numbers are not labeled. It flatters the kit and is the weakest evidence here. 38 RAGTruth items carry number-centered excerpts of their passages instead of the full passages (Verified: identical results, see below).
 
-Settings: `default` (the five common derivations on), `report` (the `report` preset), `strict` (the `strict` preset with no derivations, so every honest derived answer is flagged by construction), and `allowBareEvidence`.
+Settings: `default` (the five common derivations on), `report` (the `report` preset alone, as shipped: it turns on average and product too), `strict` (the `strict` preset with no derivations, so every honest derived answer is flagged by construction), and `allowBareEvidence`.
 
 ## 2. RAGTruth field corpus (289 answers)
 
@@ -119,4 +119,4 @@ node bench/build/check-excerpts.mjs --raw bench/.cache/ragtruth       # excerpts
 npm run crosscheck
 ```
 
-Not done: re-downloading the pinned raw files to compare their hashes with `SOURCES.json` (the hashes are those of the copies used; the sizes were compared with the pinned URLs' content-length headers); runs on any Python other than 3.9.6 or any Node other than 26.3.0; a person reading the items.
+Done at the release head (2026-10-15): the local raw copies used for the full runs were compared with `SOURCES.json` (19 files, size and SHA-256: 0 differences). Not done: downloading the pinned files again to compare them with the pinned URLs' content; runs on any Python other than 3.9.6 or any Node other than 26.3.0; a person reading the items.
