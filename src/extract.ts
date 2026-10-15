@@ -82,10 +82,19 @@ const CURRENCY_SYMBOLS: ReadonlyMap<number, string> = new Map([
   [0x20bd, 'RUB'], [0x20ba, 'TRY'], [0x20ab, 'VND'], [0x20aa, 'ILS'], [0x20b1, 'PHP'], [0xe3f, 'THB'],
   [0x20b4, 'UAH'], [0x20a6, 'NGN'],
 ])
-const CURRENCY_CODES = new Set([
-  'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'INR', 'MXN', 'BRL', 'KRW', 'SEK',
-  'NOK', 'DKK', 'NZD', 'SGD', 'HKD', 'PLN', 'ZAR', 'RUB', 'TRY', 'TWD',
-])
+// ISO 4217 codes in use, plus the few crypto and market codes that are written like them. Matched in capitals only.
+// Left out on purpose, because they are also words or names in capitals (TOP 10, ALL 5, PEN 5, COP26, AMD 5, NIO 5, PHP 8):
+// ALL, TOP, PEN, SOS, CUP, COP, AMD, NIO and PHP. Those stay what they are in text, a word or an identifier.
+const CURRENCY_CODES: ReadonlySet<string> = new Set(
+  (
+    'AED AFN ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP CNY ' +
+    'CRC CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR ILS INR ' +
+    'IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP ' +
+    'MRU MUR MVR MWK MXN MYR MZN NAD NGN NOK NPR NZD OMR PAB PGK PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG ' +
+    'SEK SGD SHP SLE SRD SSP STN SVC SYP SZL THB TJS TMT TND TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF ' +
+    'XCD XOF XPF YER ZAR ZMW ZWG RMB BTC ETH USDT USDC'
+  ).split(' '),
+)
 // Letters glued before a dollar sign that say which dollar ("CA$5", "NT$5", "Mex$5").
 const DOLLAR_PREFIXES: Record<string, string> = {
   US: 'USD', CA: 'CAD', AU: 'AUD', NZ: 'NZD', HK: 'HKD', MX: 'MXN', SG: 'SGD', TW: 'TWD', NT: 'TWD', Mex: 'MXN', MEX: 'MXN',
@@ -198,6 +207,8 @@ const RESOLUTIONS: ReadonlySet<string> = new Set(['144', '240', '360', '480', '5
 // A letter prefix that is a currency written before the amount ("Rs1,500", "kr9999"): a quantity, not an identifier.
 const CURRENCY_PREFIX_WORDS: ReadonlySet<string> = new Set([
   'Rs', 'RS', 'rs', 'RM', 'Rp', 'kr', 'Kr', 'KR', 'R', 'zł', 'Fr', 'Php', 'PHP', 'Tk', 'Kč', 'Ft', 'lei', 'Lei', 'Br', 'Bs',
+  // Local abbreviations of more than one letter (a single letter, N, P, Q or K, is too often a name: P100, Q3).
+  'KSh', 'Ksh', 'KSH', 'Sh', 'TL', 'Dh', 'DH', 'Kz', 'Lek', 'Nu', 'Ls', 'Lt', 'Le',
 ])
 
 const MAGNITUDE_WORDS: Record<string, number> = {
@@ -1311,7 +1322,20 @@ export function scan(
    */
   const prefixedFormReason = (wStart: number, i0: number, j: number): SkipKind => {
     const prefix = slice(wStart, i0)
-    if (!CURRENCY_PREFIX_WORDS.has(prefix)) return 'identifier'
+    if (!CURRENCY_PREFIX_WORDS.has(prefix)) {
+      // A currency code in lower or mixed case ("usd1,200"): an amount, but only when it has a separator or
+      // three digits, because "cop26" and "gel2" are names.
+      if ((prefix.length === 3 || prefix.length === 4) && CURRENCY_CODES.has(prefix.toUpperCase())) {
+        let marks = false
+        for (let k = i0; k < j; k++) {
+          const ch = at(k)
+          if (ch === 0x2c || ch === 0x2e) marks = true
+          else if (!isDigit(ch)) return 'identifier'
+        }
+        return marks || j - i0 >= 3 ? 'unread-glued-form' : 'identifier'
+      }
+      return 'identifier'
+    }
     let marks = false
     for (let k = i0; k < j; k++) {
       const ch = at(k)
@@ -1363,6 +1387,11 @@ export function scan(
     if (p - 2 >= floor && isUpper(c) && isUpper(at(p - 1)) && isUpper(at(p - 2)) && !isLetter(at(p - 3))) {
       const code = slice(p - 2, p + 1)
       if (CURRENCY_CODES.has(code)) return { start: p - 2, code }
+    }
+    // USDT and USDC: four capitals.
+    if (p - 3 >= floor && isUpper(c) && isUpper(at(p - 1)) && isUpper(at(p - 2)) && isUpper(at(p - 3)) && !isLetter(at(p - 4))) {
+      const code = slice(p - 3, p + 1)
+      if (CURRENCY_CODES.has(code)) return { start: p - 3, code }
     }
     return null
   }
@@ -1616,7 +1645,7 @@ export function scan(
         sfx.percent = '%'
         sfx.end = we
         return sfx
-      } else if (w.length === 3 && CURRENCY_CODES.has(w)) {
+      } else if ((w.length === 3 || w.length === 4) && CURRENCY_CODES.has(w)) {
         sfx.currency = w
         sfx.end = we
         return sfx
@@ -1710,7 +1739,7 @@ export function scan(
         sfx.percent = 'pp'
         return we
       }
-      if (w.length === 3 && CURRENCY_CODES.has(w)) {
+      if ((w.length === 3 || w.length === 4) && CURRENCY_CODES.has(w)) {
         sfx.currency = w
         return we
       }
