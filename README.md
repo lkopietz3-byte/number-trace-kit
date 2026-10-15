@@ -18,6 +18,20 @@ Status: version 0.1.0, private and unreleased. The package is marked `"private":
 
 It does not call a model, read a network, or use the clock or randomness. Same input, same options, same result.
 
+## Install and use
+
+Not published to npm yet (see Status). From a checkout: `npm ci`, then `npm run build`, then import from `dist/index.js`, or `npm pack` and install the tarball. Once it is published: `npm install number-trace-kit`.
+
+It is an ES module with no dependencies and no `node:` imports, so it also runs in a browser or an edge runtime through a bundler.
+
+| You write | Node 22.12 and newer, Node 20.19 and newer | Older Node 20 and 22 |
+| --- | --- | --- |
+| `import { traceNumbers } from 'number-trace-kit'` | works | works (Node 20 or newer is required) |
+| `const { traceNumbers } = require('number-trace-kit')` | works (`require()` of an ES module, no flag) | needs `--experimental-require-module` where it exists; use `import` |
+| TypeScript | `dist/index.d.ts` ships; use `module` and `moduleResolution` of `node16`, `nodenext` or `bundler` | the same |
+
+The Node versions where `require()` of an ES module needs no flag are Reported by the Node release notes (20.19.0 and 22.12.0); `require` and `import` were both run here on Node 26.3.0 (Verified). `npm run verify:package` installs the packed tarball into an empty project and imports every entry point.
+
 ## Start with a preset
 
 Real reports and pricing pages need more than the defaults. Pick a preset, then override what your evidence needs.
@@ -241,6 +255,26 @@ reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '125
 - The result is `{ ok, sum, total, difference, tolerance, rows }` with exact decimal strings. `difference` is `sum - total`; `ok` is `|difference| <= tolerance` (inclusive). Zero prints as `0`.
 - Empty rows, a missing total, a negative tolerance and unknown keys are errors, not passes.
 
+## Accuracy on real output
+
+Measured numbers, each with its denominator, a 95% Wilson interval, its corpus and the kit revision (`bcf176b`, version 0.1.0, before the packaging commits). The corpora are third-party text with their own terms, so they are not shipped; the scripts that ran them are not part of the package either. Read them as what one run on one sample said, not as a rate you will see on your own data.
+
+| Corpus and setting | Result |
+| --- | --- |
+| **RAGTruth**, 289 responses (question answering, summaries, data-to-text), `strict` with list markers ignored: honest responses (135 with no annotated hallucination) with any verdict other than `clean` | 20 of 135 = 14.8% (9.8 to 21.8%) |
+| the same, honest numbers flagged `untraced` | 14 of 697 = 2.0% (1.2 to 3.3%); another 16 are `unknown` |
+| the same, numbers inside annotated hallucinations that are absent from the source: caught as `untraced` | 96 of 106 = 90.6% (83.5 to 94.8%); the other 10 are `unknown`; none passed (0 of 106, 0 to 3.5%) |
+| `report` preset, same corpus: caught / passed | 80 of 106 = 75.5% (66.5 to 82.7%) / 5 of 106 = 4.7% (2.0 to 10.6%) |
+| `ignoreStructure: true` instead of the markers pattern: honest question-answering responses that are `clean`; responses with an unsupported number that come back `clean` | 42 of 45 = 93.3% (82.1 to 97.7%); 0 of 72 (0 to 5.1%) |
+| **FinanceBench** (10-K questions), `strict`, each filing page read as printed and again at its statement scale: answers judged correct with at most 4 numbers that are `clean` | 280 of 348 = 80.5% (76.0 to 84.3%) |
+| the same, correct answers that work through more than 4 numbers | 129 of 752 = 17.2% (14.6 to 20.0%): intermediate figures that the filing does not print are `untraced` |
+| the same, answers whose headline number is wrong that come back `clean` | 8 of 153 = 5.2% (2.7 to 10.0%): the right number in the wrong place |
+| **Labeled benchmark** built for this kit (203 number items: 103 honest, 100 with one planted error; planted errors are programmatic edits), derivations on: honest items flagged | 9 of 103 = 8.7% (4.7 to 15.8%) |
+| the same, planted errors in the types a value check can see (82 items): caught with the default options, `strict`, `report`, `allowBareEvidence` | 75 of 82 = 91.5% (83.4 to 95.8%), 75, 66 = 80.5% (70.6 to 87.6%), 70 = 85.4% (76.1 to 91.4%) |
+| the same, two kinds a value check cannot see (swapped numbers, flipped direction) | 0 of 18 |
+
+What these say. The honest-response rate is the cost you pay for the zero-pass rate on unsupported numbers: about one honest response in seven needs a person on this corpus, mostly for numbers the model derived or spelled differently from the page. The labeled benchmark is small and was built by the same hand as the kit, so its rates flatter it; the RAGTruth rows are real model output, with the annotators' labels. Numbers in the earlier benchmark README (a 6% false-fail and an 85% catch rate) came from the constructed benchmark alone and are not claims about real output.
+
 ## Known limits
 
 Choices that are made on purpose, not pending work:
@@ -257,6 +291,7 @@ Choices that are made on purpose, not pending work:
 - A number written with a zero exponent (`5e0`) carries no magnitude, so an `evidenceScale` hint can still rescale it; leave the hint off for evidence that prints scientific notation.
 - An output with no numbers is `clean`: check `numbers.length` and `skipped` if you expect some. Identifier shapes (`X3`, `v2.1`, `iPhone15`, `5G`) are skipped and listed; a hyphenated name with letters on both sides of its number (`sales-9999-units`) is an identifier too, whatever it means in prose. `skipped` is filled only when the output is a string, not when you pass tokens.
 - A derivation is not scoped to a document, row or sentence: any two numbers of the same class in the evidence can combine. The coincidence guard (`maxDerivationMatches`, `maxDerivationDensity`) is the protection, and the cost is that some honest derived numbers on dense pages are `unknown`.
+- A whole number from 1900 to 2100 written with no separator (`2000 units`) is read as a year, and a year is never a derivation operand, so a sum that needs it (`2,500 units` from `2000 units` and `500 units`) is `untraced`; written `2,000` it is a count. A list written with commas and no spaces (`boxes 1,2,3`) is read as a decimal.
 - Derived values do not chain: a figure computed in the output and then used in a second computation is not an operand.
 - Operands of one derivation need the same class and unit. A table that prints `$` on its first row only needs the `currency` hint, not a mixed derivation.
 - The kit checks numbers, not sentences: right numbers in the wrong place, a direction flip (`rose` for `fell`) and swapped fields pass.
