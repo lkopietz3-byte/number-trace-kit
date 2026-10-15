@@ -425,6 +425,46 @@ function makeToken(raw: string, start: number, end: number, value: string, scale
   return { raw, start, end, value, scale, kind, ambiguous: false }
 }
 
+/** A whole hour from 1 to 12 written as a plain integer, or -1. */
+function plainHour(t: Tok): number {
+  if (t.kind !== 'count' || t.scale !== 0 || t.magnitude !== undefined || t.signStyle !== undefined || t.parenthesized === true) return -1
+  if (t.ambiguous && t.ambiguity !== 'superscript') return -1
+  if (t.value.length > 2) return -1
+  for (let k = 0; k < t.value.length; k++) {
+    const c = t.value.charCodeAt(k)
+    if (c < 0x30 || c > 0x39) return -1
+  }
+  const h = Number(t.value)
+  return h >= 1 && h <= 12 ? h : -1
+}
+
+/**
+ * An hour with am or pm ("5pm", "5 PM", the 5 in "5-6pm") is a time of day: its value is the minutes since
+ * midnight. A range takes its meridiem from its end, and the start moves to the other half of the day when it
+ * would otherwise come after the end ("9-5pm" is 9 am to 5 pm, "11-1pm" is 11 am to 1 pm).
+ */
+function readClockHours(tokens: Tok[]): void {
+  for (let k = 0; k < tokens.length; k++) {
+    const t = tokens[k]
+    if (t === undefined || (t.unit !== 'am' && t.unit !== 'pm')) continue
+    const h = plainHour(t)
+    if (h < 0) continue
+    let unit: 'am' | 'pm' = t.unit
+    const last = t.raw.charCodeAt(t.raw.length - 1)
+    const inherited = t.range === 'start' && last >= 0x30 && last <= 0x39
+    if (inherited) {
+      const next = tokens[k + 1]
+      if (next !== undefined && next.range === 'end') {
+        const endHour = next.kind === 'time' ? Math.floor(Number(next.value) / 60) % 12 : plainHour(next) % 12
+        if (endHour >= 0 && h % 12 > endHour) unit = unit === 'pm' ? 'am' : 'pm'
+      }
+    }
+    t.kind = 'time'
+    t.unit = unit
+    t.value = String((h % 12) * 60 + (unit === 'pm' ? 720 : 0))
+  }
+}
+
 interface SubToken {
   /** Index of the first and last digit run (into parts) this token spans. */
   first: number
@@ -549,7 +589,7 @@ export function scan(
   const lastToken = (): Tok | undefined => out[out.length - 1]
   const lastPlain = (): Tok | undefined => {
     const t = lastToken()
-    return t !== undefined && t.kind !== 'date-part' ? t : undefined
+    return t !== undefined && t.kind !== 'date-part' && t.kind !== 'time' ? t : undefined
   }
 
   const pushDate = (
@@ -615,12 +655,14 @@ export function scan(
   }
 
   /** ISO dates, times of day and numeric D/M/Y dates. Returns the end index or -1. */
-  const tryDate = (i: number): number => {
+  const tryDate = (i: number, clockOnly: boolean): number => {
     // The tail of a longer slash chain ("1/2/3/45") is part of that chain, not a date of its own.
     if (at(i - 1) === 0x2f && isDigit(at(i - 2))) return -1
     const a = runEnd(i) - i
     if (a === 0 || a > 4) return -1
     const sep = at(i + a)
+    // After the first number of a range ("6am to 6:30pm") only a time of day can still start here.
+    if (clockOnly && sep !== 0x3a) return -1
     const num = (s: number, e: number): number => Number(slice(s, e))
     if (a === 4 && (sep === 0x2d || sep === 0x2f || sep === 0x2e)) {
       const r2 = i + 5
@@ -646,26 +688,53 @@ export function scan(
     }
     if ((a === 1 || a === 2) && sep === 0x3a) {
       const r2 = i + a + 1
-      if (runEnd(r2) - r2 === 2) {
+      const mLen = runEnd(r2) - r2
+      // "9:30", "18:05", and the on-the-hour "18:0" some data sources print.
+      if (mLen === 2 || (mLen === 1 && at(r2) === 0x30)) {
         const h = num(i, i + a)
-        const mi = num(r2, r2 + 2)
-        let after = r2 + 2
+        const mi = num(r2, r2 + mLen)
+        let after = r2 + mLen
         let sec: number | null = null
-        if (at(after) === 0x3a && runEnd(after + 1) - (after + 1) === 2) {
+        if (mLen === 2 && at(after) === 0x3a && runEnd(after + 1) - (after + 1) === 2) {
           sec = num(after + 1, after + 3)
           after += 3
         }
         if (!isDigit(at(after)) && h <= 24 && mi <= 59 && (sec === null || sec <= 60)) {
           const raw = slice(i, after)
-          const end = exponentEnd(after)
-          const flag = end > after ? ('superscript' as const) : undefined
-          pushDate(i, i + a, h, 'hour', raw)
+          const mer = h >= 1 && h <= 12 ? meridiemAt(after) : null
           if (sec === null) {
-            pushDate(r2, end, mi, 'minute', raw, flag)
-          } else {
-            pushDate(r2, r2 + 2, mi, 'minute', raw)
-            pushDate(r2 + 3, end, sec, 'second', raw, flag)
+            // One time of day: minutes since midnight. Without am or pm a 12-hour-looking time may be either.
+            const stop = mer === null ? after : mer.end
+            const end = exponentEnd(stop)
+            let minutes = h * 60 + mi
+            let alt: number | null = null
+            if (mer !== null) {
+              minutes = (h % 12) * 60 + mi + (mer.unit === 'pm' ? 720 : 0)
+            } else if (h >= 1 && h <= 12 && !(a === 2 && at(i) === 0x30)) {
+              alt = h === 12 ? mi : minutes + 720
+            }
+            const t = makeToken(slice(i, end), i, end, String(minutes), 0, 'time')
+            if (mer !== null) t.unit = mer.unit
+            if (end > stop) {
+              t.ambiguous = true
+              t.ambiguity = 'superscript'
+            } else if (alt !== null) {
+              t.ambiguous = true
+              t.ambiguity = 'meridiem'
+              t.alternates = [{ value: String(alt), scale: 0 }]
+            }
+            out.push(t)
+            floor = end
+            return end
           }
+          // With seconds the parts stay separate; a meridiem moves the hour to the 24-hour clock.
+          const stop = mer === null ? after : mer.end
+          const end = exponentEnd(stop)
+          const flag = end > stop ? ('superscript' as const) : undefined
+          const hour = mer === null ? h : (h % 12) + (mer.unit === 'pm' ? 12 : 0)
+          pushDate(i, i + a, hour, 'hour', raw)
+          pushDate(r2, r2 + 2, mi, 'minute', raw)
+          pushDate(r2 + 3, end, sec, 'second', raw, flag)
           return end
         }
       }
@@ -1632,10 +1701,14 @@ export function scan(
     // The dash that is not a sign: a range separator between two numbers.
     // The second endpoint may carry its own sign ("-5\u2013-3%"), so this is decided apart from the sign.
     let rangeDash = -1
+    let rangePrev: Tok | undefined
     {
       // "10-12", "10\u201312", "10 \u2013 12" and "10 to 12" join two numbers into a range.
       const prev = lastPlain()
-      if (prev !== undefined && prev.end >= floor && (rangeGap(prev.end, start) || betweenGap(prev, start))) rangeDash = prev.end
+      if (prev !== undefined && prev.end >= floor && (rangeGap(prev.end, start) || betweenGap(prev, start))) {
+        rangeDash = prev.end
+        rangePrev = prev
+      }
     }
     // "3 x 4", "3x4", "2 \u00d7 4": a multiplication sign between two numbers, not a letter glued on.
     const timesPrev = operatorBefore(start)
@@ -1676,8 +1749,15 @@ export function scan(
 
     // ---- dates, times, month names -----------------------------------------------
     if (cur === null && !signValid && !bare) {
-      const d = rangeDash < 0 && !lead ? tryDate(i0) : -1
-      if (d >= 0) return d
+      const d = !lead ? tryDate(i0, rangeDash >= 0) : -1
+      if (d >= 0) {
+        // "5-6:30pm": the time that ends a range shares its meridiem with the number that starts it.
+        const t = out[out.length - 1]
+        if (rangePrev !== undefined && t !== undefined && t.kind === 'time' && rangeCanShare(rangePrev, t, start - rangeDash !== 1)) {
+          joinGroup('range', rangePrev, t)
+        }
+        return d
+      }
       const m = lead ? -1 : tryMonthName(i0)
       if (m >= 0) return m
     }
@@ -2124,6 +2204,7 @@ export function scan(
     const whole = slice(first.start, last.end)
     for (const t of chain) if (t.ambiguity === 'fraction') t.groupRaw = whole
   }
+  readClockHours(out)
   for (const t of out) Object.freeze(t)
   if (idTokens.length === 0) return out
   // Merge the identifier digits back in, in text order.

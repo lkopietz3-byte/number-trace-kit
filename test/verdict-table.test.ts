@@ -822,7 +822,8 @@ describe('M6 field:F1: a time of day never traces to a unit-less number', () => 
     expect(trace('Open until 5 days.', HOURS_PAGE).verdict).toBe('unknown')
   })
   it('field:F1 every way of writing am and pm is a time unit', () => {
-    for (const out of ['until 5 PM.', 'until 5PM.', 'until 5 p.m.', 'until 5 P.M.', 'until 9 a.m.', 'until 5 Pm.']) {
+    // S2: the page prints 9:0, so 9 a.m. now traces to it; the a.m. spelling is checked with a 5 the page does not print as a time.
+    for (const out of ['until 5 PM.', 'until 5PM.', 'until 5 p.m.', 'until 5 P.M.', 'until 5 a.m.', 'until 5 Pm.']) {
       expect(trace(`Open ${out}`, HOURS_PAGE).numbers[0], out).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
     }
     expect(extractNumbers('5pm, 5 PM, 5 p.m., 9 a.m., 9 A.M., 5-6pm').map((t) => [t.raw, t.unit])).toEqual([

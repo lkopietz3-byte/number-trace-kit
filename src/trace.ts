@@ -48,8 +48,8 @@ import type {
   TraceStatus,
 } from './types.js'
 
-const KINDS: readonly NumberKind[] = ['percent', 'currency', 'count', 'decimal', 'year', 'date-part', 'ordinal']
-const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long', 'magnitude', 'currency']
+const KINDS: readonly NumberKind[] = ['percent', 'currency', 'count', 'decimal', 'year', 'date-part', 'time', 'ordinal']
+const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long', 'magnitude', 'currency', 'meridiem']
 const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average', 'product']
 const DATE_PARTS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 const MAX_LIST = 8
@@ -115,6 +115,8 @@ function shapeOf(t: NumberToken): Shape {
   if (t.kind === 'percent') return { cls: t.unit === 'pp' ? 'pp' : 'pct', unit: '' }
   if (t.kind === 'currency') return { cls: `cur:${t.currency ?? ''}`, unit: '' }
   if (t.kind === 'date-part') return { cls: 'date', unit: t.part ?? '' }
+  // A time of day (minutes since midnight) matches only another time of day, never a count.
+  if (t.kind === 'time') return { cls: 'time', unit: '' }
   return { cls: 'plain', unit: t.unit ?? '' }
 }
 
@@ -658,6 +660,13 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
           : written !== undefined && written.length === hi.end - lo.start ? written
           : tuple.tokens.map((t) => t.raw).join(' ')
         addDateKeys(ev.dateKeys, tuple.parts, { id: idOf(first), raw, start: lo.start, end: hi.end })
+        // A time written with seconds ("14:05:30") also stands for the time without them ("14:05").
+        const hour = tuple.tokens.find((t) => t.part === 'hour')
+        const minute = tuple.tokens.find((t) => t.part === 'minute')
+        if (hour !== undefined && minute !== undefined && !hour.ambiguous && !minute.ambiguous) {
+          const minutes = Number(absKey(hour.value)) * 60 + Number(absKey(minute.value))
+          ingest(ev, { raw, start: lo.start, end: hi.end, value: String(minutes), scale: 0, kind: 'time', ambiguous: false }, idOf(first))
+        }
       }
     }
   }
@@ -885,7 +894,7 @@ class Matcher {
       const t = e.token
       // A number whose only doubt is thousands-versus-decimal ("1.250") still takes part, with its primary reading.
       if ((t.ambiguous && t.ambiguity !== 'separator') || weakPrimary(t)) continue
-      if (t.kind === 'date-part' || t.kind === 'year' || t.kind === 'ordinal') continue
+      if (t.kind === 'date-part' || t.kind === 'time' || t.kind === 'year' || t.kind === 'ordinal') continue
       // Two occurrences of the same value can still add up (two rows of 7.5%);
       // a third adds nothing new, and repeats must not inflate the search.
       // Zero is zero whatever sign it was written with.
@@ -1354,7 +1363,7 @@ function traceOne(
   if (tok.ambiguity === 'currency') return unknownTrace(tok, 'conflicting-currency')
   // The number as written, and (with allowBareEvidence) as a unit-less number.
   const variants: Variant[] = [{ shape, bare: false, unverified: false }]
-  if (ctx.allowBare && shape.cls !== 'plain') variants.push({ shape: BARE_SHAPE, bare: true, unverified: true })
+  if (ctx.allowBare && shape.cls !== 'plain' && shape.cls !== 'time') variants.push({ shape: BARE_SHAPE, bare: true, unverified: true })
   // A bare output number against an amount with a currency.
   if (ctx.allowBareOut && shape.cls === 'plain' && shape.unit === '') {
     variants.push({ shape: { cls: 'curany', unit: '' }, bare: false, unverified: true })
@@ -1435,9 +1444,22 @@ function traceOne(
   // 5. The search was too large to run.
   if (ctx.derivations.size > 0 && matcher.capHit) return unknownTrace(tok, 'candidate-cap')
 
+  // A bare hour with am or pm ("5pm") is not cleared by a unit-less number of the same size (a 5.0 rating): cannot tell.
+  if (tok.kind === 'time' && bareHourMatches(tok, ev)) return unknownTrace(tok, 'unit-unverified')
+
   // 6. Positive finding: not in the evidence.
   const near = nearMisses(tok, shape, outNeg, key, ev, ctx)
   return { token: tok, status: 'untraced', evidence: [], ...(near.length > 0 ? { nearMisses: near } : {}) }
+}
+
+/** Is the hour of a bare "5pm" (no minutes written) the same size as a unit-less number in the evidence? */
+function bareHourMatches(tok: NumberToken, ev: Evidence): boolean {
+  if (tok.unit !== 'am' && tok.unit !== 'pm') return false
+  if (tok.raw.includes(':') || tok.value.length > 4) return false
+  let hour = Number(tok.value) / 60
+  if (!Number.isInteger(hour)) return false
+  hour = hour % 12 === 0 ? 12 : hour % 12
+  return lookup(ev.strong, { cls: 'plain', unit: '' }, false, String(hour), true).length > 0
 }
 
 function isLabel(tok: NumberToken): boolean {
@@ -1445,7 +1467,7 @@ function isLabel(tok: NumberToken): boolean {
 }
 
 function isClockUnit(tok: NumberToken): boolean {
-  return tok.unit === 'am' || tok.unit === 'pm'
+  return tok.kind === 'time' || tok.unit === 'am' || tok.unit === 'pm'
 }
 
 interface Variant {
@@ -1562,7 +1584,7 @@ function traceDate(tok: NumberToken, ev: Evidence, info: DateInfo | undefined): 
       return { token: tok, status: 'traced', evidence: (mine === undefined ? [] : ev.dateKeys.get(tupleKey(mine.parts)) ?? []).slice(0, MAX_LIST) }
     }
     const byParts = traceDateParts(tok, ev)
-    return byParts.status === 'untraced' ? byParts : unknownTrace(tok, 'date-not-in-evidence')
+    return byParts.status === 'untraced' ? byParts : unknownTrace(tok, tok.part === 'hour' || tok.part === 'minute' || tok.part === 'second' ? 'time-not-in-evidence' : 'date-not-in-evidence')
   }
   return traceDateParts(tok, ev)
 }

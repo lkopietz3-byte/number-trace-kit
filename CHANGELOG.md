@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (S2: clock times)
+
+- `NumberKind` gains `time` and `AmbiguityReason` gains `meridiem`. A time of day (`6pm`, `9:00 AM`, `18:0`, `09:00-18:00`) is one token whose value is the minutes since midnight, so `6pm` traces to `18:0` and `9:00 AM` to `9:0` (field:F2). Before, clock parts were compared digit by digit as date parts and the honest forms failed: on the RAGTruth Data2txt part of the field corpus (strict, list markers ignored), honest tokens flagged `untraced` fell from 44.9% (189 of 421) to 2.6% (8 of 310; times that used to be two tokens are now one, so the counts are smaller) with no unsupported number passing (4 of 56 before, 0 of 40 now). A time with no am or pm and a 12-hour-looking hour is `ambiguous` (`meridiem`) with the other half of the day as its alternate. A range of hours takes its meridiem from its end (`9-5pm` is 9 am to 5 pm). `6am to 6:30pm` now reads `6:30pm` as one time instead of `6` and `30pm`. A time with seconds stays date parts, with the new unknown reason `time-not-in-evidence` (it used to say `date-not-in-evidence`), and a meridiem after seconds (`8:30:15 PM`) is applied to the hour instead of dropped.
+- One existing row changed on purpose (`verdict-table.test.ts`, "every way of writing am and pm is a time unit"): `until 9 a.m.` used to be `unknown` against a page that prints `9:0`; it now traces to it, so that row checks the a.m. spelling with `5 a.m.` instead.
+
 ### Fixed (S1: leading decimal point)
 
 - A leading decimal point survives the punctuation that used to drop it (false-pass:F08): `~.5%` is 0.5%, not 5%, and `≈.5`, `|.99`, `#.5`, `“.5”`, `_.5_` and the backtick forms read the same way, so `Growth was ~.5%` no longer traces to `Growth was 5%`. The point is kept unless a letter, a digit, another point or an ellipsis comes right before it, or a number ends right there (`item.5`, `5%.5`, `wait...5` are as before). A decimal comma after the same symbols (`~,5%`) keeps its mark too.

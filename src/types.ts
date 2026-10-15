@@ -6,6 +6,7 @@ export type NumberKind =
   | 'decimal'
   | 'year'
   | 'date-part'
+  | 'time'
   | 'ordinal'
 
 /** The role of a number inside a date or a time of day, when it is known. */
@@ -22,6 +23,7 @@ export type AmbiguityReason =
   | 'too-long'
   | 'magnitude'
   | 'currency'
+  | 'meridiem'
 
 /** How a negative or explicitly signed number was written. */
 export type SignStyle = 'minus' | 'plus' | 'parentheses'
