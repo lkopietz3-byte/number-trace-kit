@@ -25,6 +25,54 @@ const MONTHS: Record<string, number> = {
   october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
 }
 
+/**
+ * Month names in German, French, Spanish, Italian, Portuguese, Dutch and Swedish, lower case, January first.
+ * Written out in full they need no capital letter and no dot ("5 mars 2026", "5 de marzo de 2026"); English
+ * names need a capital (MONTHS above) because "may" and "mar" are words.
+ */
+const MONTH_WORDS: readonly (readonly string[])[] = [
+  ['janvier', 'januar', 'jänner', 'janner', 'enero', 'gennaio', 'janeiro', 'januari'],
+  ['février', 'fevrier', 'februar', 'febrero', 'febbraio', 'fevereiro', 'februari'],
+  ['mars', 'märz', 'maerz', 'marzo', 'março', 'maart'],
+  ['avril', 'april', 'abril', 'aprile'],
+  ['mai', 'mayo', 'maggio', 'maio', 'mei', 'maj'],
+  ['juin', 'juni', 'junio', 'giugno', 'junho'],
+  ['juillet', 'juli', 'julio', 'luglio', 'julho'],
+  ['août', 'aout', 'august', 'agosto', 'augustus', 'augusti'],
+  ['septembre', 'september', 'septiembre', 'setiembre', 'settembre', 'setembro'],
+  ['octobre', 'oktober', 'octubre', 'ottobre', 'outubro'],
+  ['novembre', 'november', 'noviembre', 'novembro'],
+  ['décembre', 'decembre', 'dezember', 'december', 'diciembre', 'dicembre', 'dezembro'],
+]
+/** Abbreviations that count only with their dot ("janv.", "févr.", "sept."). */
+const MONTH_ABBREVIATIONS_BY_MONTH: readonly (readonly string[])[] = [
+  ['janv', 'jan', 'ene', 'gen'], ['févr', 'fevr', 'feb', 'fev'], ['mär', 'mrz'], ['avr', 'apr', 'abr'], ['mag'], ['giu', 'jun'],
+  ['juil', 'jul', 'lug'], ['août', 'aoû', 'ago', 'aug'], ['sept', 'sep', 'set'], ['oct', 'okt', 'ott', 'out'], ['nov'], ['déc', 'dec', 'dez', 'dic'],
+]
+
+/** A word to month map. A word that two tables give different months is left out. */
+function monthMap(table: readonly (readonly string[])[]): ReadonlyMap<string, number> {
+  const out = new Map<string, number>()
+  const clash = new Set<string>()
+  table.forEach((words, index) => {
+    for (const w of words) {
+      const had = out.get(w)
+      if (had !== undefined && had !== index + 1) clash.add(w)
+      out.set(w, index + 1)
+    }
+  })
+  for (const w of clash) out.delete(w)
+  return out
+}
+const MONTH_NAMES = monthMap(MONTH_WORDS)
+const MONTH_ABBREVIATIONS = monthMap(MONTH_ABBREVIATIONS_BY_MONTH)
+/** Languages whose worded dates are read (the rest are `unread-date`, see below), and the East Asian ones read by their markers. */
+/** Words that are a month in another language and also an English word or name ("Mars 2020", "Mayo Clinic"): capitalized, they count only when the locale is not English. */
+const MONTH_NAME_COLLISIONS: ReadonlySet<string> = new Set(['mars', 'mayo', 'mai', 'maj', 'mei', 'juli', 'juni'])
+/** Languages with a month table of their own. */
+const MONTH_TABLE_LANGUAGES: ReadonlySet<string> = new Set(['de', 'fr', 'es', 'it', 'pt', 'nl', 'sv'])
+const READ_DATE_LANGUAGES: ReadonlySet<string> = new Set(['en', 'de', 'fr', 'es', 'it', 'pt', 'nl', 'sv', 'ja', 'zh', 'ko'])
+
 // A Map, so an inherited property on Object.prototype can never read as a currency symbol.
 const CURRENCY_SYMBOLS: ReadonlyMap<number, string> = new Map([
   [0x24, 'USD'], [0x20ac, 'EUR'], [0xa3, 'GBP'], [0xa5, '¥'], [0x20b9, 'INR'], [0x20a9, 'KRW'],
@@ -265,6 +313,11 @@ function isGroupSpace(c: number): boolean {
 
 function isDigit(c: number): boolean {
   return c >= 0x30 && c <= 0x39
+}
+
+/** A letter of any script that has words (Latin, Greek, Cyrillic, Hebrew, Arabic, Devanagari, Thai): for the worded-date check. */
+function isWordLetter(c: number): boolean {
+  return isLetter(c) || (c >= 0x370 && c <= 0x6ff && c !== 0x37e && c !== 0x387 && c !== 0x589) || (c >= 0x900 && c <= 0x97f) || (c >= 0xe00 && c <= 0xe7f)
 }
 
 function isUpper(c: number): boolean {
@@ -568,6 +621,7 @@ export function scan(
   let dimensionGroup: Group | null = null
   let floor = 0
   let lastMonth: { start: number; end: number } | null = null
+  const unreadDates = new Map<number, string>()
   let lastDateEnd = -1
 
   const at = (k: number): number => (k >= 0 && k < n ? (f[k] ?? -1) : -1)
@@ -616,22 +670,37 @@ export function scan(
     return t
   }
 
-  const monthWordAt = (s: number): { end: number; month: number } | null => {
-    // A capitalized month name or abbreviation starting at s, ending at a non-letter.
-    if (!isUpper(at(s))) return null
+  /**
+   * A month name starting at s: an English name or abbreviation with a capital, a full name in the other
+   * languages (any case), or one of their abbreviations followed by a dot. `end` excludes the dot, `next` includes it.
+   */
+  const monthWordAt = (s: number): { end: number; next: number; month: number } | null => {
+    if (!isLetter(at(s))) return null
     let q = s
-    while (q < n && q - s < 10 && isLetter(at(q))) q++
+    while (q < n && q - s < 14 && (isLetter(at(q)) || (q > s && isMark(at(q))))) q++
     if (isLetter(at(q))) return null
-    const month = own(MONTHS, slice(s, q).toLowerCase())
-    return month === undefined ? null : { end: q, month }
+    const word = slice(s, q).normalize('NFC').toLowerCase()
+    let month = isUpper(at(s)) ? own(MONTHS, word) : undefined
+    if (month === undefined && !(isUpper(at(s)) && MONTH_NAME_COLLISIONS.has(word) && !MONTH_TABLE_LANGUAGES.has(info.language))) {
+      month = MONTH_NAMES.get(word)
+    }
+    if (month !== undefined) return { end: q, next: q, month }
+    if (at(q) === 0x2e) {
+      month = MONTH_ABBREVIATIONS.get(word)
+      if (month !== undefined) return { end: q, next: q + 1, month }
+    }
+    return null
   }
 
   const monthWordBefore = (i: number): { start: number; end: number; month: number; fresh: boolean } | null => {
     let p = i - 1
     if (at(p) === 0x20 || at(p) === NBSP) p--
+    // "marzo de 2026": the connector between a month and its year.
+    if ((at(p) | 0x20) === 0x65 && (at(p - 1) | 0x20) === 0x64 && (at(p - 2) === 0x20 || at(p - 2) === NBSP)) p -= 3
+    else if ((at(p) | 0x20) === 0x6c && (at(p - 1) | 0x20) === 0x65 && (at(p - 2) | 0x20) === 0x64 && (at(p - 3) === 0x20 || at(p - 3) === NBSP)) p -= 4
     if (at(p) === 0x2e) p--
     let q = p
-    while (q >= 0 && p - q < 10 && isLetter(at(q))) q--
+    while (q >= 0 && p - q < 14 && (isLetter(at(q)) || isMark(at(q)))) q--
     const s = q + 1
     const e = p + 1
     if (e <= s) return null
@@ -641,6 +710,16 @@ export function scan(
     const w = monthWordAt(s)
     if (w === null || w.end !== e) return null
     return { start: s, end: e, month: w.month, fresh: !reusing }
+  }
+
+  /** The month name that ends right before e (a hyphen, say), or null. */
+  const monthWordEndingAt = (e: number): { start: number; month: number } | null => {
+    let q = e - 1
+    while (q >= 0 && e - 1 - q < 14 && (isLetter(at(q)) || isMark(at(q)))) q--
+    const s = q + 1
+    if (s >= e || s < floor || (q >= 0 && isLetter(at(q)))) return null
+    const w = monthWordAt(s)
+    return w === null || w.end !== e ? null : { start: s, month: w.month }
   }
 
   const pushMonth = (s: number, e: number, month: number): Tok => {
@@ -667,6 +746,10 @@ export function scan(
     const sep = at(i + a)
     // After the first number of a range ("6am to 6:30pm") only a time of day can still start here.
     if (clockOnly && sep !== 0x3a) return -1
+    // 2026年3月4日, 3月4日, 2026년 3월 4일
+    if ((a === 4 && (sep === 0x5e74 || sep === 0xb144)) || ((a === 1 || a === 2) && (sep === 0x6708 || sep === 0xc6d4))) {
+      return tryEastAsianDate(i, a)
+    }
     const num = (s: number, e: number): number => Number(slice(s, e))
     if (a === 4 && (sep === 0x2d || sep === 0x2f || sep === 0x2e)) {
       const r2 = i + 5
@@ -777,6 +860,77 @@ export function scan(
     return -1
   }
 
+  /** Year, month and day written with the East Asian markers: 年月日 (Chinese, Japanese) and 년월일 (Korean). */
+  const tryEastAsianDate = (i: number, a: number): number => {
+    const isMark = (c: number, kind: 'year' | 'month' | 'day'): boolean =>
+      kind === 'year' ? c === 0x5e74 || c === 0xb144 : kind === 'month' ? c === 0x6708 || c === 0xc6d4 : c === 0x65e5 || c === 0xc77c
+    const found: { s: number; e: number; value: number; part: DatePart }[] = []
+    let p = i
+    if (a === 4) {
+      found.push({ s: i, e: i + 5, value: Number(slice(i, i + 4)), part: 'year' })
+      p = i + 5
+      if (at(p) === 0x20) p++
+    }
+    const ma = runEnd(p) - p
+    if ((ma === 1 || ma === 2) && isMark(at(p + ma), 'month')) {
+      const month = Number(slice(p, p + ma))
+      if (month >= 1 && month <= 12) {
+        found.push({ s: p, e: p + ma + 1, value: month, part: 'month' })
+        p += ma + 1
+        if (at(p) === 0x20) p++
+        const da = runEnd(p) - p
+        if ((da === 1 || da === 2) && isMark(at(p + da), 'day')) {
+          const day = Number(slice(p, p + da))
+          if (day >= 1 && day <= 31) found.push({ s: p, e: p + da + 1, value: day, part: 'day' })
+        }
+      }
+    }
+    const last = found[found.length - 1]
+    if (last === undefined) return -1
+    const raw = text.slice(i, last.e)
+    for (const part of found) pushDate(part.s, part.e, part.value, part.part, raw)
+    return last.e
+  }
+
+  /** "8-Jun-2026" and "Jun-08-2026": a month name between hyphens, with the year last. Returns the end index or -1. */
+  const tryHyphenMonthDate = (i: number, e0: number, v: number): number => {
+    const yearAfter = (at0: number): { end: number; value: number } | null => {
+      const ys = at0
+      const ye = runEnd(ys)
+      if (ye - ys !== 4 || isDigit(at(ye))) return null
+      const value = Number(slice(ys, ye))
+      return value >= 1000 && value <= 2999 ? { end: ye, value } : null
+    }
+    if (at(e0) !== 0x2d) return -1
+    // 8-Jun-2026
+    const w = monthWordAt(e0 + 1)
+    if (w !== null && w.end === w.next && at(w.end) === 0x2d) {
+      const y = yearAfter(w.end + 1)
+      if (y !== null) {
+        const raw = text.slice(i, y.end)
+        pushDate(i, e0, v, 'day', raw)
+        pushDate(e0 + 1, w.end, w.month, 'month', raw)
+        const end = exponentEnd(y.end)
+        pushDate(w.end + 1, end, y.value, 'year', raw, end > y.end ? 'superscript' : undefined)
+        return end
+      }
+    }
+    // Jun-08-2026
+    if (at(i - 1) === 0x2d) {
+      const m = monthWordEndingAt(i - 1)
+      const y = m === null ? null : yearAfter(e0 + 1)
+      if (m !== null && y !== null) {
+        const raw = text.slice(m.start, y.end)
+        pushDate(m.start, i - 1, m.month, 'month', raw)
+        pushDate(i, e0, v, 'day', raw)
+        const end = exponentEnd(y.end)
+        pushDate(e0 + 1, end, y.value, 'year', raw, end > y.end ? 'superscript' : undefined)
+        return end
+      }
+    }
+    return -1
+  }
+
   /** "October 10", "10 October", "Oct 10, 2026". Returns the end index or -1. */
   const tryMonthName = (i: number): number => {
     const e0 = runEnd(i)
@@ -785,6 +939,10 @@ export function scan(
     // A digit run that continues as 1,234 or 1.5 is a number, not a date part.
     if ((at(e0) === 0x2c || at(e0) === 0x2e) && isDigit(at(e0 + 1))) return -1
     const v = Number(slice(i, e0))
+    if (a <= 2 && v >= 1 && v <= 31) {
+      const h = tryHyphenMonthDate(i, e0, v)
+      if (h >= 0) return h
+    }
     // "Oct 5-7": the second day of a range inside one date.
     const lastOut = out[out.length - 1]
     if (
@@ -825,7 +983,9 @@ export function scan(
     if (a === 4 && v >= 1000 && v <= 2999 && lastDateEnd >= 0 && floor === lastDateEnd) {
       const gap = i - lastDateEnd
       if ((gap === 1 && (at(lastDateEnd) === 0x20 || at(lastDateEnd) === 0x2c)) ||
-        (gap === 2 && at(lastDateEnd) === 0x2c && at(lastDateEnd + 1) === 0x20)) {
+        (gap === 2 && at(lastDateEnd) === 0x2c && at(lastDateEnd + 1) === 0x20) ||
+        (gap === 4 && at(lastDateEnd) === 0x20 && (at(lastDateEnd + 1) | 0x20) === 0x64 && (at(lastDateEnd + 2) | 0x20) === 0x65 && at(lastDateEnd + 3) === 0x20) ||
+        (gap === 5 && at(lastDateEnd) === 0x20 && (at(lastDateEnd + 1) | 0x20) === 0x64 && (at(lastDateEnd + 2) | 0x20) === 0x65 && (at(lastDateEnd + 3) | 0x20) === 0x6c && at(lastDateEnd + 4) === 0x20)) {
         const end = exponentEnd(e0)
         dateCluster?.push(pushDate(i, end, v, 'year', undefined, end > e0 ? 'superscript' : undefined))
         return end
@@ -835,10 +995,14 @@ export function scan(
       let e = e0
       const suf = ordinalSuffixAt(e)
       if (suf > 0) e += suf
+      else if ((at(e) | 0x20) === 0x65 && (at(e + 1) | 0x20) === 0x72 && !isLetter(at(e + 2)) && !isDigit(at(e + 2))) e += 2 // 1er mars
+      else if (at(e) === 0xba || at(e) === 0xb0) e += 1 // 1º de marzo
       let p = e
+      if (at(p) === 0x2e) p++ // 5. März
       if (at(p) === 0x20) {
         p++
-        if ((at(p) === 0x6f || at(p) === 0x4f) && (at(p + 1) === 0x66 || at(p + 1) === 0x46) && at(p + 2) === 0x20) p += 3
+        // "5th of October", "5 de marzo", "5 di marzo"
+        p += connectorLength(p)
         const w = monthWordAt(p)
         if (w !== null) {
           // "5-7 October": the first day of a range was read as a plain number before the month appeared.
@@ -858,11 +1022,46 @@ export function scan(
           const monthTok = pushMonth(p, w.end, w.month)
           openCluster(first?.part === 'day' && first.range === 'start' ? [first, day, monthTok] : [day, monthTok])
           lastDateEnd = w.end
-          return w.end
+          return w.next
         }
       }
     }
+    noteUnreadDate(i, e0, v)
     return -1
+  }
+
+  /** The length of "of ", "de " or "di " at p (the words between a day and a month), or 0. */
+  const connectorLength = (p: number): number => {
+    const a = at(p) | 0x20
+    const b = at(p + 1) | 0x20
+    if (at(p + 2) !== 0x20) return 0
+    return (a === 0x6f && b === 0x66) || (a === 0x64 && (b === 0x65 || b === 0x69)) ? 3 : 0
+  }
+
+  /**
+   * A worded date this locale has no month table for ("5 марта 2026"): the day and the year would be checked as
+   * independent numbers, so a wrong day could trace to an unrelated "5". Both are marked, and become `unknown`
+   * (`unread-date`) unless the same phrase is in the evidence.
+   */
+  const noteUnreadDate = (i: number, e0: number, v: number): void => {
+    if (READ_DATE_LANGUAGES.has(info.language) || e0 - i > 2 || v < 1 || v > 31) return
+    let p = e0
+    if (at(p) === 0x2e) p++
+    if (at(p) !== 0x20) return
+    p++
+    const ws = p
+    while (p < n && p - ws < 16 && isWordLetter(at(p))) p++
+    if (p - ws < 2 || isWordLetter(at(p))) return
+    if (at(p) === 0x2e) p++
+    if (at(p) !== 0x20) return
+    p++
+    const ye = runEnd(p)
+    if (ye - p !== 4 || isLetter(at(ye)) || isDigit(at(ye))) return
+    const year = Number(slice(p, ye))
+    if (year < 1900 || year > 2100) return
+    const raw = text.slice(i, ye)
+    unreadDates.set(i, raw)
+    unreadDates.set(p, raw)
   }
 
   const ordinalSuffixAt = (e: number): number => {
@@ -2216,6 +2415,16 @@ export function scan(
     for (const t of chain) if (t.ambiguity === 'fraction') t.groupRaw = whole
   }
   readClockHours(out)
+  if (unreadDates.size > 0) {
+    for (const t of out) {
+      const raw = unreadDates.get(t.start)
+      if (raw !== undefined && !t.ambiguous && (t.kind === 'count' || t.kind === 'year')) {
+        t.ambiguous = true
+        t.ambiguity = 'date'
+        t.groupRaw = raw
+      }
+    }
+  }
   for (const t of out) Object.freeze(t)
   if (idTokens.length === 0) return out
   // Merge the identifier digits back in, in text order.

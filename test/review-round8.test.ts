@@ -230,3 +230,80 @@ describe('S4 field:F5: the evidence scale reaches currency-tagged cells when ask
     expect(verdict('Revenue was $5,200 million.', evidence)).toBe('untraced')
   })
 })
+
+describe('S7 false-pass:F07: whole-date checks beyond English month names', () => {
+  const tr = (o: string, e: string, locale?: string): string => verdict(o, e, locale === undefined ? undefined : { locale })
+  const dates = (text: string, locale?: string): string[] =>
+    extractNumbers(text, locale === undefined ? undefined : { locale }).map((t) => `${t.part ?? t.kind}:${t.value}`)
+
+  it('S7 false-pass:F07 a wrong day does not trace to an unrelated number', () => {
+    expect(tr('Le 5 mars 2026', 'Déposé le 4 mars 2026 et 5 jours', 'fr-FR')).toBe('untraced')
+    expect(tr('Am 5. März 2026', 'Eingereicht am 4. März 2026. Frist: 5 Tage.', 'de-DE')).toBe('untraced')
+    expect(tr('Due 8-Jun-2026.', 'Due 7-Jun-2026. Net 8 days.')).toBe('untraced')
+    expect(tr('El 5 de marzo de 2026', 'Presentado el 4 de marzo de 2026 y 5 días', 'es-ES')).toBe('untraced')
+    expect(tr('Il 5 marzo 2026', 'Depositato il 4 marzo 2026 e 5 giorni', 'it-IT')).toBe('untraced')
+    expect(tr('Em 5 de março de 2026', 'Em 4 de março de 2026 e 5 dias', 'pt-PT')).toBe('untraced')
+    expect(tr('Op 5 maart 2026', 'Op 4 maart 2026 en 5 dagen', 'nl-NL')).toBe('untraced')
+    expect(tr('Den 5 mars 2026', 'Den 4 mars 2026 och 5 dagar', 'sv-SE')).toBe('untraced')
+  })
+
+  it('S7 false-pass:F07 the same date written another way is clean', () => {
+    expect(tr('2026年3月4日', 'Filed 2026-03-04')).toBe('clean')
+    expect(tr('2026年3月4日に提出', 'Filed 2026-03-04', 'ja-JP')).toBe('clean')
+    expect(tr('2026년 3월 4일', 'Filed 2026-03-04', 'ko-KR')).toBe('clean')
+    expect(tr('Le 4 mars 2026', '2026-03-04', 'fr-FR')).toBe('clean')
+    expect(tr('Le 4 mars 2026', '2026-03-04')).toBe('clean')
+    expect(tr('Am 4. März 2026', '2026-03-04', 'de-DE')).toBe('clean')
+    expect(tr('El 4 de marzo de 2026', '2026-03-04', 'es-ES')).toBe('clean')
+    expect(tr('El 4 de marzo del 2026', '2026-03-04', 'es-ES')).toBe('clean')
+    expect(tr('Em 4 de março de 2026', 'March 4, 2026', 'pt-BR')).toBe('clean')
+    expect(tr('4 maart 2026', '4 March 2026', 'nl-NL')).toBe('clean')
+    expect(tr('Due 8-Jun-2026.', 'Due June 8, 2026.')).toBe('clean')
+    expect(tr('Due Jun-08-2026.', 'Due 2026-06-08.')).toBe('clean')
+    expect(tr('Due 08-JUN-2026.', 'Due 2026-06-08.')).toBe('clean')
+    expect(tr('Le 1er mars 2026', '2026-03-01', 'fr-FR')).toBe('clean')
+    expect(tr('Le 4 févr. 2026', '2026-02-04', 'fr-FR')).toBe('clean')
+    expect(tr('März 2026', '2026-03-04', 'de-DE')).toBe('clean')
+    expect(tr('im Mai 2026', 'Mai 2026', 'de-DE')).toBe('clean')
+  })
+
+  it('S7 false-pass:F07 the roles of each part are read', () => {
+    expect(dates('Le 5 mars 2026', 'fr-FR')).toEqual(['day:5', 'month:3', 'year:2026'])
+    expect(dates('Am 5. März 2026', 'de-DE')).toEqual(['day:5', 'month:3', 'year:2026'])
+    expect(dates('5 de marzo de 2026', 'es-ES')).toEqual(['day:5', 'month:3', 'year:2026'])
+    expect(dates('Due 8-Jun-2026')).toEqual(['day:8', 'month:6', 'year:2026'])
+    expect(dates('Jun-08-2026')).toEqual(['month:6', 'day:8', 'year:2026'])
+    expect(dates('2026年3月4日')).toEqual(['year:2026', 'month:3', 'day:4'])
+    expect(dates('3月4日')).toEqual(['month:3', 'day:4'])
+    expect(dates('2026年3月')).toEqual(['year:2026', 'month:3'])
+    // NFD spelling of an accented month is the same month.
+    expect(dates('5 février 2026', 'fr-FR')).toEqual(['day:5', 'month:2', 'year:2026'])
+  })
+
+  it('S7 false-pass:F07 an honest number next to a month word that is not a month is untouched', () => {
+    expect(dates('5 mm of rain, 12 marbles, 2026 votes')).toEqual(['count:5', 'count:12', 'year:2026'])
+    expect(dates('Take 5 may 2026 stay')).toEqual(['count:5', 'year:2026'])
+    // Mars, the planet; Mayo, the clinic: capitalized, these are months only in a locale that has a table.
+    expect(dates('The Mars 2020 rover')).toEqual(['year:2020'])
+    expect(dates('Mars 2020', 'fr-FR')).toEqual(['month:3', 'year:2020'])
+    expect(dates('5 mars 2026')).toEqual(['day:5', 'month:3', 'year:2026'])
+  })
+
+  it('S7 false-pass:F07 a month word with a dot is needed for a non-English abbreviation', () => {
+    expect(dates('5 sept. 2026')).toEqual(['day:5', 'month:9', 'year:2026'])
+    expect(dates('5 sept 2026')).toEqual(['count:5', 'year:2026'])
+  })
+
+  it('S7 false-pass:F07 a locale without a month table cannot read a worded date, so its parts are unknown', () => {
+    const r = traceNumbers('5 марта 2026 г.', 'Подано 4 марта 2026 и 5 дней', { locale: 'ru-RU' })
+    expect(r.verdict).toBe('unknown')
+    expect(r.numbers.map((n) => `${n.token.raw}:${n.status}:${n.reason ?? ''}`)).toEqual(['5:unknown:unread-date', '2026:unknown:unread-date'])
+    // The same phrase written the same way in the evidence still traces.
+    expect(traceNumbers('Срок: 5 марта 2026', 'Подано 5 марта 2026', { locale: 'ru-RU' }).verdict).toBe('clean')
+    // A table language, English and the East Asian locales are not affected.
+    expect(traceNumbers('Il 5 marzo 2026', 'Il 5 marzo 2026', { locale: 'it-IT' }).verdict).toBe('clean')
+    expect(extractNumbers('5 items 2026', { locale: 'en-US' }).map((t) => t.ambiguous)).toEqual([false, false])
+    expect(extractNumbers('5 items 2026', { locale: 'ru-RU' }).map((t) => t.ambiguity)).toEqual(['date', 'date'])
+    expect(extractNumbers('5 Mrz 2026', { locale: 'ja-JP' }).map((t) => t.ambiguous)).toEqual([false, false])
+  })
+})

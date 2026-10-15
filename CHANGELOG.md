@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (S7: whole-date checks beyond English)
+
+- Month names in German, French, Spanish, Italian, Portuguese, Dutch and Swedish (full names in any case, and their abbreviations with a dot), the forms `5 de marzo de 2026`, `5 de marzo del 2026`, `5. März 2026` and `1er mars`, the hyphen forms `8-Jun-2026` and `Jun-08-2026`, and `2026年3月4日`, `3月4日` and `2026년 3월 4일` are read as whole dates. Before, `Le 5 mars 2026` came back `clean` against `Déposé le 4 mars 2026 et 5 jours` because its day traced to the unrelated `5 jours`, `Due 8-Jun-2026` traced to `Net 8 days`, and an honest `2026年3月4日` was `untraced` against `2026-03-04` (false-pass:F07). `Mars`, `Mayo`, `Mai`, `Maj`, `Mei`, `Juli` and `Juni` with a capital are months only in a locale that has a table, so `The Mars 2020 rover` is unchanged.
+- New `AmbiguityReason` `date` and unknown reason `unread-date`: in a locale with no month table, a day, one word and a four-digit year (`5 марта 2026`) mark the day and the year `unknown` instead of letting them trace as independent numbers; the same phrase in the evidence still traces. Lower-case `april`, `august` and the like are now months too (they are the German, Dutch and Swedish names).
+
 ### Fixed (S6: resource caps)
 
 - Evidence with more than 500,000 numbers is a `RangeError` thrown as soon as the limit is passed, before the rest of the text is read or stored (hostile:F4). Dense numeric evidence of 16 MB (four texts under the 50 MB limit) used to abort the process with an out-of-memory error at a 1 GB heap that no `try` can catch; it now throws. The new option `maxEvidenceNumbers` lowers the limit (1 to 500,000).
