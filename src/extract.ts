@@ -1698,13 +1698,13 @@ export function scan(
     }
   }
 
-  const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
-    const sfx = readSuffixBase(e, hasCurrency, isInteger, isZero, resolution)
+  const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean, yearShaped: boolean): Suffix => {
+    const sfx = readSuffixBase(e, hasCurrency, isInteger, isZero, resolution, yearShaped)
     attachRate(sfx, hasCurrency)
     return sfx
   }
 
-  const readSuffixBase = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
+  const readSuffixBase = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean, yearShaped: boolean): Suffix => {
     const sfx: Suffix = noProto({
       end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false, dollarWord: false, unitMagnitudeAlt: 0,
     })
@@ -1825,6 +1825,11 @@ export function scan(
       if (power !== null) {
         sfx.unit = power.unit
         sfx.end = power.end
+        return sfx
+      }
+      // 2026E, 2026A, 2025F, 2026P: a year with the letter that says estimate, actual, forecast or projection is a label.
+      if (yearShaped && w.length === 1 && (w === 'E' || w === 'A' || w === 'F' || w === 'P' || w === 'B') && !isDigit(at(we)) && !isLetter(at(we))) {
+        sfx.skipTo = we
         return sfx
       }
       if (w.length > 16 || isDigit(at(we)) || isLetter(at(we))) {
@@ -2466,7 +2471,7 @@ export function scan(
       let sfx: Suffix | undefined
       if (isLast) {
         const intDigits = sub.frac === ''
-        sfx = readSuffix(digitsEnd, hasPrefixCurrency || (isFirst && rangePrev?.kind === 'currency'), intDigits && sub.alt === undefined, sub.int === '0' && intDigits, intDigits && RESOLUTIONS.has(sub.int))
+        sfx = readSuffix(digitsEnd, hasPrefixCurrency || (isFirst && rangePrev?.kind === 'currency'), intDigits && sub.alt === undefined, sub.int === '0' && intDigits, intDigits && RESOLUTIONS.has(sub.int), intDigits && sub.int.length === 4 && Number(sub.int) >= 1900 && Number(sub.int) <= 2100)
         if (sfx.skipTo >= 0) {
           // The number is glued to an identifier ("3D", "5G") or to letters the kit cannot read ("12foo").
           result = Math.max(sfx.skipTo, chainEnd)

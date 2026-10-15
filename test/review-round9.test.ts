@@ -905,3 +905,38 @@ describe('gate-hostile:G18 gate-review:F18 reconcile amounts', () => {
     expect(reconcile({ rows: [{ label: 'a', amount: '1,00' }], total: '1,01', tolerance: '0,01' }, o).ok).toBe(true)
   })
 })
+
+describe('gate-review:F21 estimate and actual suffixes on a year', () => {
+  it('gate-review:F21 2026E and 2026A are labels, listed as identifiers, and the same text traces', () => {
+    for (const label of ['2026E', '2026A', '2025F', '2026P']) {
+      const r = trace(`${label} revenue was $5M.`, `${label} revenue was $5M.`)
+      expect(r.verdict, label).toBe('clean')
+      expect(r.skipped.map((s) => [s.raw, s.reason]), label).toEqual([[label, 'identifier']])
+    }
+    expect(verdict('2026E revenue was $5M.', '2026A revenue was $5M.')).toBe('clean')
+    expect(verdict('2026E revenue was $5M.', '2026A revenue was $5M.', { checkIdentifiers: true })).toBe('unknown')
+  })
+  it('gate-review:F21 a number that is not a year keeps its unit reading', () => {
+    expect(extractNumbers('Draws 2025A and 5A').map((t) => [t.raw, t.unit])).toEqual([['5A', 'A']])
+  })
+})
+
+describe('gate-review:F19 a parenthetical right after a figure is an aside, not an accounting negative', () => {
+  it.each([
+    ['The loss could be as high as £200 million ($300 million), they said.', 'The loss could be as high as £200 million, about $300 million.'],
+    ['Revenue rose to $5 million (12.5%).', 'Revenue rose to $5 million, up 12.5%.'],
+    ['Fees were 200 (300) in all.', 'Fees were 200 and 300 in all.'],
+    ['It cost €200 ($300).', 'It cost €200 or $300.'],
+  ])('gate-review:F19 %s is clean', (output, evidence) => {
+    expect(verdict(output, evidence)).toBe('clean')
+  })
+
+  it('gate-review:F19 the same words with no figure before the parenthesis are still held', () => {
+    expect(verdict('The loss could be as high as ($300 million), they said.', 'The loss could be about $300 million.')).toBe('unknown')
+    expect(verdict('Growth was strong (12.5%).', 'Growth was 12.5%.')).toBe('unknown')
+  })
+
+  it('gate-review:F19 tokens carry no text, so a parenthesized negative from tokens is held', () => {
+    expect(verdict(extractNumbers('It cost €200 ($300).'), 'It cost €200 or $300.')).toBe('unknown')
+  })
+})

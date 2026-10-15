@@ -832,8 +832,27 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
  * same way: `($5.2 million)` against `$5.2 million` could be a restated loss or a parenthetical figure, and the kit
  * cannot tell, so it never calls it clean. A minus sign is stricter still (`signAllowed` rejects it outright).
  */
-function signHeld(tok: NumberToken, signDiffers: boolean, mode: SignMode): boolean {
-  return signDiffers && (mode === 'strict' || (mode === 'explicit' && tok.signStyle === 'parentheses'))
+function signHeld(tok: NumberToken, signDiffers: boolean, mode: SignMode, aside: boolean): boolean {
+  return signDiffers && (mode === 'strict' || (mode === 'explicit' && tok.signStyle === 'parentheses' && !aside))
+}
+
+/**
+ * Is the parenthesized figure written right after another figure ("£200 million ($300 million)", "$5 million (12.5%)")?
+ * That is a conversion or an aside about the figure before it, the usual use of a parenthesis in prose, and not an
+ * accounting negative standing on its own ("net loss was ($5.2 million)"). Looks back over at most a space, one word
+ * and a space: constant work.
+ */
+function followsFigure(tok: NumberToken, text: string): boolean {
+  let p = tok.start - 1
+  if (p >= 0 && isSpaceCode(text.charCodeAt(p))) p--
+  if (p < 0) return false
+  const isDigitAt = (k: number): boolean => k >= 0 && text.charCodeAt(k) >= 0x30 && text.charCodeAt(k) <= 0x39
+  if (isDigitAt(p) || text.charCodeAt(p) === 0x25) return true
+  let w = p
+  while (w >= 0 && p - w < 14 && isLetterCode(text.charCodeAt(w))) w--
+  if (w === p || p - w >= 14) return false
+  if (w >= 0 && isSpaceCode(text.charCodeAt(w))) w--
+  return isDigitAt(w)
 }
 
 function signAllowed(tok: NumberToken, outNeg: boolean, entNeg: boolean, mode: SignMode): boolean {
@@ -1769,6 +1788,8 @@ function traceOne(
   // An exact zero has no sign to disagree about.
   const allow = (e: Ent): boolean => key === '0' || signAllowed(tok, outNeg, e.neg, ctx.signMode)
   matcher.scaleCapped = false
+  // A parenthesis right after a figure is an aside (a conversion), so it is not held as a possible negative.
+  const aside = tok.signStyle === 'parentheses' && text !== null && followsFigure(tok, text)
 
   if (weakPrimary(tok)) {
     if (
@@ -1787,20 +1808,20 @@ function traceOne(
   // 1. Exact match after normalization.
   for (const v of variants) {
     const exact = lookup(ev.strong, v.shape, outNeg, key, v.bare).filter(allow)
-    if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined, v.unverified, ctx)
+    if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined, v.unverified, ctx, aside)
   }
 
   // A rated percent or amount ("$50 per month") against the same figure with no rate in the evidence.
   if (tok.rate !== undefined && (shape.cls.startsWith('cur:') || shape.cls.startsWith('pct') || shape.cls.startsWith('pp'))) {
     const baseCls = shape.cls.slice(0, shape.cls.length - tok.rate.length)
     const unrated = lookup(ev.strong, { cls: baseCls, unit: '' }, outNeg, key).filter((e) => e.cls === baseCls).filter(allow)
-    if (unrated.length > 0) return matched(tok, 'traced', unrated, outNeg, undefined, false, ctx)
+    if (unrated.length > 0) return matched(tok, 'traced', unrated, outNeg, undefined, false, ctx, aside)
   }
 
   // 2. The evidence is more precise and rounds to what the output shows.
   for (const v of variants) {
     const rounded = matcher.findRounded('strong', tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
-    if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, v.unverified, ctx)
+    if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, v.unverified, ctx, aside)
   }
 
   // 3. A declared derivation of evidence numbers.
@@ -1834,7 +1855,7 @@ function traceOne(
       }
       // A derivation is already guarded and counted (`matches`, density), so a unit on one side only stays a marked
       // match here; a sign the output dropped is unknown in strict sign mode.
-      if (signHeld(tok, hit.signDiffers, ctx.signMode)) return unknownTrace(tok, 'sign-differs')
+      if (signHeld(tok, hit.signDiffers, ctx.signMode, aside)) return unknownTrace(tok, 'sign-differs')
       // A year or an ordinal (2031, 3rd) is a label. A derivation can build one by coincidence, and a count between
       // 1900 and 2100 written without a separator reads as a year, so the kit cannot tell: never a pass.
       if (isLabel(tok)) return unknownTrace(tok, 'label-derivation')
@@ -1999,6 +2020,7 @@ function matched(
   rounding: RoundLabel | undefined,
   optIn: boolean,
   ctx: Ctx,
+  aside = false,
 ): NumberTrace {
   const ordered = [...ents.filter((e) => e.neg === outNeg), ...ents.filter((e) => e.neg !== outNeg)]
   const first = ordered[0]
@@ -2007,7 +2029,7 @@ function matched(
   const shape = shapeOf(tok)
   const oneSided = best.length > 0 && shape.cls === 'plain' && best.every((e) => e.unit !== shape.unit)
   if (oneSided && !optIn) return unknownTrace(tok, 'unit-unverified')
-  if (signHeld(tok, signDiffers, ctx.signMode)) return unknownTrace(tok, 'sign-differs')
+  if (signHeld(tok, signDiffers, ctx.signMode, aside)) return unknownTrace(tok, 'sign-differs')
   const unitUnverified = optIn || oneSided
   return {
     token: tok,
