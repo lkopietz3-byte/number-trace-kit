@@ -241,3 +241,92 @@ describe('gate-review:F03 digit groups joined by underscores', () => {
     expect(extractNumbers('_12.5%_ and __1,234__ and 1766____').map((t) => t.raw)).toEqual(['12.5%', '1,234', '1766'])
   })
 })
+
+describe('gate-review:F04 gate-false-pass:G5-F12 dotted two-digit-year dates, h times and ISO weeks', () => {
+  it('gate-review:F04 14.10.26 against 15.10.26 with locale de-DE is not clean', () => {
+    expect(verdict('Fällig am 14.10.26.', 'Fällig am 15.10.26.', { locale: 'de-DE' })).toBe('untraced')
+    expect(verdict('Fällig am 14.10.26.', 'Fällig am 14.10.26.', { locale: 'de-DE' })).toBe('clean')
+    expect(verdict('Due 14.10.26.', 'Due 15.10.26.')).not.toBe('clean')
+  })
+
+  it.each([
+    ['Due 05.03.26.', 'Due 06.03.26.'],
+    ['Due 5.3.26.', 'Due 6.3.26.'],
+    ['Due 31.12.99.', 'Due 30.12.99.'],
+  ])('gate-false-pass:G5-F12 %s is not clean against %s and is clean against itself', (output, evidence) => {
+    expect(verdict(output, evidence)).not.toBe('clean')
+    expect(verdict(output, output)).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-F12 the date is read as a date: day, month and a two-digit year', () => {
+    expect(extractNumbers('Due 14.10.26.', { locale: 'de-DE' }).map((t) => [t.kind, t.part, t.value])).toEqual([
+      ['date-part', 'day', '14'], ['date-part', 'month', '10'], ['date-part', 'year', '26'],
+    ])
+  })
+
+  it('gate-false-pass:G5-F12 versions and addresses stay identifiers', () => {
+    expect(extractNumbers('v1.2.26 and 192.168.1.1 and 1.2.3 and 10.0.0.1')).toEqual([])
+    expect(extractNumbers('Python 3.12.1 and 2.40.60')).toEqual([])
+  })
+
+  it('gate-false-pass:G5-F12 17h30 and 9h30 are times of day', () => {
+    expect(verdict('Départ à 17h30.', 'Départ à 17h45.')).toBe('untraced')
+    expect(verdict('Départ à 9h30.', 'Départ à 9h45.')).toBe('untraced')
+    expect(verdict('Départ à 17h30.', 'Départ à 17h30.')).toBe('clean')
+    expect(verdict('Départ à 17h30.', 'Départ à 17:30.')).toBe('clean')
+    expect(verdict('Départ à 17H30.', 'Départ à 17:30.')).toBe('clean')
+    expect(extractNumbers('Départ à 17h30.')[0]).toMatchObject({ kind: 'time', value: '1050', raw: '17h30' })
+  })
+
+  it('gate-false-pass:G5-F12 an hour with a unit is not a time', () => {
+    expect(extractNumbers('Runs 2h and 17h and 5h30pm')[0]).toMatchObject({ kind: 'count', unit: 'hour' })
+  })
+
+  it('gate-false-pass:G5-F12 a week of the year is an unread form', () => {
+    const r = trace('Shipped 2026-W10.', 'Shipped 2026-W11.')
+    expect(r.verdict).not.toBe('clean')
+    expect(r.skipped.map((s) => s.raw)).toEqual(['W10'])
+  })
+})
+
+describe('gate-review:F07 an hour in parentheses', () => {
+  it('gate-review:F07 (4am) and (5 pm) are times of day', () => {
+    expect(extractNumbers('Open (4am).')[0]).toMatchObject({ kind: 'time', value: '240' })
+    expect(extractNumbers('Open (5 pm).')[0]).toMatchObject({ kind: 'time', value: '1020' })
+    expect(verdict('Open (4am) and (9pm).', 'Open 4am and 9pm.')).toBe('clean')
+    expect(verdict('Open 4am and 9pm.', 'Open (4am) and (9pm).')).toBe('clean')
+    expect(verdict('Open (4am).', 'Open 5am.')).toBe('untraced')
+  })
+  it('gate-review:F07 a parenthesized time never answers to a minus sign', () => {
+    expect(extractNumbers('Open (4am).')[0]?.parenthesized).toBeUndefined()
+  })
+})
+
+describe('gate-review:F08 British dotted clock times', () => {
+  it('gate-review:F08 5.30pm is 5:30pm', () => {
+    expect(verdict('Doors open at 5.30pm.', 'Doors open at 5:30pm.')).toBe('clean')
+    expect(verdict('Doors open at 5:30pm.', 'Doors open at 5.30pm.')).toBe('clean')
+    expect(verdict('Doors open at 5.30 pm.', 'Doors open at 17:30.', { locale: 'en-GB' })).toBe('clean')
+    expect(verdict('Doors open at 5.30pm.', 'Doors open at 6.30pm.')).toBe('untraced')
+    expect(verdict('Doors open at 5.30pm.', 'Doors open at 5.30am.')).toBe('untraced')
+    expect(extractNumbers('Doors open at 5.30pm.')[0]).toMatchObject({ kind: 'time', value: '1050', unit: 'pm' })
+  })
+  it('gate-review:F08 a decimal with no meridiem, or an hour that is not on a 12-hour clock, stays a decimal', () => {
+    expect(extractNumbers('Rating 5.30 and 17.30pm and 5.3pm').map((t) => [t.kind, t.value])).toEqual([['decimal', '5.30'], ['decimal', '17.30'], ['decimal', '5.3']])
+  })
+})
+
+describe('gate-review:F10 a count, a period and a capitalized English month name', () => {
+  it('gate-review:F10 the count stays a count outside German', () => {
+    expect(verdict('Headcount is 20.', 'Headcount is 20. March hiring is pending.')).toBe('clean')
+    expect(verdict('We opened 4.', 'We opened 4. May saw growth.')).toBe('clean')
+    expect(verdict('We opened 4.', 'We opened 4. April saw growth.')).toBe('clean')
+    expect(extractNumbers('Headcount is 20. March hiring is pending.').map((t) => t.kind)).toEqual(['count'])
+  })
+  it('gate-review:F10 the German form is still a date in German and for German month names', () => {
+    expect(extractNumbers('Am 5. März 2026', { locale: 'de-DE' }).map((t) => t.kind)).toEqual(['date-part', 'date-part', 'date-part'])
+    expect(extractNumbers('Am 5. März 2026').map((t) => t.kind)).toEqual(['date-part', 'date-part', 'date-part'])
+    expect(extractNumbers('Am 5. April 2026', { locale: 'de-DE' }).map((t) => t.kind)).toEqual(['date-part', 'date-part', 'date-part'])
+    expect(verdict('Am 5. März 2026', 'Am 5 März 2026', { locale: 'de-DE' })).toBe('clean')
+  })
+})

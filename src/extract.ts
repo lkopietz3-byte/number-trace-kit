@@ -511,7 +511,7 @@ function makeToken(raw: string, start: number, end: number, value: string, scale
 
 /** A whole hour from 1 to 12 written as a plain integer, or -1. */
 function plainHour(t: Tok): number {
-  if (t.kind !== 'count' || t.scale !== 0 || t.magnitude !== undefined || t.signStyle !== undefined || t.parenthesized === true) return -1
+  if (t.kind !== 'count' || t.scale !== 0 || t.magnitude !== undefined || t.signStyle !== undefined) return -1
   if (t.ambiguous && t.ambiguity !== 'superscript') return -1
   if (t.value.length > 2) return -1
   for (let k = 0; k < t.value.length; k++) {
@@ -546,6 +546,8 @@ function readClockHours(tokens: Tok[]): void {
     t.kind = 'time'
     t.unit = unit
     t.value = String((h % 12) * 60 + (unit === 'pm' ? 720 : 0))
+    // "(4am)" is a time in parentheses, not a bare number that might be an accounting negative.
+    delete t.parenthesized
   }
 }
 
@@ -804,22 +806,26 @@ export function scan(
       }
       return -1
     }
-    if ((a === 1 || a === 2) && sep === 0x3a) {
+    // A time of day: 9:30, 18:05, the on-the-hour 18:0, the French 17h30 and the British 5.30pm.
+    if ((a === 1 || a === 2) && (sep === 0x3a || sep === 0x68 || sep === 0x48 || sep === 0x2e)) {
+      const colon = sep === 0x3a
       const r2 = i + a + 1
       const mLen = runEnd(r2) - r2
-      // "9:30", "18:05", and the on-the-hour "18:0" some data sources print.
-      if (mLen === 2 || (mLen === 1 && at(r2) === 0x30)) {
+      // "9:30", "18:05", and the on-the-hour "18:0" some data sources print (colon only).
+      if (mLen === 2 || (colon && mLen === 1 && at(r2) === 0x30)) {
         const h = num(i, i + a)
         const mi = num(r2, r2 + mLen)
         let after = r2 + mLen
         let sec: number | null = null
-        if (mLen === 2 && at(after) === 0x3a && runEnd(after + 1) - (after + 1) === 2) {
+        if (colon && mLen === 2 && at(after) === 0x3a && runEnd(after + 1) - (after + 1) === 2) {
           sec = num(after + 1, after + 3)
           after += 3
         }
-        if (!isDigit(at(after)) && h <= 24 && mi <= 59 && (sec === null || sec <= 60)) {
+        const mer = h >= 1 && h <= 12 ? meridiemAt(after) : null
+        // 17h30 is a time unless a letter follows (2h45m is a duration); 5.30 is a decimal unless am or pm follows.
+        const shape = colon || (sep === 0x2e ? mer !== null : mer !== null || !isLetter(at(after)))
+        if (shape && !isDigit(at(after)) && h <= 24 && mi <= 59 && (sec === null || sec <= 60)) {
           const raw = slice(i, after)
-          const mer = h >= 1 && h <= 12 ? meridiemAt(after) : null
           if (sec === null) {
             // One time of day: minutes since midnight. Without am or pm a 12-hour-looking time may be either.
             const stop = mer === null ? after : mer.end
@@ -856,7 +862,8 @@ export function scan(
           return end
         }
       }
-      return -1
+      // A colon that does not make a time makes nothing; the other separators may still be a date or a number.
+      if (colon) return -1
     }
     if ((a === 1 || a === 2) && (sep === 0x2f || sep === 0x2e || sep === 0x2d)) {
       const r2 = i + a + 1
@@ -865,7 +872,8 @@ export function scan(
         const r3 = r2 + b1 + 1
         const b2 = runEnd(r3) - r3
         const after = r3 + b2
-        const yearOk = b2 === 4 || (b2 === 2 && sep === 0x2f)
+        // A two-digit year is read with a slash (14/10/26) and with dots (14.10.26, the German and Eastern European form).
+        const yearOk = b2 === 4 || (b2 === 2 && (sep === 0x2f || sep === 0x2e))
         if (yearOk && !isDigit(at(after)) && !(at(after) === sep && isDigit(at(after + 1)))) {
           const p = num(i, i + a)
           const q = num(r2, r2 + b1)
@@ -1029,12 +1037,16 @@ export function scan(
       else if ((at(e) | 0x20) === 0x65 && (at(e + 1) | 0x20) === 0x72 && !isLetter(at(e + 2)) && !isDigit(at(e + 2))) e += 2 // 1er mars
       else if (at(e) === 0xba || at(e) === 0xb0) e += 1 // 1º de marzo
       let p = e
-      if (at(p) === 0x2e) p++ // 5. März
+      const dot = at(p) === 0x2e // 5. März
+      if (dot) p++
       if (isGap(at(p))) {
         p++
         // "5th of October", "5 de marzo", "5 di marzo"
         p += connectorLength(p)
-        const w = monthWordAt(p)
+        let w = monthWordAt(p)
+        // The dotted day is the German form. Outside German it only counts for a month name that is not an English
+        // one, because "Headcount is 20. March hiring" ends a sentence with a count.
+        if (w !== null && dot && info.language !== 'de' && own(MONTHS, slice(p, w.end).toLowerCase()) !== undefined) w = null
         if (w !== null) {
           // "5-7 October": the first day of a range was read as a plain number before the month appeared.
           const first = out[out.length - 1]
@@ -1325,6 +1337,8 @@ export function scan(
    */
   const prefixedFormReason = (wStart: number, i0: number, j: number): SkipKind => {
     const prefix = slice(wStart, i0)
+    // 2026-W10: the week of a year. A different week is a different claim, so it is an unread form.
+    if (prefix === 'W' && j - i0 === 2 && at(wStart - 1) === 0x2d && wStart - 5 >= 0 && isDigit(at(wStart - 2)) && isDigit(at(wStart - 5))) return 'unread-glued-form'
     if (!CURRENCY_PREFIX_WORDS.has(prefix)) {
       // A currency code in lower or mixed case ("usd1,200"): an amount, but only when it has a separator or
       // three digits, because "cop26" and "gel2" are names.
