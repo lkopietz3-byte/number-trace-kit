@@ -70,6 +70,11 @@ const CURRENCY_WORDS: Record<string, string> = {
   cad: 'CAD', aud: 'AUD', chf: 'CHF', jpy: 'JPY', cny: 'CNY', inr: 'INR',
 }
 
+// A word before "dollars" that says which dollar ("5 US dollars", "$5 Canadian dollars").
+const DOLLAR_ADJECTIVES: Record<string, string> = {
+  us: 'USD', american: 'USD', canadian: 'CAD', australian: 'AUD', singapore: 'SGD', singaporean: 'SGD', taiwan: 'TWD',
+}
+
 // Words that say "percent" ("45 percent", "45-percent").
 const PERCENT_WORDS: Record<string, '%'> = {
   percent: '%', pct: '%', prozent: '%', procent: '%', procento: '%', procenten: '%', prosent: '%', pourcent: '%',
@@ -83,6 +88,15 @@ const GLUED_UNITS: Record<string, string> = {
   MB: 'MB', GB: 'GB', TB: 'TB', PB: 'PB', EB: 'EB', Kb: 'Kb', Mb: 'Mb', Gb: 'Gb', Tb: 'Tb', Pb: 'Pb',
   KiB: 'KiB', MiB: 'MiB', GiB: 'GiB', TiB: 'TiB', PiB: 'PiB', ml: 'ml', mL: 'ml', L: 'l', l: 'l', kW: 'kW', kWh: 'kWh', MW: 'MW',
   GHz: 'GHz', MHz: 'MHz', mph: 'mph', kph: 'kph', x: 'x', am: 'am', pm: 'pm', bps: 'bps',
+  KBps: 'KBps', kBps: 'KBps', MBps: 'MBps', GBps: 'GBps', TBps: 'TBps',
+}
+// Bit rates are lower-cased into one unit, so a capital B (a byte rate, "MBps") must be kept out of them.
+const BIT_RATES: ReadonlySet<string> = new Set(['kbps', 'mbps', 'gbps', 'tbps'])
+const isByteRateWord = (w: string): boolean => w.length === 4 && w.charCodeAt(1) === 0x42 && BIT_RATES.has(w.toLowerCase())
+
+/** The unit a word after a number or a hyphen says, compared in lower case; a byte rate ("MBps") is not a bit rate. */
+function spacedUnit(w: string): string | undefined {
+  return isByteRateWord(w) ? undefined : own(SPACED_UNITS, w.toLowerCase())
 }
 // Units written as a following word ("3 days"). Compared in lower case.
 const SPACED_UNITS: Record<string, string> = {
@@ -98,6 +112,10 @@ const SPACED_UNITS: Record<string, string> = {
   celsius: '°C', fahrenheit: '°F', centigrade: '°C',
   hz: 'Hz', khz: 'kHz', mhz: 'MHz', ghz: 'GHz', db: 'dB', kw: 'kW', kwh: 'kWh', kcal: 'kcal', mah: 'mAh',
   kbps: 'kbps', mbps: 'Mbps', gbps: 'Gbps',
+  kilobit: 'Kb', kilobits: 'Kb', megabit: 'Mb', megabits: 'Mb', gigabit: 'Gb', gigabits: 'Gb', terabit: 'Tb', terabits: 'Tb',
+  kbit: 'Kb', mbit: 'Mb', gbit: 'Gb', tbit: 'Tb',
+  kilobyte: 'KB', kilobytes: 'KB', megabyte: 'MB', megabytes: 'MB', gigabyte: 'GB', gigabytes: 'GB', terabyte: 'TB', terabytes: 'TB',
+  petabyte: 'PB', petabytes: 'PB', kbyte: 'KB', mbyte: 'MB', gbyte: 'GB', tbyte: 'TB',
 }
 // Units written right against the number only ("250W"). A spaced single letter is too often a label
 // ("5 W" is not watts), so these are not read as the next word.
@@ -212,8 +230,9 @@ function own<T>(table: Readonly<Record<string, T>>, key: string): T | undefined 
 }
 
 /** What a word after a hyphen ("100-days", "12-percent", "50-dollars") says about the number before it. */
-function hyphenWord(lower: string): { unit?: string; percent?: '%'; currency?: string } | undefined {
-  const unit = own(SPACED_UNITS, lower)
+function hyphenWord(w: string): { unit?: string; percent?: '%'; currency?: string } | undefined {
+  const lower = w.toLowerCase()
+  const unit = spacedUnit(w)
   if (unit !== undefined) return { unit }
   const percent = own(PERCENT_WORDS, lower)
   if (percent !== undefined) return { percent }
@@ -228,10 +247,10 @@ function glueUnit(w: string): string | undefined {
   if (exact !== undefined) return exact
   const lower = w.toLowerCase()
   if (w.length >= 3) {
-    const spaced = own(SPACED_UNITS, lower)
+    const spaced = spacedUnit(w)
     if (spaced !== undefined) return spaced
   }
-  return own(GLUED_FOLD, lower)
+  return isByteRateWord(w) ? undefined : own(GLUED_FOLD, lower)
 }
 
 const NBSP = 0xa0
@@ -492,7 +511,13 @@ export function scan(
     loose: boolean
     /** A member has a magnitude word the kit cannot value, so the others cannot be read either. */
     unread?: boolean
+    /** The group's currency is only a bare `$` or `¥` so far: a code on another member may make it specific. */
+    currencyBare?: 'dollar' | 'yen'
+    /** Two members name currencies that cannot be the same ("$5-10 EUR"). */
+    conflict?: boolean
   }
+  // The currency symbols and words that name no particular currency ("$", "¥", "dollars"), by token.
+  const bareCurrency = new Map<Tok, 'dollar' | 'yen'>()
   let rangeGroup: Group | null = null
   let dimensionGroup: Group | null = null
   let floor = 0
@@ -994,8 +1019,16 @@ export function scan(
         let q = p
         while (q - 1 >= floor && p - q < 3 && isLetter(at(q - 1))) q--
         if (q < p && !(q - 1 >= floor && isLetter(at(q - 1)))) {
-          const code = own(DOLLAR_PREFIXES, slice(q, p))
+          const letters = slice(q, p)
+          const code = own(DOLLAR_PREFIXES, letters)
           if (code !== undefined) return { start: q, code }
+          // A three-letter code in any case ("EUR$500", "cad$500"): a dollar code makes the dollar specific, the rest contradict it.
+          if (letters.length === 3) {
+            const upper = letters.toUpperCase()
+            if (CURRENCY_CODES.has(upper)) {
+              return DOLLAR_CODES.has(upper) ? { start: q, code: upper } : { start: q, code: symbol, family: 'dollar', conflict: true }
+            }
+          }
         }
         // A code and a space before the sign ("CAD $500"): the code makes the dollar specific, or contradicts it.
         if (at(p - 1) === 0x20 && p - 4 >= floor && isUpper(at(p - 2)) && isUpper(at(p - 3)) && isUpper(at(p - 4)) && !isLetter(at(p - 5))) {
@@ -1299,6 +1332,15 @@ export function scan(
         sfx.currency = w
         return we
       }
+      const dollarCode = own(DOLLAR_ADJECTIVES, lower)
+      if (dollarCode !== undefined && at(we) === 0x20) {
+        const w2 = readWord(we + 1, 8).toLowerCase()
+        const e2 = we + 1 + w2.length
+        if ((w2 === 'dollar' || w2 === 'dollars') && !isLetter(at(e2)) && !isDigit(at(e2))) {
+          sfx.currency = dollarCode
+          return e2
+        }
+      }
       const currency = own(CURRENCY_WORDS, lower)
       if (currency !== undefined && (lower.length > 3 || w === w.toUpperCase() || lower === w)) {
         sfx.currency = currency
@@ -1307,7 +1349,7 @@ export function scan(
       }
       if ((w === 'x' || w === 'X') && startsNumber(we)) return -1
       // A lone "c" after a space is a label (option c), not cents; "12 cents" is in the spaced table.
-      const unit = own(SPACED_UNITS, lower) ?? (w === 'c' ? undefined : own(GLUED_UNITS, w))
+      const unit = spacedUnit(w) ?? (w === 'c' ? undefined : own(GLUED_UNITS, w))
       if (unit !== undefined) {
         sfx.unit = unit
         return we
@@ -1325,7 +1367,7 @@ export function scan(
     }
     if (at(p) === 0x2d && isLetter(at(p + 1))) {
       const w = readWord(p + 1, 12)
-      const word = hyphenWord(w.toLowerCase())
+      const word = hyphenWord(w)
       if (word !== undefined && w.length <= 12 && !isLetter(at(p + 1 + w.length)) && !isDigit(at(p + 1 + w.length))) {
         if (word.unit !== undefined) sfx.unit = word.unit
         if (word.percent !== undefined) sfx.percent = word.percent
@@ -1804,6 +1846,10 @@ export function scan(
         // The separator does not fit the locale: the reading is a guess, whatever else is later added.
         tok.localeGuess = true
       }
+      if (kind === 'currency' && ambiguity !== 'currency') {
+        if (hasPrefixCurrency && cur !== null && cur.family !== undefined && (sfx?.currency === undefined || sfx.dollarWord)) bareCurrency.set(tok, cur.family)
+        else if (!hasPrefixCurrency && sfx?.dollarWord === true) bareCurrency.set(tok, 'dollar')
+      }
       numInfo.set(tok, { neg, int: sub.int, frac: sub.frac, exp: exp10, loose: sfx?.looseMagnitude === true, sci: sfx?.scientific === true })
       if (isFirst && rangeDash >= 0) {
         const prev = lastPlain()
@@ -1854,8 +1900,22 @@ export function scan(
       } else if (g.kind === 'range' && g.currency !== undefined) {
         m.kind = 'currency'
         m.currency = g.currency
+        if (g.currencyBare !== undefined) bareCurrency.set(m, g.currencyBare)
       } else if (g.unit !== undefined) {
         m.unit = g.unit
+      }
+    }
+    if (g.kind === 'range' && m.kind === 'currency' && m.ambiguity !== 'currency') {
+      if (g.conflict === true) {
+        // "$5-10 EUR": the members name currencies that cannot agree. None of them is read as either.
+        if (m.ambiguity !== 'too-long' && m.ambiguity !== 'superscript' && m.ambiguity !== 'magnitude') {
+          m.ambiguous = true
+          m.ambiguity = 'currency'
+          m.groupRaw = m.raw
+        }
+      } else if (g.currency !== undefined && g.currencyBare === undefined && m.currency !== g.currency && bareCurrency.has(m)) {
+        // "$5 to $10 CAD": a bare dollar sign takes the code the range gives it.
+        m.currency = g.currency
       }
     }
     const inf = numInfo.get(m)
@@ -1924,9 +1984,31 @@ export function scan(
     if (m.kind === 'percent' && g.percent === undefined && m.unit !== undefined) {
       g.percent = m.unit
       changed = true
-    } else if (m.kind === 'currency' && g.currency === undefined && m.currency !== undefined) {
+    } else if (m.kind === 'currency' && g.currency === undefined && m.currency !== undefined && m.ambiguity !== 'currency') {
       g.currency = m.currency
+      const bare = bareCurrency.get(m)
+      if (bare !== undefined) g.currencyBare = bare
       changed = true
+    } else if (m.kind === 'currency' && m.currency !== undefined && g.kind === 'range' && g.currency !== undefined && g.conflict !== true) {
+      // A second currency in the range: a code settles a bare symbol, two codes that differ contradict.
+      const bare = bareCurrency.get(m)
+      if (m.ambiguity === 'currency') {
+        g.conflict = true
+        changed = true
+      } else if (bare !== undefined && g.currencyBare === undefined) {
+        if (!(bare === 'dollar' ? DOLLAR_CODES : YEN_CODES).has(g.currency)) {
+          g.conflict = true
+          changed = true
+        }
+      } else if (g.currencyBare !== undefined && bare === undefined) {
+        if ((g.currencyBare === 'dollar' ? DOLLAR_CODES : YEN_CODES).has(m.currency)) g.currency = m.currency
+        else g.conflict = true
+        delete g.currencyBare
+        changed = true
+      } else if (bare === undefined ? m.currency !== g.currency : bare !== g.currencyBare) {
+        g.conflict = true
+        changed = true
+      }
     } else if (m.kind !== 'percent' && m.kind !== 'currency' && m.unit !== undefined && g.unit === undefined) {
       g.unit = m.unit
       changed = true

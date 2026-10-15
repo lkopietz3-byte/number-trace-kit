@@ -745,3 +745,60 @@ describe('M5 false-pass:F06: a currency code or prefix on a symbol amount is hon
     expect(trace('Price is 500 CAD.', 'Price is $500.').verdict).toBe('untraced')
   })
 })
+
+describe('M5 false-pass:F06 sweep: the same bug in nearby forms', () => {
+  it('false-pass:F06 a three-letter code glued to the dollar sign, in any case, is read as written', () => {
+    expect(extractNumbers('EUR$500, cad$500, Cad$500, USD$500').map((t) => [t.currency, t.ambiguity])).toEqual([
+      ['USD', 'currency'], ['CAD', undefined], ['CAD', undefined], ['USD', undefined],
+    ])
+    expect(trace('Price is EUR$500.', 'Price is $500.').verdict).toBe('unknown')
+    expect(trace('Price is cad$500.', 'Price is $500 USD.').verdict).toBe('untraced')
+    expect(trace('Price is cad$500.', 'Price is CA$500.').verdict).toBe('clean')
+  })
+  it('false-pass:F06 a word before "dollars" names the dollar', () => {
+    expect(trace('Price is $500 Canadian dollars.', 'Price is $500 USD.').verdict).toBe('untraced')
+    expect(trace('Price is $500 Canadian dollars.', 'Price is CA$500.').verdict).toBe('clean')
+    expect(trace('Price is 500 US dollars.', 'Price is $500.').verdict).toBe('clean')
+    expect(trace('Price is 500 US dollars.', 'Price is CA$500.').verdict).toBe('untraced')
+    expect(trace('Price is 500 Australian dollars.', 'Price is A$500.').verdict).toBe('clean')
+    expect(trace('Price is €500 US dollars.', 'Price is €500.').verdict).toBe('unknown')
+    // "US" in front of anything else is not a currency.
+    expect(extractNumbers('5 US citizens').map((t) => [t.kind, t.currency])).toEqual([['count', undefined]])
+  })
+  it('false-pass:F06 a range takes the code that one member gives it', () => {
+    expect(extractNumbers('$5 to $10 CAD').map((t) => [t.raw, t.currency])).toEqual([['$5', 'CAD'], ['$10 CAD', 'CAD']])
+    expect(extractNumbers('$5-10-15 CAD').map((t) => t.currency)).toEqual(['CAD', 'CAD', 'CAD'])
+    expect(trace('Fee is $5 to $10 CAD.', 'Fee is $5 and $10 USD.').verdict).toBe('untraced')
+    expect(trace('Fee is $5 to $10 CAD.', 'Fee is CA$5 and CA$10.').verdict).toBe('clean')
+    expect(trace('Fee is CA$5-10 dollars.', 'Fee is CA$5 and CA$10.').verdict).toBe('clean')
+    expect(trace('Fee is $5-10 dollars.', 'Fee is $5 and $10.').verdict).toBe('clean')
+  })
+  it('false-pass:F06 a range whose members name currencies that cannot agree is unknown', () => {
+    for (const out of ['Fee is $5-10 EUR.', 'Fee is $5-10-15 EUR.', 'Fee is CA$5-$10 USD.', 'Fee is ¥5-10 USD.']) {
+      const r = trace(out, 'Fee is $5 and $10 and $15.')
+      expect(r.verdict, out).toBe('unknown')
+      expect(r.numbers.every((n) => n.status === 'unknown' && n.reason === 'conflicting-currency'), out).toBe(true)
+    }
+    expect(trace('Fee is $5-10 EUR.', 'Fee is $5-10 EUR.').verdict).toBe('clean')
+  })
+})
+
+describe('M5 false-pass:F02 sweep: bits and bytes in nearby forms', () => {
+  it('false-pass:F02 a byte rate is not a bit rate, and the unit words keep the two apart', () => {
+    for (const [out, ev] of [
+      ['Speed 5 MBps', 'Speed 5 Mbps'], ['Speed 5MBps', 'Speed 5Mbps'], ['Speed 5 Mbps', 'Speed 5 KBps'],
+      ['File is 5 megabits', 'File is 5 megabytes'], ['File is 5 Mbit', 'File is 5 MB'], ['File is 5 gigabytes', 'File is 5 Gb'],
+      ['Link is 5 kbit', 'Link is 5 KB'], ['Link is 5 terabytes', 'Link is 5 terabits'],
+    ] as const) {
+      const r = trace(out, ev)
+      expect(r.verdict, `${out} | ${ev}`).toBe('untraced')
+      expect(r.numbers[0]?.nearMisses?.[0]?.reason, out).toBe('unit-differs')
+    }
+    expect(extractNumbers('5 MBps, 5 Mbps, 5 mbps, 5 megabits, 5 megabytes, 5Mbit, 5 kbit, 5 KBps').map((t) => t.unit)).toEqual(
+      ['MBps', 'Mbps', 'Mbps', 'Mb', 'MB', 'Mb', 'Kb', 'KBps'],
+    )
+    expect(trace('Speed 5 megabytes', 'Speed 5 MB').verdict).toBe('clean')
+    expect(trace('Speed 5 Mbit', 'Speed 5 megabits').verdict).toBe('clean')
+    expect(trace('Speed 5 MBps', 'Speed 5 MBps').verdict).toBe('clean')
+  })
+})

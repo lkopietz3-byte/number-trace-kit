@@ -74,6 +74,11 @@ describe('linear time on hostile text', { timeout: 60_000 }, () => {
     'a code before a dollar sign': (n) => 'CAD $5 '.repeat(n / 7),
     'a long letter run before a dollar sign': (n) => 'A'.repeat(n) + '$5',
     'a code after a symbol amount': (n) => '$5 EUR '.repeat(n / 7),
+    'a code glued to a dollar sign': (n) => 'EUR$5 cad$5 '.repeat(n / 12),
+    'a word before dollars': (n) => '5 Canadian dollars '.repeat(n / 19),
+    'a long range with one code': (n) => '$5' + '-6'.repeat(n / 2) + ' CAD',
+    'a long range of conflicting currencies': (n) => '$5' + '-6'.repeat(n / 2) + ' EUR',
+    'a long range that gives a bare dollar its code': (n) => '$1 to '.repeat(n / 6) + '$2 CAD',
     'degree words': (n) => '5 degrees F '.repeat(n / 12),
     'degree signs': (n) => '5\u00b0 '.repeat(n / 3),
   }

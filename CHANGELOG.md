@@ -26,8 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed (M5)
 
 - `Mb` no longer equals `MB`, and `Gb` no longer equals `GB`: spaced data units were lower-cased into one unit. A lowercase `mb`, `gb`, `tb` or `kb` is no unit (the case cannot be resolved).
+- `MBps` is no longer read as `Mbps`, and `megabit`, `megabyte`, `kilobit`, `gigabyte`, `terabyte`, `Mbit`, `kbit` and similar words are read as the matching units, so `5 megabits` no longer traces to `5 megabytes`.
 - `30°C` no longer traces to `30°F`: the degree sign ended the number and left it with no unit on either side.
 - A code after a symbol amount is honored: `$500 CAD` is Canadian dollars and no longer traces to `$500 USD`; `CAD $500`, `CAD$500` and `NT$500` are read as what they say instead of USD.
+- The same rule holds in nearby forms: a code glued to the dollar sign in any case (`cad$500`, `EUR$500`), a word before "dollars" (`500 US dollars`, `$500 Canadian dollars`), and ranges (`$5 to $10 CAD` is two Canadian amounts; `$5-10 EUR` is `unknown`).
 
 ### Fixed (M4)
 
