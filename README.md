@@ -273,7 +273,7 @@ Measured numbers, each with its denominator, a 95% Wilson interval, its corpus a
 | the same, planted errors in the types a value check can see (82 items): caught with the default options, `strict`, `report`, `allowBareEvidence` | 75 of 82 = 91.5% (83.4 to 95.8%), 75, 66 = 80.5% (70.6 to 87.6%), 70 = 85.4% (76.1 to 91.4%) |
 | the same, two kinds a value check cannot see (swapped numbers, flipped direction) | 0 of 18 |
 
-What these say. The honest-response rate is the cost you pay for the zero-pass rate on unsupported numbers: about one honest response in seven needs a person on this corpus, mostly for numbers the model derived or spelled differently from the page. The labeled benchmark is small and was built by the same hand as the kit, so its rates flatter it; the RAGTruth rows are real model output, with the annotators' labels. Numbers in the earlier benchmark README (a 6% false-fail and an 85% catch rate) came from the constructed benchmark alone and are not claims about real output.
+What these say. The honest-response rate is what you pay for the zero pass rate on unsupported numbers under `strict`: about one honest response in seven needs a person on this corpus. The labeled benchmark is small and was built for the kit, with programmatic edits as its errors, so its rates flatter the kit; the RAGTruth and FinanceBench rows are real model output with outside labels.
 
 ## Known limits
 
