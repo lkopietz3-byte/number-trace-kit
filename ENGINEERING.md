@@ -69,7 +69,11 @@ source entry is `src/index.ts`; the package export resolves to generated
   precision, the whole fraction text) applies to every member; a group is
   re-applied only when it learns something new, so long chains stay linear.
   Chain and grouping scans compute their boundaries once and never restart
-  from the next element.
+  from the next element. A pair is joined into a range only when the two
+  numbers can be one quantity (`rangeCanShare`): a percent beside an amount or a
+  measured unit never is, and in the spoken forms ("to", a spaced en dash,
+  "between ... and") a percent is never carried forward and never with a
+  magnitude ("rose 8% to $4.2 billion" is a change and its result).
 - **Every option applies on every path.** `allowBareEvidence`, `rounding`,
   `signMode` and `derivations` are honored by the exact, rounded, derived and
   weak (`unknown`) paths alike.

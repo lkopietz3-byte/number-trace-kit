@@ -915,3 +915,112 @@ describe('M6 false-pass:F12: a dropped sign reaches the counts, and signMode str
     expect(() => trace('5', '5', { signMode: 'loose' as never })).toThrow(/signMode must be/)
   })
 })
+
+describe('M2 false-pass:F03: "X to Y" shares a modifier only where the words say so', () => {
+  const read = (text: string): string[] => extractNumbers(text).map((t) => `${t.raw}=${t.value}${t.kind === 'percent' ? '%' : t.kind === 'currency' ? ` ${t.currency}` : ''}`)
+
+  it('false-pass:F03 a percent that rises to an amount keeps its own value and the amount keeps its magnitude', () => {
+    expect(read('Revenue increased 8% to $4.2 billion')).toEqual(['8%=8%', '$4.2 billion=4200000000 USD'])
+    expect(read('Revenue fell 12% to $310 million')).toEqual(['12%=12%', '$310 million=310000000 USD'])
+    expect(read('Net income rose 10.2% to $1.05 billion, or $3.40 per diluted share.')).toEqual([
+      '10.2%=10.2%', '$1.05 billion=1050000000 USD', '$3.40=3.40 USD',
+    ])
+  })
+  it('false-pass:F03 a percent that rises to a count or a level does not turn the count into a percent', () => {
+    expect(extractNumbers('Subscribers rose 8% to 1,200.').map((t) => [t.raw, t.kind])).toEqual([['8%', 'percent'], ['1,200', 'count']])
+    expect(extractNumbers('Index fell 1.2% to 5,230.5 points').map((t) => [t.raw, t.kind])).toEqual([['1.2%', 'percent'], ['5,230.5', 'decimal']])
+    expect(extractNumbers('Orders rose 25% to 8,900 units.').map((t) => [t.raw, t.kind])).toEqual([['25%', 'percent'], ['8,900', 'count']])
+  })
+  it('false-pass:F03 the same holds for the other ways of joining two numbers', () => {
+    for (const text of ['from 8% to $4.2 billion', '8% – $4.2 billion', '8%-$4.2 billion', 'between 8% and $4.2 billion', '8% to 4.2 million']) {
+      const [a, b] = extractNumbers(text)
+      expect(a?.kind, text).toBe('percent')
+      expect(a?.value, text).toBe('8')
+      expect(b?.kind, text).not.toBe('percent')
+    }
+    for (const text of ['8% to 1,200', '8% – 1,200', 'between 8% and 1,200']) {
+      expect(extractNumbers(text).map((t) => t.kind), text).toEqual(['percent', 'count'])
+    }
+    // A currency and a percent, or a currency and a measured unit, are different quantities.
+    expect(read('Prices rose from $5 to 8%')).toEqual(['$5=5 USD', '8%=8%'])
+    expect(extractNumbers('from $5 to 8 kg').map((t) => [t.raw, t.kind, t.unit])).toEqual([['$5', 'currency', undefined], ['8 kg', 'count', 'kg']])
+  })
+  it('false-pass:F03 a bare number with a magnitude does not give it to a percent, and a percent does not take it', () => {
+    expect(extractNumbers('from 5 million to 8%').map((t) => [t.raw, t.value, t.kind])).toEqual([['5 million', '5000000', 'count'], ['8%', '8', 'percent']])
+  })
+  it('false-pass:F03 verdicts: the earnings sentence is restated cleanly, and a percent is never read off a count', () => {
+    expect(trace('Net sales grew 8%.', 'Net sales increased 8% to $4.2 billion.').verdict).toBe('clean')
+    expect(trace('Net sales reached $4.2 billion.', 'Net sales increased 8% to $4.2 billion.').verdict).toBe('clean')
+    expect(trace('Subscribers reached 1,200.', 'Subscribers rose 8% to 1,200.').verdict).toBe('clean')
+    expect(trace('Sales grew 1,200%.', 'Sales rose 8% to 1,200.').verdict).toBe('untraced')
+    // The report preset opts into bare evidence: the match stays visible as a unit that was never checked.
+    expect(trace('Sales grew 1,200%.', 'Sales rose 8% to 1,200.', { preset: 'report' }).counts.unitUnverified).toBe(1)
+    expect(trace('Sales grew 8 billion percent.', 'Sales rose 8% to $4.2 billion.').verdict).toBe('untraced')
+    expect(trace('Sales rose 8,000,000,000%.', 'Sales rose 8% to $4.2 billion.').verdict).toBe('untraced')
+  })
+  it('false-pass:F03 controls: a range still shares what is written once', () => {
+    expect(extractNumbers('5 to 8%').map((t) => [t.raw, t.kind, t.value])).toEqual([['5', 'percent', '5'], ['8%', 'percent', '8']])
+    expect(read('$4 to 5 million')).toEqual(['$4=4000000 USD', '5 million=5000000 USD'])
+    expect(read('$5 to 10')).toEqual(['$5=5 USD', '10=10 USD'])
+    expect(read('$5 to $10 CAD')).toEqual(['$5=5 CAD', '$10 CAD=10 CAD'])
+    expect(extractNumbers('2 to 3 kg').map((t) => t.unit)).toEqual(['kg', 'kg'])
+    expect(extractNumbers('from 5 to 10 percent').map((t) => t.kind)).toEqual(['percent', 'percent'])
+    expect(extractNumbers('from 5% to 10%').map((t) => t.kind)).toEqual(['percent', 'percent'])
+    expect(extractNumbers('1.5 to 2.5 million').map((t) => t.value)).toEqual(['1500000', '2500000'])
+    expect(extractNumbers('5 – 8%').map((t) => t.kind)).toEqual(['percent', 'percent'])
+    expect(extractNumbers('between 5 and 8%').map((t) => t.kind)).toEqual(['percent', 'percent'])
+    expect(trace('Growth of 5 to 8%.', 'Forecast: 5% and 8%.').verdict).toBe('clean')
+    expect(trace('Growth of 5% to 8%.', 'Forecast: 5 to 8%.').verdict).toBe('clean')
+  })
+
+  // Thirty earnings-release sentences. Each traces to itself, and each figure restated alone traces to it.
+  const CORPUS: [string, string[]][] = [
+    ['Revenue increased 8% to $4.2 billion.', ['Revenue grew 8%.', 'Revenue was $4.2 billion.']],
+    ['Net sales rose 8.5% to $12.4 billion.', ['Net sales grew 8.5%.', 'Net sales were $12.4 billion.']],
+    ['Operating income fell 12% to $310 million.', ['Operating income fell 12%.', 'Operating income was $310 million.']],
+    ['Gross margin expanded 120 basis points to 41.3%.', ['Gross margin was 41.3%.']],
+    ['Subscribers rose 8% to 1,200.', ['Subscribers grew 8%.', 'Subscribers reached 1,200.']],
+    ['The index fell 1.2% to 5,230.5 points.', ['The index fell 1.2%.', 'The index closed at 5,230.5 points.']],
+    ['Diluted EPS increased 15% to $2.15 per share.', ['EPS grew 15%.', 'EPS was $2.15.']],
+    ['Free cash flow rose 22% to $1.8 billion.', ['Free cash flow rose 22%.', 'Free cash flow was $1.8 billion.']],
+    ['Headcount grew 5% to 14,300 employees.', ['Headcount grew 5%.', 'Headcount was 14,300.']],
+    ['Deliveries climbed 11% to 412,000 vehicles.', ['Deliveries climbed 11%.', 'Deliveries were 412,000.']],
+    ['Cloud revenue jumped 31% to $9.6 billion.', ['Cloud revenue jumped 31%.', 'Cloud revenue was $9.6 billion.']],
+    ['Same-store sales declined 2.4% to $88.1 million.', ['Same-store sales declined 2.4%.', 'Same-store sales were $88.1 million.']],
+    ['Net loss narrowed 40% to $52 million.', ['Net loss narrowed 40%.', 'Net loss was $52 million.']],
+    ['Adjusted EBITDA increased 9% to $720 million.', ['Adjusted EBITDA grew 9%.', 'Adjusted EBITDA was $720 million.']],
+    ['Gross profit rose 7.5% to $5.1 billion.', ['Gross profit rose 7.5%.', 'Gross profit was $5.1 billion.']],
+    ['Monthly active users rose 6% to 312 million.', ['Users rose 6%.', 'Users reached 312 million.']],
+    ['Operating margin improved 2.1 percentage points to 18.4%.', ['Operating margin was 18.4%.', 'Margin improved 2.1 percentage points.']],
+    ['Backlog increased 14% to $27.3 billion.', ['Backlog grew 14%.', 'Backlog was $27.3 billion.']],
+    ['Total revenue grew 3% to €1.45 billion.', ['Revenue grew 3%.', 'Revenue was €1.45 billion.']],
+    ['Capital expenditures decreased 18% to $640 million.', ['Capex fell 18%.', 'Capex was $640 million.']],
+    ['Net income rose 10.2% to $1.05 billion, or $3.40 per diluted share.', ['Net income rose 10.2%.', 'Net income was $1.05 billion.', 'Earnings were $3.40 per share.']],
+    ['Orders increased 25% to 8,900 units.', ['Orders grew 25%.', 'Orders were 8,900.']],
+    ['Revenue was $4.2 billion, up 8% from $3.9 billion.', ['Revenue grew 8%.', 'Revenue was $3.9 billion last year.']],
+    ['Full-year guidance was raised 3% to $16.5 billion.', ['Guidance rose 3%.', 'Guidance is $16.5 billion.']],
+    ['Recurring revenue rose 19% to $2.2 billion, representing 61% of total revenue.', ['Recurring revenue rose 19%.', 'Recurring revenue was $2.2 billion.', 'It was 61% of revenue.']],
+    ['Customers grew 12% to 48,500.', ['Customers grew 12%.', 'Customers numbered 48,500.']],
+    ['Interest expense fell 5% to $98 million.', ['Interest expense fell 5%.', 'Interest expense was $98 million.']],
+    ['Stock-based compensation rose 16% to $430 million.', ['Stock-based compensation rose 16%.', 'It was $430 million.']],
+    ['Revenue from Asia grew 28% to $3.3 billion, or 24% of sales.', ['Asia revenue grew 28%.', 'Asia revenue was $3.3 billion.', 'Asia was 24% of sales.']],
+    ['Dividends per share increased 6% to $0.88.', ['Dividends grew 6%.', 'The dividend is $0.88 per share.']],
+  ]
+  it('false-pass:F03 corpus: thirty earnings-release sentences all self-trace clean, and every figure restated alone is clean', () => {
+    expect(CORPUS.length).toBe(30)
+    for (const [sentence, restatements] of CORPUS) {
+      for (const opts of [undefined, { preset: 'report' as const }]) {
+        expect(trace(sentence, sentence, opts).verdict, sentence).toBe('clean')
+        for (const r of restatements) expect(trace(r, sentence, opts).verdict, `${r} | ${sentence}`).toBe('clean')
+      }
+    }
+  })
+  it('false-pass:F03 corpus: only a figure written with a percent sign or word is read as a percent', () => {
+    for (const [sentence] of CORPUS) {
+      for (const t of extractNumbers(sentence)) {
+        const written = /%|percent/.test(t.raw) || /^\s*(?:percentage points|percent)/i.test(sentence.slice(t.end))
+        expect(t.kind === 'percent', `${t.raw} in ${sentence}`).toBe(written)
+      }
+    }
+  })
+})

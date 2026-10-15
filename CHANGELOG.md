@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (M2: "X to Y" is not always a range)
+
+- `Revenue increased 8% to $4.2 billion` no longer gives the 8 the magnitude of the amount (8,000,000,000 percent), and `Subscribers rose 8% to 1,200` no longer reads 1,200 as a percent, so `Sales grew 1,200%` no longer traces to it. A percent beside an amount or a measured unit is never one range, and in the spoken forms (`to`, a spaced en dash, `between ... and`) a percent is carried only backward onto a bare number (`5 to 8%`). Tight dashes (`5%-10`) and the range controls (`5 to 8%`, `$4 to 5 million`, `$5 to 10`) are unchanged. README Known limits now says exactly what is shared.
+
 ### Added (M1: an unread number is never silently dropped)
 
 - `traceNumbers` returns `skipped`: every stretch of the output that holds digits but was not read as a number, with `raw`, `start`, `end` and a `reason` (`identifier`, `unread-glued-form` or `ignored`), and `counts.skipped` (its length). New exported types: `SkippedNumber`, `SkipReason`, `TraceCounts`. `TraceResult.counts` is now a `TraceCounts`, which adds `skipped` to the six statuses.

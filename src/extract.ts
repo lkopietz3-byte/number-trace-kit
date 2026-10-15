@@ -1903,7 +1903,7 @@ export function scan(
       numInfo.set(tok, { neg, int: sub.int, frac: sub.frac, exp: exp10, loose: sfx?.looseMagnitude === true, sci: sfx?.scientific === true })
       if (isFirst && rangeDash >= 0) {
         const prev = lastPlain()
-        if (prev !== undefined) joinGroup('range', prev, tok)
+        if (prev !== undefined && rangeCanShare(prev, tok, start - rangeDash !== 1)) joinGroup('range', prev, tok)
       }
       if (isFirst && timesPrev !== undefined && rangeDash < 0) joinGroup('dimension', timesPrev, tok)
       if (isFirst && at(i0 - 1) === 0x2f && start === i0) {
@@ -1930,6 +1930,26 @@ export function scan(
       result = Math.max(result, rawEnd)
     }
     return result
+  }
+
+  /**
+   * Whether two numbers joined by "to", a dash or "between ... and" are one range that shares its modifiers.
+   * "Revenue rose 8% to $4.2 billion" and "subscribers rose 8% to 1,200" are a change and its result, not a range:
+   * the percent sign stays with the 8, and the magnitude and the count stay with the other figure. Numbers that
+   * are different kinds of quantity (a percent, an amount, a measured unit) never share. In the spoken forms
+   * ("to", a spaced en dash, "between ... and") a percent is only ever carried backward onto a bare number
+   * ("5 to 8%"), never forward and never together with a magnitude; a dash written tight ("5%-10") is a range.
+   */
+  function rangeCanShare(prev: Tok, tok: Tok, prose: boolean): boolean {
+    const typeOf = (m: Tok): 'percent' | 'currency' | 'unit' | '' =>
+      m.kind === 'percent' ? 'percent' : m.kind === 'currency' ? 'currency' : m.unit !== undefined ? 'unit' : ''
+    const a = typeOf(prev)
+    const b = typeOf(tok)
+    if (a !== '' && b !== '' && a !== b) return false
+    if (!prose) return true
+    if (a === 'percent' && b !== 'percent') return false
+    if (b === 'percent' && a === '' && (numInfo.get(prev)?.exp ?? 0) !== 0) return false
+    return true
   }
 
   function isPlainKind(t: Tok): boolean {
