@@ -10,7 +10,8 @@ const DERIVATIONS = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of
 /** The settings measured. `default` turns the five common derivations on and nothing else. */
 export const BENCH203_CONFIGS = {
   default: { derivations: DERIVATIONS },
-  report: { derivations: DERIVATIONS, preset: 'report' },
+  // The shipped preset exactly, with its own derivations (average and product too); an override would measure something else.
+  report: { preset: 'report' },
   strict: { derivations: [], preset: 'strict' },
   'allowBareEvidence': { derivations: DERIVATIONS, allowBareEvidence: true },
 }

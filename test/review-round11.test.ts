@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extractNumbers, traceNumbers } from '../src/index.js'
 import type { NumberToken, TraceOptions } from '../src/index.js'
+import { BENCH203_CONFIGS } from '../bench/lib/bench203.mjs'
 
 // Regression rows from the whole-branch review of the 0.1.0 release (70c6450..7152d68). Each row names its finding
 // and was seen failing before its fix.
@@ -175,5 +176,24 @@ describe('release-review:P2-wildcard-cap a bare number is looked up by its exact
   it('release-review:P2-wildcard-cap a unit figure is still not cleared by a bare one', () => {
     const r = trace('7 kg', '7 m '.repeat(8) + '7')
     expect(r.numbers[0]?.status).toBe('unknown')
+  })
+})
+
+describe('release-review:P2-bench-report the benchmark labeled report measures the shipped report preset', () => {
+  it('release-review:P2-bench-report the report configuration is the preset alone, with no derivation override', () => {
+    expect(BENCH203_CONFIGS['report']).toEqual({ preset: 'report' })
+  })
+
+  it('release-review:P2-bench-report the report configuration turns on average and product, as the preset does', () => {
+    const items = [
+      { evidence: 'Q1 revenue was $120. Q2 revenue was $180.', output: 'Average quarterly revenue was $150.' },
+      { evidence: 'Each seat costs $12. The team has 5 seats.', output: 'The seats cost $60 in total.' },
+    ]
+    for (const { evidence, output } of items) {
+      const viaBench = traceNumbers(output, evidence, BENCH203_CONFIGS['report'] as TraceOptions)
+      const viaPreset = traceNumbers(output, evidence, { preset: 'report' })
+      expect(viaBench.verdict).toBe('clean')
+      expect(viaBench.numbers.map((n) => n.status)).toEqual(viaPreset.numbers.map((n) => n.status))
+    }
   })
 })
