@@ -15,7 +15,7 @@ import {
   toRat,
 } from './decimal.js'
 import type { Dec, Rat } from './decimal.js'
-import { NumberLimitError, scan, skippedFormsOf } from './extract.js'
+import { NumberLimitError, foldCodeUnit, scan, skippedFormsOf } from './extract.js'
 import type { SkipRecord } from './extract.js'
 import {
   MAX_TEXT_LENGTH,
@@ -704,12 +704,23 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
       `evidence has more than ${ctx.maxEvidenceNumbers} numbers; split it, or keep only the passages the output can cite ` +
         `(the maxEvidenceNumbers option can lower the limit, which is at most ${MAX_EVIDENCE_NUMBERS}).`,
     )
+  /** Evidence percents read as labels, each with the parenthesized negative it was read from. */
+  const labelNegatives = new Map<NumberToken, NumberToken>()
   /** Scan one evidence text, stopping as soon as the evidence as a whole holds too many numbers. */
   const scanEvidence = (body: string): NumberToken[] => {
     try {
       const skips: SkipRecord[] = []
       const tokens = scan(body, ctx.evLoc, ctx.parenNeg, true, skips, ctx.maxEvidenceNumbers - count)
       for (const rec of skips) ev.forms.add(body.slice(rec.start, rec.end))
+      // A percent in parentheses after a word is a label, read as positive; its negative reading stays as a weak one.
+      for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i]
+        if (t === undefined || !labelsPercent(t, body)) continue
+        const read = noProto({ ...t, value: t.value.slice(1) })
+        delete (read as { signStyle?: unknown }).signStyle
+        tokens[i] = read
+        labelNegatives.set(read, t)
+      }
       return tokens
     } catch (e) {
       if (e instanceof NumberLimitError) throw tooManyNumbers()
@@ -727,6 +738,13 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     if (count + tokens.length > ctx.maxEvidenceNumbers) throw tooManyNumbers()
     for (const t of tokens) {
       ingest(ev, applyHints(t, exp, currency, scaleCurrency), idOf(t))
+      const negative = labelNegatives.get(t)
+      if (negative !== undefined) {
+        // The other reading of "Tax (8.25%)": a loss. It can only make a written negative `unknown`, never a pass.
+        const ent = makeEnt(negative, shapeOf(negative), negative.value, negative.scale, idOf(t))
+        if (ent !== null) addEnt(ev, ent, true)
+        labelNegatives.delete(t)
+      }
       count++
     }
     for (const cluster of dateClusters(tokens)) {
@@ -847,16 +865,47 @@ function signHeld(tok: NumberToken, signDiffers: boolean, mode: SignMode, aside:
  * and a space: constant work.
  */
 function followsFigure(tok: NumberToken, text: string): boolean {
+  // The text as the scanner read it, so a full-width digit or letter counts the same as its ASCII form.
+  const at = (k: number): number => foldCodeUnit(text.charCodeAt(k))
   let p = tok.start - 1
-  if (p >= 0 && isSpaceCode(text.charCodeAt(p))) p--
+  if (p >= 0 && isSpaceCode(at(p))) p--
   if (p < 0) return false
-  const isDigitAt = (k: number): boolean => k >= 0 && text.charCodeAt(k) >= 0x30 && text.charCodeAt(k) <= 0x39
-  if (isDigitAt(p) || text.charCodeAt(p) === 0x25) return true
+  const isDigitAt = (k: number): boolean => k >= 0 && at(k) >= 0x30 && at(k) <= 0x39
+  if (isDigitAt(p) || at(p) === 0x25) return true
   let w = p
-  while (w >= 0 && p - w < 14 && isLetterCode(text.charCodeAt(w))) w--
+  while (w >= 0 && p - w < 14 && isLetterCode(at(w))) w--
   if (w === p || p - w >= 14) return false
-  if (w >= 0 && isSpaceCode(text.charCodeAt(w))) w--
+  if (w >= 0 && isSpaceCode(at(w))) w--
   return isDigitAt(w)
+}
+
+// Words after which a parenthesized percent is the figure itself ("margin was (12%)"), not a label or an aside.
+const LINKING_WORDS: ReadonlySet<string> = new Set(['was', 'were', 'is', 'are', 'be', 'been', 'of', 'at', 'to', 'by', 'from', 'than', 'and', 'or', 'reached', 'hit'])
+
+/** A letter of any Latin or other script, one code unit at a time (a bounded test on a single character). */
+function isWordCode(c: number): boolean {
+  return isLetterCode(c) || (c >= 0xc0 && /\p{L}/u.test(String.fromCharCode(c)))
+}
+
+/**
+ * Is this parenthesized percent in the evidence a label or an aside ("Tax (8.25%)", "Gross margin (12%)", "$5 million
+ * (12.5%)") and not an accounting negative? The same rule as the output side (`followsFigure`), widened to a percent
+ * right after one word: such a figure is usually the rate itself. A loss in parentheses (`($500)`, `(1,234)`) and a
+ * percent after a linking word ("margin was (12%)") or after punctuation ("Net margin: (12.5%)") stay negative.
+ * Looks back over at most a space and one word: constant work.
+ */
+function labelsPercent(tok: NumberToken, text: string): boolean {
+  if (tok.signStyle !== 'parentheses' || tok.kind !== 'percent' || !tok.value.startsWith('-')) return false
+  if (followsFigure(tok, text)) return true
+  const at = (k: number): number => foldCodeUnit(text.charCodeAt(k))
+  let p = tok.start - 1
+  if (p >= 0 && isSpaceCode(at(p))) p--
+  let w = p
+  while (w >= 0 && p - w < 24 && isWordCode(at(w))) w--
+  if (w === p || p - w >= 24) return false
+  let word = ''
+  for (let k = w + 1; k <= p; k++) word += String.fromCharCode(at(k))
+  return !LINKING_WORDS.has(word.toLowerCase())
 }
 
 function signAllowed(tok: NumberToken, outNeg: boolean, entNeg: boolean, mode: SignMode): boolean {

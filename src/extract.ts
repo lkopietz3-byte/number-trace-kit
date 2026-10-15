@@ -529,6 +529,32 @@ function foreignDigit(c: number): number {
   return d <= 9 ? d : -1
 }
 
+/** One code unit as the scanner reads it: full-width forms, look-alike signs and foreign digits are folded to ASCII. */
+export function foldCodeUnit(code: number): number {
+  let c = code
+  if (c >= 0x80) {
+    if (c >= 0xff01 && c <= 0xff5e) c -= 0xfee0
+    else if (c === 0x3000) c = 0x20
+    else if (c === 0x2044 || c === 0x2215) c = 0x2f // fraction slash and division slash: a slash
+    else if (c === 0x066b) c = 0x2e
+    else if (c === 0x066c) c = 0x2c
+    else if (c === 0x066a || c === 0xfe6a) c = 0x25
+    else if (c === 0x2212 || c === 0x2010 || c === 0x2011 || c === 0x2012 || c === 0xfe63 || c === 0x2796 || c === 0x2043) c = 0x2d // minus sign and its look-alikes
+    else if (c === 0xfe62 || c === 0x2795) c = 0x2b // small plus sign and heavy plus sign
+    else if (c === 0xb5) c = 0x3bc // micro sign: the Greek letter mu, as in unit prefixes
+    else if (c === 0x212a) c = 0x4b // Kelvin sign: canonically K
+    else if (c === 0x212b) c = 0xc5 // Angstrom sign: canonically \u00c5
+    else if (c === 0xffe5) c = 0xa5
+    else if (c === 0xffe1) c = 0xa3
+    else if (c === 0xffe6) c = 0x20a9
+    else if (c >= 0x0660) {
+      const d = foreignDigit(c)
+      if (d >= 0) c = 0x30 + d
+    }
+  }
+  return c
+}
+
 /**
  * Fold code units the way NFKC would for the characters that matter here, one
  * unit to one unit so offsets stay valid in the original text: full-width
@@ -539,30 +565,7 @@ function foreignDigit(c: number): number {
 function fold(text: string): Uint16Array {
   const n = text.length
   const f = new Uint16Array(n)
-  for (let i = 0; i < n; i++) {
-    let c = text.charCodeAt(i)
-    if (c >= 0x80) {
-      if (c >= 0xff01 && c <= 0xff5e) c -= 0xfee0
-      else if (c === 0x3000) c = 0x20
-      else if (c === 0x2044 || c === 0x2215) c = 0x2f // fraction slash and division slash: a slash
-      else if (c === 0x066b) c = 0x2e
-      else if (c === 0x066c) c = 0x2c
-      else if (c === 0x066a || c === 0xfe6a) c = 0x25
-      else if (c === 0x2212 || c === 0x2010 || c === 0x2011 || c === 0x2012 || c === 0xfe63 || c === 0x2796 || c === 0x2043) c = 0x2d // minus sign and its look-alikes
-      else if (c === 0xfe62 || c === 0x2795) c = 0x2b // small plus sign and heavy plus sign
-      else if (c === 0xb5) c = 0x3bc // micro sign: the Greek letter mu, as in unit prefixes
-      else if (c === 0x212a) c = 0x4b // Kelvin sign: canonically K
-      else if (c === 0x212b) c = 0xc5 // Angstrom sign: canonically \u00c5
-      else if (c === 0xffe5) c = 0xa5
-      else if (c === 0xffe1) c = 0xa3
-      else if (c === 0xffe6) c = 0x20a9
-      else if (c >= 0x0660) {
-        const d = foreignDigit(c)
-        if (d >= 0) c = 0x30 + d
-      }
-    }
-    f[i] = c
-  }
+  for (let i = 0; i < n; i++) f[i] = foldCodeUnit(text.charCodeAt(i))
   return f
 }
 

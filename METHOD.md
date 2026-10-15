@@ -43,7 +43,7 @@ Number statuses: `traced` (same class and exact value), `rounded` (evidence roun
 | `allowBareEvidence: false`, `allowBareOutput: false` | a percent or amount against a unit-less number is a likely coincidence | set either to `true` (the `report` preset does); matches are marked `unitUnverified` |
 | unit on one side only is `unknown` (`unit-unverified`) | `5pm` against `5.0 stars` can be a coincidence between different quantities | no switch; write the unit on both sides or `ignore` the number |
 | `locale: 'en-US'` | a separator can be a decimal mark or a grouping mark; the locale decides | pass `locale` for the output and `evidenceLocale` for the evidence |
-| `parenthesesAreNegative: true` | accounting prints losses in parentheses, but a bare `(2)` or `(2024)` is left alone | `false` |
+| `parenthesesAreNegative: true` | accounting prints losses in parentheses, but a bare `(2)` or `(2024)` is left alone, and in the evidence a percent in parentheses right after a word or a figure (`Tax (8.25%)`) is a label, not a loss | `false` |
 | `evidenceScale`, `evidenceCurrency`: none | the kit never guesses a scale from a header such as "(in thousands)"; you say it | set them, or `scale` and `currency` on an evidence document |
 | `evidenceOrder: 'oldest-first'` | the direction of a change follows the order the evidence mentions the numbers | `'newest-first'` for tables that list the later period first |
 | `checkIdentifiers: false` | identifiers (`Q3`, `5G`, `v2.1`) are names, not numbers, so they are skipped and listed without changing the verdict; a wrong quarter passes if the numbers around it trace | `true`: an identifier the evidence text does not contain is `unknown` (`not-in-evidence`) |

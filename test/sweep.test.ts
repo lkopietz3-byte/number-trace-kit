@@ -148,7 +148,9 @@ const FORMS: ReadonlyArray<(rnd: Rng) => Variant[]> = [
   },
   (r) => {
     const n = pick(r, ['12.5', '3'])
-    return [{ text: `(${n}%)` }, { text: `-${n}%` }]
+    // A percent in parentheses right after a word is a label in the evidence ("Tax (8.25%)"), not a loss
+    // (readiness-review:evidence-aside); the colon keeps this form the standalone accounting negative it tests.
+    return [{ text: `: (${n}%)` }, { text: `-${n}%` }]
   },
   () => [{ text: '3/4' }, { text: '3/4' }],
   () => [{ text: '1/2/3' }, { text: '1/2/3' }],
@@ -215,7 +217,8 @@ const FORMS: ReadonlyArray<(rnd: Rng) => Variant[]> = [
   () => [{ text: '.5%' }, { text: '0.5%' }, { text: '0.5 percent' }, { text: '.5 %' }],
   () => [{ text: '$.99' }, { text: '$0.99' }, { text: 'USD 0.99' }],
   () => [{ text: '-.25' }, { text: '-0.25' }, { text: '\u2212.25' }],
-  () => [{ text: '(.5%)' }, { text: '-0.5%' }, { text: '-.5%' }],
+  // The colon keeps the parenthesis from following a word (readiness-review:evidence-aside).
+  () => [{ text: ': (.5%)' }, { text: '-0.5%' }, { text: '-.5%' }],
   () => [{ text: '.5 kg' }, { text: '0.5 kg' }, { text: '.5kg' }],
   () => [{ text: '-0.00%' }, { text: '-0.00 %' }],
   () => [{ text: '.5\u2013.7%' }, { text: '.5-.7%' }, { text: '.5 to .7%' }, { text: '0.5% and 0.7%' }],
