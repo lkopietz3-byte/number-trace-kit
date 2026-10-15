@@ -674,7 +674,7 @@ export function scan(
     return pieces.join('')
   }
   const isGroupSep = (c: number): boolean =>
-    isGroupSpace(c) || (info.apostrophe && (c === 0x27 || c === 0x2019)) || (c === 0x20 && info.decimal === 0x2c)
+    isGroupSpace(c) || (info.apostrophe && (c === 0x27 || c === 0x2019)) || (c === 0x20 && info.decimal === 0x2c) || c === 0x5f
   const lastToken = (): Tok | undefined => out[out.length - 1]
   const lastPlain = (): Tok | undefined => {
     const t = lastToken()
@@ -2083,6 +2083,20 @@ export function scan(
       } else {
         p = e
         break
+      }
+    }
+    // Digits joined by underscores (1_500_000, as Python and JavaScript write them) are one number when they are
+    // a thousands grouping; any other chain of digits and underscores (12_5, 0_500) is a form the kit cannot read.
+    if (seps.includes(0x5f)) {
+      let lead = 0
+      while (lead < seps.length && seps[lead] === 0x5f) lead++
+      const rest = seps.length - lead
+      const first = (parts[1] ?? 0) - (parts[0] ?? 0)
+      let grouped = first <= 3 && at(parts[0] ?? 0) !== 0x30 && (rest === 0 || (rest === 1 && (seps[lead] === 0x2e || seps[lead] === 0x2c)))
+      for (let q = 1; q <= lead && grouped; q++) grouped = (parts[2 * q + 1] ?? 0) - (parts[2 * q] ?? 0) === 3
+      if (!grouped) {
+        skip(i0, p, 'unread-glued-form')
+        return p
       }
     }
     // A dotted chain of three or more numbers that is not a grouped integer

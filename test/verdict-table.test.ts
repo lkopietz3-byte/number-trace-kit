@@ -440,7 +440,9 @@ describe('M1 false-pass:F01: result.skipped and counts.skipped', () => {
 
   it('hostile:F2 underscores and filler around a number do not hide it', () => {
     expect(extractNumbers('_12.5%_ and __1,234__ and 1766____').map((t) => t.raw)).toEqual(['12.5%', '1,234', '1766'])
-    expect(extractNumbers('foo_12 and 12_000 and x_1').map((t) => t.raw)).toEqual([])
+    expect(extractNumbers('foo_12 and x_1').map((t) => t.raw)).toEqual([])
+    // gate-review:F03: digits joined by underscores in groups of three are one number (12_000 is 12,000), no longer a name.
+    expect(extractNumbers('foo_12 and 12_000 and x_1').map((t) => t.raw)).toEqual(['12_000'])
   })
 })
 

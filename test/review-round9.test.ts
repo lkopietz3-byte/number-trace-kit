@@ -207,3 +207,37 @@ describe('gate-hostile:G10 a skipped form never overlaps a number token', () => 
     expect(bad.slice(0, 5)).toEqual([])
   })
 })
+
+describe('gate-review:F03 digit groups joined by underscores', () => {
+  it.each([
+    ['Revenue is $1_500_000.', 'Revenue is $900.'],
+    ['Revenue is 1_500_000 dollars.', 'Revenue is 900 dollars.'],
+    ['Count is 12_000.', 'Count is 900.'],
+    ['Rate is 12_5%.', 'Rate is 9%.'],
+  ])('gate-review:F03 %s is not clean against %s', (output, evidence) => {
+    expect(verdict(output, evidence)).not.toBe('clean')
+  })
+
+  it('gate-review:F03 a clean group of three is the number, and it traces to the other writings', () => {
+    expect(extractNumbers('Revenue is $1_500_000.')[0]).toMatchObject({ raw: '$1_500_000', value: '1500000', currency: 'USD' })
+    expect(extractNumbers('12_000')[0]).toMatchObject({ raw: '12_000', value: '12000' })
+    expect(extractNumbers('1_234_567.89')[0]).toMatchObject({ value: '1234567.89' })
+    expect(verdict('Revenue is $1_500_000.', 'Revenue is $1,500,000.')).toBe('clean')
+    expect(verdict('Revenue is $1,500,000.', 'Revenue is $1_500_000.')).toBe('clean')
+    expect(verdict('Revenue is 1_500_000 dollars.', 'Revenue is $900.')).toBe('untraced')
+  })
+
+  it('gate-review:F03 groups that are not a thousands grouping are an unread form, never clean', () => {
+    for (const text of ['12_5%', '1_5', '0_500', '1_2345', '12_34_567']) {
+      const r = trace(`Value ${text} here`, 'Value 7 here')
+      expect(r.verdict, text).toBe('unknown')
+      expect(r.skipped.map((s) => [s.raw, s.reason]), text).toEqual([[text.replace('%', ''), 'unread-glued-form']])
+    }
+  })
+
+  it('gate-review:F03 names that hold digits stay identifiers, and markup underscores stay markup', () => {
+    expect(extractNumbers('foo_12 and x_1 and x86_64 and 5_foo')).toEqual([])
+    expect(trace('foo_12 and x86_64 and 5_foo', 'x').skipped.map((s) => s.reason)).toEqual(['identifier', 'identifier', 'identifier'])
+    expect(extractNumbers('_12.5%_ and __1,234__ and 1766____').map((t) => t.raw)).toEqual(['12.5%', '1,234', '1766'])
+  })
+})
