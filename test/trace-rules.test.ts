@@ -89,9 +89,9 @@ describe('units and kinds must match', () => {
     expect(only(trace('3 days', 'x 3 weeks')).status).toBe('untraced')
     expect(only(trace('3 days', 'x 3 days')).status).toBe('traced')
     expect(only(trace('3 days', 'x 3 days')).unitUnverified).toBeUndefined()
-    // One side with no recognized unit still traces, and says so.
-    expect(only(trace('3 days', 'x 3')).unitUnverified).toBe(true)
-    expect(only(trace('3', 'x 3 days')).unitUnverified).toBe(true)
+    // One side with no recognized unit cannot be confirmed: unknown, never a pass (M6 false-pass:F09).
+    expect(only(trace('3 days', 'x 3'))).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
+    expect(only(trace('3', 'x 3 days'))).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
     expect(only(trace('5 kg', 'x 5kg')).status).toBe('traced')
   })
 
@@ -405,7 +405,7 @@ describe('verdict', () => {
     expect(trace('5 and 6', 'x 5').verdict).toBe('untraced')
     expect(trace('5 and 4K', 'x 5 and 4').verdict).toBe('unknown')
     expect(trace('6 and 4K', 'x 5 and 4').verdict).toBe('untraced') // untraced outranks unknown
-    expect(trace('5', 'x 5').counts).toEqual({ traced: 1, rounded: 0, derived: 0, untraced: 0, ignored: 0, unknown: 0, skipped: 0 })
+    expect(trace('5', 'x 5').counts).toEqual({ traced: 1, rounded: 0, derived: 0, untraced: 0, ignored: 0, unknown: 0, skipped: 0, unitUnverified: 0, signDiffers: 0 })
   })
 
   it('empty evidence leaves every output number untraced and says how many evidence numbers there were', () => {

@@ -672,11 +672,15 @@ describe('M5 false-pass:F02: bits are not bytes, Celsius is not Fahrenheit', () 
     expect(trace('Weight 500 kg', 'Weight 500 MB').verdict).toBe('untraced')
     expect(extractNumbers('5 Mb, 5 MB, 5 PB, 5 Pb').map((t) => t.unit)).toEqual(['Mb', 'MB', 'PB', 'Pb'])
   })
-  it('false-pass:F02 a lowercase mb, gb or tb is not a unit: its case cannot be resolved', () => {
-    expect(extractNumbers('5 mb, 5 gb, 5 tb, 5 kb').map((t) => [t.value, t.unit])).toEqual([['5', undefined], ['5', undefined], ['5', undefined], ['5', undefined]])
-    const r = trace('File is 5mb', 'File is 5 MB')
+  it('false-pass:F02 an all-lowercase mb, gb, tb or kb is read as bytes (documented); a capital M, G, T or K with a lowercase b is bits', () => {
+    expect(extractNumbers('5 mb, 5 gb, 5 tb, 5 kb, 5mb, 5gb').map((t) => t.unit)).toEqual(['MB', 'GB', 'TB', 'KB', 'MB', 'GB'])
+    expect(trace('File is 5mb', 'File is 5 MB').verdict).toBe('clean')
+    expect(trace('File is 5 mb', 'File is 5 Mb').verdict).toBe('untraced')
+    expect(trace('File is 5 Mb', 'File is 5 mb').verdict).toBe('untraced')
+    // A form the kit cannot place at all is not a pass either.
+    const r = trace('File is 5mB', 'File is 5 MB')
     expect(r.numbers).toEqual([])
-    expect(r.skipped).toEqual([{ raw: '5mb', start: 8, end: 11, reason: 'unread-glued-form' }])
+    expect(r.skipped).toEqual([{ raw: '5mB', start: 8, end: 11, reason: 'unread-glued-form' }])
     expect(r.verdict).toBe('unknown')
   })
   it('false-pass:F02 30°C is not 30°F, with a space, a word or a single character', () => {
@@ -800,5 +804,114 @@ describe('M5 false-pass:F02 sweep: bits and bytes in nearby forms', () => {
     expect(trace('Speed 5 megabytes', 'Speed 5 MB').verdict).toBe('clean')
     expect(trace('Speed 5 Mbit', 'Speed 5 megabits').verdict).toBe('clean')
     expect(trace('Speed 5 MBps', 'Speed 5 MBps').verdict).toBe('clean')
+  })
+})
+
+// ---- 0.1.0 release: M6, flags reach counts and the verdict -------------------------------------------------
+
+const HOURS_PAGE = JSON.stringify({ hours: { sun: '9:0-18:0' }, review_stars: 5.0 })
+
+describe('M6 field:F1: a time of day never traces to a unit-less number', () => {
+  it('field:F1 "until 5pm" is not cleared by a 5.0 star rating, in strict or report', () => {
+    for (const opts of [undefined, { preset: 'strict' as const }, { preset: 'report' as const }]) {
+      const r = trace('Open Sunday until 5pm.', HOURS_PAGE, opts)
+      expect(r.verdict, JSON.stringify(opts)).toBe('unknown')
+      expect(r.numbers[0], JSON.stringify(opts)).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
+    }
+    expect(trace('Open Sunday until 5 pm.', HOURS_PAGE).verdict).toBe('unknown')
+    expect(trace('Open until 5 days.', HOURS_PAGE).verdict).toBe('unknown')
+  })
+  it('field:F1 every way of writing am and pm is a time unit', () => {
+    for (const out of ['until 5 PM.', 'until 5PM.', 'until 5 p.m.', 'until 5 P.M.', 'until 9 a.m.', 'until 5 Pm.']) {
+      expect(trace(`Open ${out}`, HOURS_PAGE).numbers[0], out).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
+    }
+    expect(extractNumbers('5pm, 5 PM, 5 p.m., 9 a.m., 9 A.M., 5-6pm').map((t) => [t.raw, t.unit])).toEqual([
+      ['5pm', 'pm'], ['5 PM', 'pm'], ['5 p.m.', 'pm'], ['9 a.m.', 'am'], ['9 A.M.', 'am'], ['5', 'pm'], ['6pm', 'pm'],
+    ])
+    // Not a meridiem: "5 a day", "5 pmt", "10 AMD".
+    expect(extractNumbers('5 a day, 5 pmt, 10 AMD').map((t) => t.unit)).toEqual([undefined, undefined, undefined])
+    expect(trace('Open until 5 p.m.', 'We close at 5pm daily.').verdict).toBe('clean')
+    expect(trace('Open until 5 p.m.', 'We close at 5 am daily.').verdict).toBe('untraced')
+  })
+  it('field:F1 a time of day is read, never computed from other numbers', () => {
+    const r = trace('Open until 5pm.', 'Ask about 3 and 2.', { preset: 'report' })
+    expect(r.numbers[0]).toMatchObject({ status: 'untraced' })
+    expect(trace('Open until 5pm.', 'Ask about 3 and 2.', { derivations: ['sum'] }).verdict).toBe('untraced')
+  })
+  it('field:F1 the same clock time written the same way still traces, and another one does not', () => {
+    expect(trace('Open until 5pm.', 'We close at 5pm daily.').verdict).toBe('clean')
+    expect(trace('Open until 5 pm.', 'We close at 5pm daily.').verdict).toBe('clean')
+    expect(trace('Open until 5pm.', 'We close at 5am daily.').verdict).toBe('untraced')
+  })
+})
+
+describe('M6 false-pass:F09: a unit on one side only is counted, and is unknown unless the caller opted in', () => {
+  it('false-pass:F09 a percent or price traces to a bare count only when asked, and counts.unitUnverified says so', () => {
+    for (const out of ['Churn was 120%.', 'Cost was $120.']) {
+      expect(trace(out, 'We have 120 employees.').verdict, out).toBe('untraced')
+      const r = trace(out, 'We have 120 employees.', { preset: 'report' })
+      expect(r.verdict, out).toBe('clean')
+      expect(r.numbers[0], out).toMatchObject({ status: 'traced', unitUnverified: true })
+      expect(r.counts.unitUnverified, out).toBe(1)
+      expect(trace(out, 'We have 120 employees.', { allowBareEvidence: true }).counts.unitUnverified, out).toBe(1)
+    }
+    expect(trace('Revenue was 5,829 million.', 'Revenue was $5,829 million.', { allowBareOutput: true }).counts.unitUnverified).toBe(1)
+    expect(trace('Churn was 12%.', 'Churn was 12%.', { preset: 'report' }).counts.unitUnverified).toBe(0)
+  })
+  it('false-pass:F09 a measured unit against a unit-less number is unknown (reason unit-unverified), whichever side has it', () => {
+    for (const [out, ev] of [['We shipped 7 kg.', 'We shipped 7.'], ['We shipped 7.', 'We shipped 7 kg.'], ['Temp 30°C', 'Temp 30'], ['Open 5 days', 'Rating 5.0']] as const) {
+      for (const opts of [undefined, { preset: 'report' as const }]) {
+        const r = trace(out, ev, opts)
+        expect(r.verdict, `${out} | ${ev}`).toBe('unknown')
+        expect(r.numbers[0], `${out} | ${ev}`).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
+        expect(r.counts.unitUnverified).toBe(0)
+      }
+    }
+    // The same unit, or no unit on either side, is a plain match.
+    expect(trace('We shipped 7 kg.', 'We shipped 7 kg.').verdict).toBe('clean')
+    expect(trace('We shipped 7.', 'We shipped 7.').verdict).toBe('clean')
+  })
+  it('false-pass:F09 a rounded match with a unit on one side only is unknown too', () => {
+    expect(trace('We shipped 7.3 kg.', 'We shipped 7.31.').numbers[0]).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
+    expect(trace('We shipped 7.3.', 'We shipped 7.31 kg.').numbers[0]).toMatchObject({ status: 'unknown', reason: 'unit-unverified' })
+    expect(trace('We shipped 7.3 kg.', 'We shipped 7.31 kg.').numbers[0]).toMatchObject({ status: 'rounded' })
+  })
+  it('false-pass:F09 a derived number with a unit on one side only stays marked and counted', () => {
+    const r = trace('We shipped 7 kg.', 'We shipped 3 and 4.', { derivations: ['sum'] })
+    expect(r.numbers[0]).toMatchObject({ status: 'derived', unitUnverified: true })
+    expect(r.counts.unitUnverified).toBe(1)
+  })
+})
+
+describe('M6 false-pass:F12: a dropped sign reaches the counts, and signMode strict makes it unknown', () => {
+  const LOSS = 'Net loss for the year: ($5.2 million).'
+  it('false-pass:F12 the default keeps a dropped sign as a marked pass and counts it', () => {
+    const r = trace('Net income was $5.2 million.', LOSS)
+    expect(r.verdict).toBe('clean')
+    expect(r.numbers[0]).toMatchObject({ status: 'traced', signDiffers: true })
+    expect(r.counts.signDiffers).toBe(1)
+    expect(trace('Net loss was ($5.2 million).', LOSS).counts.signDiffers).toBe(0)
+    expect(trace('Net income was $5.2 million.', LOSS, { signMode: 'explicit' }).verdict).toBe('clean')
+  })
+  it('false-pass:F12 signMode strict: a loss restated as income is unknown (sign-differs)', () => {
+    const r = trace('Net income was $5.2 million.', LOSS, { signMode: 'strict' })
+    expect(r.verdict).toBe('unknown')
+    expect(r.numbers[0]).toMatchObject({ status: 'unknown', reason: 'sign-differs' })
+    expect(r.counts.signDiffers).toBe(0)
+    // Rounded and derived matches follow the same rule.
+    expect(trace('Margin was 4.1%.', 'Margin was -4.13%.', { signMode: 'strict' }).numbers[0]).toMatchObject({ status: 'unknown', reason: 'sign-differs' })
+    expect(trace('Average was 35%.', 'Q1 was -30% and Q2 was -40%.', { signMode: 'strict', derivations: ['average'] }).numbers[0]).toMatchObject({
+      status: 'unknown', reason: 'sign-differs',
+    })
+    // The same sign, a sign the output writes itself, and evidence that has both signs are not affected.
+    expect(trace('Net loss was ($5.2 million).', LOSS, { signMode: 'strict' }).verdict).toBe('clean')
+    expect(trace('Change was -5%.', 'Change was 5%.', { signMode: 'strict' }).verdict).toBe('untraced')
+    expect(trace('Change was 5%.', 'Q1 was -5% and Q2 was 5%.', { signMode: 'strict' }).verdict).toBe('clean')
+    expect(trace('It was 5.', 'It was 5.', { signMode: 'strict' }).verdict).toBe('clean')
+  })
+  it('false-pass:F12 signMode strict travels with the report preset, and magnitude still ignores signs', () => {
+    expect(trace('Net income was $5.2 million.', LOSS, { preset: 'report', signMode: 'strict' }).verdict).toBe('unknown')
+    expect(trace('Net income was $5.2 million.', LOSS, { signMode: 'magnitude' }).verdict).toBe('clean')
+    expect(() => trace('5', '5', { signMode: 'loose' as never })).toThrow(/signMode must be/)
   })
 })

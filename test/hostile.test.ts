@@ -79,6 +79,8 @@ describe('linear time on hostile text', { timeout: 60_000 }, () => {
     'a long range with one code': (n) => '$5' + '-6'.repeat(n / 2) + ' CAD',
     'a long range of conflicting currencies': (n) => '$5' + '-6'.repeat(n / 2) + ' EUR',
     'a long range that gives a bare dollar its code': (n) => '$1 to '.repeat(n / 6) + '$2 CAD',
+    'meridiems with dots': (n) => '5 p.m. '.repeat(n / 7),
+    'meridiem letters without the m': (n) => '5 a '.repeat(n / 4) + '5 p.',
     'degree words': (n) => '5 degrees F '.repeat(n / 12),
     'degree signs': (n) => '5\u00b0 '.repeat(n / 3),
   }

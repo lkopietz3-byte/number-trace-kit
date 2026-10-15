@@ -32,6 +32,10 @@ source entry is `src/index.ts`; the package export resolves to generated
   `unknown`: an ambiguous reading, a locale guess, a superscript or exponent, a
   number over 60 digits, a derivation whose direction cannot be confirmed, a
   derivation search larger than `maxCandidates`.
+- **A one-sided unit is not a match.** A direct or rounded match where only one side has a recognized unit
+  (`5pm` against `5.0`) is `unknown` (`unit-unverified`). Leniency is opt-in and always visible: matches allowed by
+  `allowBareEvidence` / `allowBareOutput`, and derived numbers, stay marked `unitUnverified` and are counted in
+  `counts.unitUnverified`. A dropped sign is marked `signDiffers`, counted, and `unknown` under `signMode: 'strict'`.
 - **Strong and weak links.** A match through primary readings on both sides is
   strong. A match that needs a non-primary reading of an ambiguous number on
   either side is weak and yields `unknown`. A number whose only reading is a

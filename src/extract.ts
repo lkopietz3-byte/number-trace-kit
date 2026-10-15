@@ -89,6 +89,8 @@ const GLUED_UNITS: Record<string, string> = {
   KiB: 'KiB', MiB: 'MiB', GiB: 'GiB', TiB: 'TiB', PiB: 'PiB', ml: 'ml', mL: 'ml', L: 'l', l: 'l', kW: 'kW', kWh: 'kWh', MW: 'MW',
   GHz: 'GHz', MHz: 'MHz', mph: 'mph', kph: 'kph', x: 'x', am: 'am', pm: 'pm', bps: 'bps',
   KBps: 'KBps', kBps: 'KBps', MBps: 'MBps', GBps: 'GBps', TBps: 'TBps',
+  // All lower case is the everyday shorthand for bytes ("5 gb"); a capital M, G, T, K or P with a lower-case b is bits.
+  kb: 'KB', mb: 'MB', gb: 'GB', tb: 'TB', pb: 'PB',
 }
 // Bit rates are lower-cased into one unit, so a capital B (a byte rate, "MBps") must be kept out of them.
 const BIT_RATES: ReadonlySet<string> = new Set(['kbps', 'mbps', 'gbps', 'tbps'])
@@ -824,6 +826,26 @@ export function scan(
     return gap === 4 && g0 === 0x20 && (at(end + 1) | 0x20) === 0x74 && (at(end + 2) | 0x20) === 0x6f && at(end + 3) === 0x20
   }
 
+  /** True when "between " (any case, a space or no-break space) is written right before `pos`. */
+  const betweenBefore = (pos: number): boolean => {
+    const b = pos - 8
+    if (b < 0) return false
+    const word = 'between'
+    for (let k = 0; k < 7; k++) if ((at(b + k) | 0x20) !== word.charCodeAt(k)) return false
+    const sp = at(pos - 1)
+    return (sp === 0x20 || sp === NBSP) && (b === 0 || !isLetter(at(b - 1)))
+  }
+
+  /** "between 10 and 12": the word "and" joins two numbers into a range when "between" opens it. */
+  const betweenGap = (prev: Tok, start: number): boolean => {
+    if (start - prev.end !== 5) return false
+    const g = prev.end
+    return (
+      at(g) === 0x20 && (at(g + 1) | 0x20) === 0x61 && (at(g + 2) | 0x20) === 0x6e && (at(g + 3) | 0x20) === 0x64 && at(g + 4) === 0x20 &&
+      betweenBefore(prev.start)
+    )
+  }
+
   /**
    * The previous number when only an x, X or \u00d7 (and spaces) separates it from `pos`:
    * "3 x 4", "3x4", "2 \u00d7 4".
@@ -1080,6 +1102,28 @@ export function scan(
     return null
   }
 
+  /**
+   * A meridiem right after a number, in any case and with or without dots: `5pm`, `5 PM`, `9 a.m.`, `5 P.M.`.
+   * A time of day is a number with a unit, so it cannot be confirmed by a unit-less number.
+   */
+  const meridiemAt = (p0: number): { unit: string; end: number } | null => {
+    let q = p0
+    if (at(q) === 0x20 || at(q) === NBSP) q++
+    const first = at(q) | 0x20
+    if (first !== 0x61 && first !== 0x70) return null
+    const unit = first === 0x61 ? 'am' : 'pm'
+    let r = q + 1
+    if (at(r) === 0x2e) {
+      if ((at(r + 1) | 0x20) !== 0x6d || at(r + 2) !== 0x2e) return null
+      r += 3
+    } else {
+      if ((at(r) | 0x20) !== 0x6d) return null
+      r++
+    }
+    if (isLetter(at(r)) || isDigit(at(r))) return null
+    return { unit, end: r }
+  }
+
   /** True when the folded text at `q` starts with `word` (BMP characters only). */
   const startsWithAt = (q: number, word: string): boolean => {
     for (let k = 0; k < word.length; k++) if (at(q + k) !== word.charCodeAt(k)) return false
@@ -1179,6 +1223,12 @@ export function scan(
     if (degrees !== null) {
       sfx.unit = degrees.unit
       sfx.end = degrees.end
+      return sfx
+    }
+    const meridiem = meridiemAt(p)
+    if (meridiem !== null) {
+      sfx.unit = meridiem.unit
+      sfx.end = meridiem.end
       return sfx
     }
     let magnitudeRead = false
@@ -1574,7 +1624,7 @@ export function scan(
     {
       // "10-12", "10\u201312", "10 \u2013 12" and "10 to 12" join two numbers into a range.
       const prev = lastPlain()
-      if (prev !== undefined && prev.end >= floor && rangeGap(prev.end, start)) rangeDash = prev.end
+      if (prev !== undefined && prev.end >= floor && (rangeGap(prev.end, start) || betweenGap(prev, start))) rangeDash = prev.end
     }
     // "3 x 4", "3x4", "2 \u00d7 4": a multiplication sign between two numbers, not a letter glued on.
     const timesPrev = operatorBefore(start)

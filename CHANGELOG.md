@@ -25,11 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (M5)
 
-- `Mb` no longer equals `MB`, and `Gb` no longer equals `GB`: spaced data units were lower-cased into one unit. A lowercase `mb`, `gb`, `tb` or `kb` is no unit (the case cannot be resolved).
+- `Mb` no longer equals `MB`, and `Gb` no longer equals `GB`: spaced data units were lower-cased into one unit. An all-lowercase `mb`, `gb`, `tb` or `kb` is read as bytes (documented); `mB` is an unread form.
 - `MBps` is no longer read as `Mbps`, and `megabit`, `megabyte`, `kilobit`, `gigabyte`, `terabyte`, `Mbit`, `kbit` and similar words are read as the matching units, so `5 megabits` no longer traces to `5 megabytes`.
 - `30°C` no longer traces to `30°F`: the degree sign ended the number and left it with no unit on either side.
 - A code after a symbol amount is honored: `$500 CAD` is Canadian dollars and no longer traces to `$500 USD`; `CAD $500`, `CAD$500` and `NT$500` are read as what they say instead of USD.
 - The same rule holds in nearby forms: a code glued to the dollar sign in any case (`cad$500`, `EUR$500`), a word before "dollars" (`500 US dollars`, `$500 Canadian dollars`), and ranges (`$5 to $10 CAD` is two Canadian amounts; `$5-10 EUR` is `unknown`).
+
+### Added (M6: flags reach the counts and the verdict)
+
+- `TraceCounts` gains `unitUnverified` and `signDiffers`: how many numbers matched with a unit on one side only (through `allowBareEvidence`, `allowBareOutput` or a derivation) and how many matched evidence of the other sign.
+- `signMode: 'strict'`: an unsigned output that matches evidence of the other sign is `unknown` with the reason `sign-differs` (exact, rounded and derived matches alike), so a loss restated as income needs a person. The default `explicit` is unchanged.
+- New `unknown` reason `unit-unverified`.
+- "between 10 and 12 weeks" is a range, so the unit, percent sign, currency and magnitude written once cover both numbers.
+
+### Changed (M6): a deliberate contract change, not an API change
+
+- A direct or rounded match with a recognized unit on one side only (`5pm` against `5.0`, `30°C` against `30`, `7` against `7 kg`) is now `unknown` (`unit-unverified`) in every mode; before, it traced and was marked `unitUnverified`. The matches that stay marked and counted are the ones the caller asked for: `allowBareEvidence` and `allowBareOutput` (a percent or amount against a unit-less number), and derived numbers. Existing rows that asserted the old behavior (`trace-rules.test.ts`, "measurement units must agree when both sides have one") now assert `unknown`.
+- `am` and `pm` are time units in any case and with dots (`5 PM`, `9 a.m.`, `5 P.M.`); before, only lower-case `am` and `pm` were, so `5 PM` traced to a 5.0 star rating. A time of day is never derived from other numbers.
+- Field check (RAGTruth, 289 responses, strict with list markers ignored): unsupported numbers that passed fell from 9 of 123 to 4 of 123; honest numbers marked `unknown` rose from 28 to 56 of 809 (3.5% to 6.9%), honest numbers flagged `untraced` stayed at 195; honest responses with a verdict other than `clean` rose from 28.1% to 28.9% (135 responses). Under the `report` preset, 16 times of day that were `unknown` (a derivation of other numbers was too likely) are now `untraced` (8 honest, 8 wrong), because a time is no longer derived; reading 24-hour clocks against `am` and `pm` is not done yet. The labeled benchmark (203 number items) is unchanged for the default, `strict`, `report` and `allowBareEvidence` runs.
 
 ### Fixed (M4)
 

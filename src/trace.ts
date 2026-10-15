@@ -390,7 +390,9 @@ function readContext(options: unknown): Ctx {
   const maxCandidates = readInteger(o['maxCandidates'], 'maxCandidates', 1, 1_000_000, DEFAULT_MAX_CANDIDATES)
   const maxOperands = readInteger(o['maxOperands'], 'maxOperands', 2, 3, 2) as 2 | 3
   const signMode = o['signMode'] === undefined ? 'explicit' : o['signMode']
-  if (signMode !== 'explicit' && signMode !== 'magnitude') throw new RangeError('signMode must be "explicit" or "magnitude".')
+  if (signMode !== 'explicit' && signMode !== 'magnitude' && signMode !== 'strict') {
+    throw new RangeError('signMode must be "explicit", "magnitude" or "strict".')
+  }
 
   const allowBare = readBoolean(o['allowBareEvidence'], 'allowBareEvidence', false)
   const allowBareOut = readBoolean(o['allowBareOutput'], 'allowBareOutput', false)
@@ -1262,7 +1264,13 @@ export function traceNumbers(
     if (reason === 'unread-glued-form') unreadForms++
     return { raw, start: rec.start, end: rec.end, reason }
   })
-  const counts: TraceCounts = { ...statuses, skipped: skipped.length }
+  let unitUnverified = 0
+  let signDiffers = 0
+  for (const t of numbers) {
+    if (t.unitUnverified === true) unitUnverified++
+    if (t.signDiffers === true) signDiffers++
+  }
+  const counts: TraceCounts = { ...statuses, skipped: skipped.length, unitUnverified, signDiffers }
   const verdict = statuses.untraced > 0 ? 'untraced' : statuses.unknown > 0 || unreadForms > 0 ? 'unknown' : 'clean'
   return {
     verdict,
@@ -1348,17 +1356,18 @@ function traceOne(
   // 1. Exact match after normalization.
   for (const v of variants) {
     const exact = lookup(ev.strong, v.shape, outNeg, key, v.bare).filter(allow)
-    if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined, v.unverified)
+    if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined, v.unverified, ctx)
   }
 
   // 2. The evidence is more precise and rounds to what the output shows.
   for (const v of variants) {
     const rounded = matcher.findRounded('strong', tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
-    if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, v.unverified)
+    if (rounded !== null) return matched(tok, 'rounded', rounded.ents, outNeg, rounded.label, v.unverified, ctx)
   }
 
   // 3. A declared derivation of evidence numbers.
-  if (ctx.derivations.size > 0 && !matcher.capHit) {
+  // A time of day (5pm) is read, not computed: it is never a sum, a difference or a ratio of other numbers.
+  if (ctx.derivations.size > 0 && !matcher.capHit && !isClockUnit(tok)) {
     let reversed = false
     for (const v of variants) {
       const hit = matcher.findDerived(tok, tok.scale, v.shape, outNeg, mantissa, v.bare)
@@ -1377,6 +1386,9 @@ function traceOne(
         matches: hit.matches,
         ...(hit.label !== undefined ? { rounding: hit.label } : {}),
       }
+      // A derivation is already guarded and counted (`matches`, density), so a unit on one side only stays a marked
+      // match here; a sign the output dropped is unknown in strict sign mode.
+      if (hit.signDiffers && ctx.signMode === 'strict') return unknownTrace(tok, 'sign-differs')
       return { token: tok, status: 'derived', evidence: [], derivation: detail, ...(v.unverified || hit.unitUnverified ? { unitUnverified: true as const } : {}), ...(hit.signDiffers ? { signDiffers: true as const } : {}) }
     }
     if (reversed) return unknownTrace(tok, 'derivation-direction')
@@ -1391,6 +1403,10 @@ function traceOne(
   // 6. Positive finding: not in the evidence.
   const near = nearMisses(tok, shape, outNeg, key, ev, ctx)
   return { token: tok, status: 'untraced', evidence: [], ...(near.length > 0 ? { nearMisses: near } : {}) }
+}
+
+function isClockUnit(tok: NumberToken): boolean {
+  return tok.unit === 'am' || tok.unit === 'pm'
 }
 
 interface Variant {
@@ -1464,20 +1480,28 @@ function alternateLinks(
   return false
 }
 
+/**
+ * A match whose unit is only on one side (`5pm` against `5.0`, `30 days` against `30`) is `unknown`,
+ * unless the caller opted into bare-unit matching: then `optIn` is set and the match is kept and marked.
+ */
 function matched(
   tok: NumberToken,
   status: 'traced' | 'rounded',
   ents: readonly Ent[],
   outNeg: boolean,
   rounding: RoundLabel | undefined,
-  bare = false,
+  optIn: boolean,
+  ctx: Ctx,
 ): NumberTrace {
   const ordered = [...ents.filter((e) => e.neg === outNeg), ...ents.filter((e) => e.neg !== outNeg)]
   const first = ordered[0]
   const best = first === undefined ? [] : ordered.filter((e) => e.neg === first.neg)
   const signDiffers = first !== undefined && first.neg !== outNeg && first.key !== '0'
   const shape = shapeOf(tok)
-  const unitUnverified = bare || (best.length > 0 && shape.cls === 'plain' && best.every((e) => e.unit !== shape.unit))
+  const oneSided = best.length > 0 && shape.cls === 'plain' && best.every((e) => e.unit !== shape.unit)
+  if (oneSided && !optIn) return unknownTrace(tok, 'unit-unverified')
+  if (signDiffers && ctx.signMode === 'strict') return unknownTrace(tok, 'sign-differs')
+  const unitUnverified = optIn || oneSided
   return {
     token: tok,
     status,

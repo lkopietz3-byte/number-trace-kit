@@ -112,7 +112,7 @@ export interface EvidenceNumber extends NumberToken {
 
 export type EvidenceInput = string | readonly (EvidenceDoc | EvidenceNumber)[]
 
-export type SignMode = 'explicit' | 'magnitude'
+export type SignMode = 'explicit' | 'magnitude' | 'strict'
 
 /** `strict`: no derivations. `report`: the derivations a financial report needs, the unit and sum-rounding allowances, and the coincidence guard. */
 export type Preset = 'strict' | 'report'
@@ -174,7 +174,11 @@ export interface TraceOptions {
    * summary says `$1,234.50`). Marked `unitUnverified`. Default false.
    */
   readonly allowBareEvidence?: boolean
-  /** `explicit` (default): only an explicit sign in the output must agree. `magnitude`: signs are ignored. */
+  /**
+   * `explicit` (default): only an explicit sign in the output must agree, and an unsigned output may drop a
+   * sign the evidence has (marked `signDiffers`). `strict`: that dropped sign is `unknown` (`sign-differs`),
+   * so a loss restated as income needs a person. `magnitude`: signs are ignored.
+   */
   readonly signMode?: SignMode
   /** Output numbers to skip: exact raw text (string) or a plain value (number). */
   readonly ignore?: readonly (string | number)[]
@@ -226,7 +230,7 @@ export interface NumberTrace {
   readonly reason?: string
   /** The match differs in sign (the output dropped a sign the evidence has). */
   readonly signDiffers?: true
-  /** The evidence number has no unit while the output number has one. */
+  /** The match crossed a unit boundary the caller allowed: a percent or amount against a unit-less number, or a derivation with a unit on one side only. */
   readonly unitUnverified?: true
   /** For `untraced`: evidence with the same value but a different unit, kind or sign. */
   readonly nearMisses?: readonly NearMiss[]
@@ -255,6 +259,10 @@ export interface SkippedNumber {
 export interface TraceCounts extends Readonly<Record<TraceStatus, number>> {
   /** The length of `skipped`. */
   readonly skipped: number
+  /** How many numbers were matched with a unit on one side only (allowed by `allowBareEvidence` or `allowBareOutput`). */
+  readonly unitUnverified: number
+  /** How many numbers matched evidence with a different sign (the output dropped a sign). */
+  readonly signDiffers: number
 }
 
 export interface TraceResult {
