@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { extractNumbers, traceNumbers } from '../src/index.js'
+import { extractNumbers, reconcile, traceNumbers } from '../src/index.js'
+import { resolveLocale } from '../src/locale.js'
 import type { TraceOptions } from '../src/index.js'
 
 // Regression rows from the release-gate review of 0.1.0 (head 464d7ec). Each row names its finding id
@@ -7,6 +8,7 @@ import type { TraceOptions } from '../src/index.js'
 
 type Evidence = Parameters<typeof traceNumbers>[1]
 type Output = Parameters<typeof traceNumbers>[0]
+const resolveLocaleFor = (value: unknown): unknown => resolveLocale(value)
 const verdict = (output: Output, evidence: Evidence, options?: TraceOptions): string => traceNumbers(output, evidence, options).verdict
 const trace = (output: Output, evidence: Evidence, options?: TraceOptions): ReturnType<typeof traceNumbers> =>
   traceNumbers(output, evidence, options)
@@ -812,5 +814,94 @@ describe('gate-hostile:G20 a bound on the numbers in the output', () => {
     expect(() => traceNumbers('1', '1', { maxOutputNumbers: 0 })).toThrow(RangeError)
     expect(() => traceNumbers('1', '1', { maxOutputNumbers: 500_001 })).toThrow(RangeError)
     expect(() => traceNumbers('1', '1', { maxOutputNumbers: 1.5 })).toThrow(TypeError)
+  })
+})
+
+describe('input hygiene from the gate review', () => {
+  it('gate-review:F12 an evidence token reads its raw once', () => {
+    const base = extractNumbers('Fee $5')[0] as unknown as Record<string, unknown>
+    let reads = 0
+    const item: Record<string, unknown> = { ...base }
+    Object.defineProperty(item, 'raw', { enumerable: true, get() { reads++; return '$5' } })
+    expect(traceNumbers('Fee $5', [item as never]).verdict).toBe('clean')
+    expect(reads).toBe(1)
+    expect(() => traceNumbers('5', [{ id: 'a' }] as never)).toThrow(/has an id but no text/)
+  })
+
+  it('gate-hostile:G11 a polluted Object.prototype does not change the ids of evidence tokens', () => {
+    const proto = Object.prototype as unknown as Record<string, unknown>
+    proto['evidenceId'] = 'POLLUTED'
+    try {
+      const r = trace('Fee $5', extractNumbers('Fee $5'))
+      expect(r.numbers[0]?.evidence.map((e) => e.id)).toEqual(['token:0'])
+    } finally {
+      delete proto['evidenceId']
+    }
+  })
+
+  it('gate-hostile:G12 a null locale is named null, and an extension after -u- is named', () => {
+    expect(() => traceNumbers('1', '1', { locale: null as never })).toThrow(/got null/)
+    expect(() => extractNumbers('1', { locale: null as never })).toThrow(/got null/)
+    expect(() => traceNumbers('1', '1', { locale: 5 as never })).toThrow(/got number/)
+    expect(() => resolveLocaleFor(null)).toThrow(/got null/)
+    expect(() => extractNumbers('1', { locale: 'fr-CA-u-nu-arab-x-private' })).toThrow(/"x" extension is not supported/)
+    expect(() => extractNumbers('1', { locale: 'en-US-u-nu' })).not.toThrow()
+    expect(() => extractNumbers('1', { locale: 'en-US-u' })).toThrow(/keywords of two to eight characters/)
+  })
+
+  it.each([
+    [{ id: 'a', text: 'Fee 5', uid: 7 }], [{ id: 'a', text: 'Fee 5', idx: 7 }], [{ id: 'a', text: 'Fee 5', ids: [1] }], [{ id: 'a', text: 'Fee 5', ID: 7 }],
+    [{ id: 'a', text: 'Fee 5', Id: 7 }], [{ id: 'a', text: 'Fee 5', i: 7 }], [{ id: 'a', text: 'Fee 5', ide: 7 }], [{ id: 'a', text: 'Fee 5', texts: 7 }],
+    [{ id: 'a', text: 'Fee 5', text_: 7 }],
+  ])('gate-review:F13 an evidence document may carry other data: %j', (doc) => {
+    expect(traceNumbers('Fee 5', [doc] as never).verdict).toBe('clean')
+  })
+
+  it.each([
+    [{ id: 'a', text: 'Fee 5', scael: 'thousand' }], [{ id: 'a', text: 'Fee 5', Currency: 'USD' }], [{ id: 'a', text: 'Fee 5', scaleApply: 'bare' }],
+    [{ id: 'a', text: 'Fee 5', scaleapply: 'bare' }], [{ id: 'a', text: 'Fee 5', scaleApplied: 'bare' }], [{ id: 'a', text: 'Fee 5', scaleAppliesTo: 'bare' }],
+  ])('gate-hostile:G14 a probable typo of a hint is still an error: %j', (doc) => {
+    expect(() => traceNumbers('Fee 5', [doc] as never)).toThrow(RangeError)
+  })
+
+  it('gate-review:F13 a reconcile row may carry other data when its own keys are there, and a typo is still an error', () => {
+    expect(reconcile({ rows: [{ label: 'a', amount: '1', labels: 'x', amounts: 'y' }] as never, total: '1' }).ok).toBe(true)
+    expect(() => reconcile({ rows: [{ label: 'a', amout: '1' }] as never, total: '1' })).toThrow(RangeError)
+  })
+
+  it('gate-hostile:G19 a currency on a token is a code in capitals or a symbol', () => {
+    const t = extractNumbers('Fee $5')[0] as unknown as Record<string, unknown>
+    expect(() => traceNumbers('Fee $5', [{ ...t, currency: 'usd' }] as never)).toThrow(TypeError)
+    expect(() => traceNumbers([{ ...t, currency: 'usd' }] as never, 'Fee $5')).toThrow(TypeError)
+    expect(traceNumbers([{ ...t, currency: 'USD' }] as never, 'Fee $5').verdict).toBe('clean')
+    const yen = extractNumbers('Fee ¥5')[0] as unknown as Record<string, unknown>
+    expect(traceNumbers([yen] as never, 'Fee ¥5').verdict).toBe('clean')
+  })
+})
+
+describe('gate-hostile:G18 gate-review:F18 reconcile amounts', () => {
+  it.each([['0,125'], ['00,125'], ['$0,125'], ['01,500'], ['(0,125)']])('gate-hostile:G18 %s is not read as 125 under the default mark', (amount) => {
+    expect(() => reconcile({ rows: [{ label: 'a', amount }], total: '125' })).toThrow(TypeError)
+  })
+  it('gate-hostile:G18 the readings that were right stay right', () => {
+    expect(reconcile({ rows: [{ label: 'a', amount: '0.125' }], total: '0.125' }).ok).toBe(true)
+    expect(reconcile({ rows: [{ label: 'a', amount: '1,125' }], total: '1125' }).ok).toBe(true)
+    expect(reconcile({ rows: [{ label: 'a', amount: '0,125' }], total: '0,125' }, { decimalMark: ',' }).ok).toBe(true)
+    expect(reconcile({ rows: [{ label: 'a', amount: '10,500' }], total: '10500' }).ok).toBe(true)
+  })
+  it('gate-hostile:G18 the error says a decimal comma needs decimalMark', () => {
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '0,125' }], total: '125' })).toThrow(/decimalMark/)
+  })
+  it('gate-review:F18 a trailing currency sign is read under decimalMark ","', () => {
+    const o = { decimalMark: ',' as const }
+    expect(reconcile({ rows: [{ label: 'a', amount: '1.234,50 €' }, { label: 'b', amount: '0,50 €' }], total: '1.235,00 €' }, o).ok).toBe(true)
+    expect(reconcile({ rows: [{ label: 'a', amount: '1.234,50€' }], total: '€ 1.234,50' }, o).ok).toBe(true)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '€ 1.234,50 €' }], total: '1' }, o)).toThrow(TypeError)
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '1.234,50 €' }], total: '$1.234,50' }, o)).toThrow(/mix currency signs/)
+  })
+  it('gate-review:F18 a tolerance with a decimal point under decimalMark "," says to write a comma', () => {
+    const o = { decimalMark: ',' as const }
+    expect(() => reconcile({ rows: [{ label: 'a', amount: '1,00' }], total: '1,01', tolerance: '0.01' }, o)).toThrow(/0,01/)
+    expect(reconcile({ rows: [{ label: 'a', amount: '1,00' }], total: '1,01', tolerance: '0,01' }, o).ok).toBe(true)
   })
 })

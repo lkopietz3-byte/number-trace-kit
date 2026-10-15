@@ -42,7 +42,7 @@ const DEFAULT: LocaleInfo = { language: 'en', decimal: 0x2e, order: 'MDY', india
 
 export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
   if (locale === undefined) return DEFAULT
-  if (typeof locale !== 'string') throw new TypeError(`${name} must be a string such as "en-US", got ${typeof locale}.`)
+  if (typeof locale !== 'string') throw new TypeError(`${name} must be a string such as "en-US", got ${locale === null ? 'null' : typeof locale}.`)
   if (locale.length > 35 || !/^[A-Za-z]{2,3}([-_][A-Za-z0-9]{1,8})*$/.test(locale)) {
     throw new RangeError(`${name} is not a language tag such as "en-US" or "de-DE" (at most 35 characters).`)
   }
@@ -63,7 +63,12 @@ export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
     if (singleton !== 'u') {
       throw new RangeError(`${name}: the "${singleton.slice(0, 1)}" extension is not supported; use a language-region tag such as "en-US", with or without a -u- extension.`)
     }
-    if (parts.length === end + 1 || parts.slice(end + 1).some((p) => p.length === 1 || p.length < 2)) {
+    // Another extension after -u- ("-u-nu-arab-x-private") is named, not blamed on the keywords.
+    const later = parts.slice(end + 1).find((p) => p.length === 1)
+    if (later !== undefined) {
+      throw new RangeError(`${name}: the "${later}" extension is not supported; use a language-region tag such as "en-US", with or without a -u- extension.`)
+    }
+    if (parts.length === end + 1 || parts.slice(end + 1).some((p) => p.length < 2)) {
       throw new RangeError(`${name}: the -u- extension needs keywords of two to eight characters, such as "nu-latn".`)
     }
   }

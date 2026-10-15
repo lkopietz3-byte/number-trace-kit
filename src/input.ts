@@ -77,19 +77,33 @@ class NoProtoRecord {}
 Object.setPrototypeOf(NoProtoRecord.prototype, null)
 
 /**
- * A key the caller wrote that is a near miss of one the kit knows ("scael" for "scale", "amout" for "amount", "Id"
- * for "id"), or undefined. An object may carry other data (a database row, a thenable), so only a probable typo is
- * an error: it would otherwise silently turn a hint off.
+ * A key the caller wrote that is a near miss of one the kit knows ("scael" for "scale", "amout" for "amount", "Currency"
+ * for "currency"), or undefined. An object may carry other data (a database row, a thenable), so only a probable typo is
+ * an error: it would otherwise silently turn a hint off. `present` lists the keys the caller wrote: next to its own `id`
+ * or `text`, a key such as `uid`, `idx` or `texts` is other data, and so is a plural of any known name that is there.
  */
-export function nearMiss(key: string, known: readonly string[]): string | undefined {
+export function nearMiss(key: string, known: readonly string[], present: readonly string[] = []): string | undefined {
   if (known.includes(key) || key.length > 24) return undefined
   const lower = key.toLowerCase()
   for (const k of known) {
-    if (lower === k.toLowerCase()) return k
+    const kl = k.toLowerCase()
+    // The key it would be a typo of is there too, so this one is some other field of the caller's: a neighbor of a short
+    // name ("uid", "idx", "ids" beside "id"), or a plural or underscored form ("labels", "text_") of any name. A close
+    // misspelling of a longer name still is an error beside the real one ("amout" next to "amount").
+    if (present.includes(k) && (k.length <= 4 || lower === `${kl}s` || lower === `${kl}_`)) continue
+    if (lower === kl) return k
     const limit = k.length <= 5 ? 1 : 2
-    if (Math.abs(k.length - key.length) <= limit && editDistance(lower, k.toLowerCase()) <= limit) return k
+    if (Math.abs(k.length - key.length) <= limit && editDistance(lower, kl) <= limit) return k
+    // A long hint name written short or differently ("scaleApply", "scaleapply" for "scaleApplies").
+    if (k.length >= 8 && lower.length >= 8 && commonPrefix(lower, kl) >= 8) return k
   }
   return undefined
+}
+
+function commonPrefix(a: string, b: string): number {
+  let n = 0
+  while (n < a.length && n < b.length && a[n] === b[n]) n++
+  return n
 }
 
 /** Damerau-Levenshtein distance (insert, delete, replace, swap two neighbors) of two short strings. */

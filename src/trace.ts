@@ -157,8 +157,13 @@ function readOptionalString(value: unknown, name: string): string | undefined {
 }
 
 /** Copy a caller-supplied token into a validated snapshot. Every field is read once. */
-function readToken(item: Record<string, unknown>, name: string): { token: NumberToken; evidenceId?: string } {
-  const raw = readString(getOwn(item, 'raw'), `${name}.raw`)
+function readToken(item: Record<string, unknown>, name: string, evidence = false): { token: NumberToken; evidenceId?: string } {
+  const rawValue = getOwn(item, 'raw')
+  // An evidence item with neither text nor raw is most likely a document that lost its text.
+  if (evidence && rawValue === undefined && getOwn(item, 'id') !== undefined) {
+    throw new TypeError(`${name} has an id but no text: a document is { id, text }, a number token has raw, start, end, value, scale, kind and ambiguous.`)
+  }
+  const raw = readString(rawValue, `${name}.raw`)
   const start = getOwn(item, 'start')
   const end = getOwn(item, 'end')
   if (typeof start !== 'number' || !Number.isSafeInteger(start) || start < 0) throw new TypeError(`${name}.start must be a non-negative integer.`)
@@ -184,6 +189,9 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
   const unit = readOptionalString(getOwn(item, 'unit'), `${name}.unit`)
   const currency = readOptionalString(getOwn(item, 'currency'), `${name}.currency`)
   if (kind === 'currency' && currency === undefined) throw new TypeError(`${name}.currency is required for currency tokens.`)
+  if (currency !== undefined && (currency.length === 0 || currency.length > 8 || currency !== currency.toUpperCase())) {
+    throw new TypeError(`${name}.currency must be a currency code in capitals such as "USD", or a currency symbol.`)
+  }
   const signStyle = getOwn(item, 'signStyle')
   if (signStyle !== undefined && signStyle !== 'minus' && signStyle !== 'plus' && signStyle !== 'parentheses') {
     throw new TypeError(`${name}.signStyle is not valid.`)
@@ -241,7 +249,8 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
     ...(localeGuess === true ? { localeGuess: true as const } : {}),
     ...(alternates.length > 0 && !tooLong ? { alternates } : {}),
   })
-  return { token, ...(evidenceId !== undefined ? { evidenceId } : {}) }
+  // No prototype: a missing evidenceId must read as absent, not as something planted on Object.prototype.
+  return noProto({ token, ...(evidenceId !== undefined ? { evidenceId } : {}) })
 }
 
 // ---- options ----------------------------------------------------------------------------------------
@@ -781,8 +790,9 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
       }
       const text = getOwn(item, 'text')
       if (text !== undefined) {
-        for (const key of Object.keys(item)) {
-          const meant = nearMiss(key, DOCUMENT_KEYS)
+        const written = Object.keys(item)
+        for (const key of written) {
+          const meant = nearMiss(key, DOCUMENT_KEYS, written)
           if (meant !== undefined) {
             throw new RangeError(`evidence[${index}]: unknown key ${show(key)}, did you mean "${meant}"? Known keys: ${DOCUMENT_KEYS.join(', ')}.`)
           }
@@ -802,10 +812,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
           docApplies === undefined ? ctx.evScaleCurrency : scaleAppliesFlag(docApplies, `evidence[${index}].scaleApplies`),
         )
       } else {
-        if (getOwn(item, 'raw') === undefined && getOwn(item, 'id') !== undefined) {
-          throw new TypeError(`evidence[${index}] has an id but no text: a document is { id, text }, a number token has raw, start, end, value, scale, kind and ambiguous.`)
-        }
-        const { token, evidenceId } = readToken(item, `evidence[${index}]`)
+        const { token, evidenceId } = readToken(item, `evidence[${index}]`, true)
         const prev = batch[batch.length - 1]
         if (prev !== undefined && (batchDoc !== evidenceId || token.start < prev.end)) flush()
         batchDoc = evidenceId

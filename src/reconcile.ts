@@ -55,6 +55,13 @@ function parsePrinted(text: string, mark: Mark): { dec: Dec; sign?: string } | n
     if (mark === ',' && (s[0] === ' ' || s[0] === '\u00a0')) s = s.slice(1)
     if (!sign()) return null
   }
+  // Comma-decimal tables also print the sign after the amount: "1.234,50 €".
+  if (mark === ',' && s.length > 1 && CURRENCY_SIGNS.has(s[s.length - 1] ?? '')) {
+    if (currency !== undefined) return null
+    currency = s[s.length - 1]
+    s = s.slice(0, -1)
+    if (s.endsWith(' ') || s.endsWith('\u00a0') || s.endsWith('\u202f')) s = s.slice(0, -1)
+  }
   const at = s.indexOf(mark)
   if (at >= 0 && s.indexOf(mark, at + 1) >= 0) return null
   const whole = at < 0 ? s : s.slice(0, at)
@@ -75,6 +82,8 @@ function parsePrinted(text: string, mark: Mark): { dec: Dec; sign?: string } | n
     const groups = whole.split(groupChar)
     const first = groups[0] ?? ''
     if (first.length < 1 || first.length > 3 || !/^[0-9]+$/.test(first)) return null
+    // A thousands group never follows a leading zero: "0,125" is not 125 (it is 0.125 with a decimal comma).
+    if (first.startsWith('0')) return null
     for (const g of groups.slice(1)) if (g.length !== 3 || !/^[0-9]{3}$/.test(g)) return null
     digits = groups.join('')
   } else {
@@ -100,8 +109,14 @@ function readAmount(value: unknown, name: string, o: Read, signs?: Set<string>):
     if (o.mark === '.' && isDecimalString(value, 120)) return parseDecimal(value)
     const printed = parsePrinted(value, o.mark)
     if (printed === null) {
+      const hint =
+        o.mark === '.' && value.includes(',')
+          ? ' A table printed with a decimal comma needs decimalMark: ",".'
+          : o.mark === ',' && isDecimalString(value, 120) && value.includes('.')
+            ? ` With decimalMark ",", write the decimal mark as a comma (${JSON.stringify(value.replace('.', ','))}); a point groups digits.`
+            : ''
       throw new TypeError(
-        `${name} must be an exact amount such as "12.34", "38,400", "$600.00" or "(557)", got ${JSON.stringify(value.slice(0, 40))}.`,
+        `${name} must be an exact amount such as "12.34", "38,400", "$600.00" or "(557)", got ${JSON.stringify(value.slice(0, 40))}.${hint}`,
       )
     }
     if (printed.sign !== undefined) signs?.add(printed.sign)
@@ -188,8 +203,9 @@ export function reconcile(input: ReconcileInput, options?: ReconcileOptions): Re
   const signs = new Set<string>()
   rows.forEach((row, i) => {
     if (!isRecord(row) || describe(row) !== 'object') throw new TypeError(`rows[${i}] must be an object with label and amount, got ${describe(row)}.`)
-    for (const key of Object.keys(row)) {
-      const meant = nearMiss(key, ROW_KEYS)
+    const written = Object.keys(row)
+    for (const key of written) {
+      const meant = nearMiss(key, ROW_KEYS, written)
       if (meant !== undefined) throw new RangeError(`rows[${i}]: unknown key ${show(key)}, did you mean "${meant}"? Known keys: label, amount.`)
     }
     const label = getOwn(row, 'label')
