@@ -1,0 +1,230 @@
+{
+ "RT-15201#369": {
+  "cls": "HONEST",
+  "sub": "NUMWORD_EVIDENCE",
+  "why": "evidence says \"one km\"; output \"1 kilometer\"",
+  "post_kit": true
+ },
+ "RT-13161#854": {
+  "cls": "MISSED_BY_ANNOTATORS",
+  "sub": "",
+  "why": "\"30 minutes\" appears nowhere in the source; annotators did not mark it",
+  "post_kit": true
+ },
+ "RT-16359#55": {
+  "cls": "MISSED_BY_ANNOTATORS",
+  "sub": "",
+  "why": "\"Line 21\" is not in the source passages; annotators did not mark it",
+  "post_kit": true
+ },
+ "RT-16359#600": {
+  "cls": "MISSED_BY_ANNOTATORS",
+  "sub": "",
+  "why": "\"Line 21\" is not in the source passages; annotators did not mark it",
+  "post_kit": true
+ },
+ "RT-16359#192": {
+  "cls": "HONEST",
+  "sub": "EVIDENCE_COMMA_LIST",
+  "why": "source writes \"boxes 1,2,3, and 5\" (no spaces); output \"boxes 1, 2, 3, and 5\"",
+  "post_kit": true
+ },
+ "RT-16359#195": {
+  "cls": "HONEST",
+  "sub": "EVIDENCE_COMMA_LIST",
+  "why": "source writes \"boxes 1,2,3, and 5\" (no spaces); output \"boxes 1, 2, 3, and 5\"",
+  "post_kit": true
+ },
+ "RT-12261#409": {
+  "cls": "MISSED_BY_ANNOTATORS",
+  "sub": "",
+  "why": "source is about Windows 7; output says Windows 10",
+  "post_kit": true
+ },
+ "RT-15969#557": {
+  "cls": "HONEST",
+  "sub": "EVIDENCE_GLUED",
+  "why": "source writes \"160F\" (letter glued); output \"160\u00b0F\"",
+  "post_kit": true
+ },
+ "RT-15128#366": {
+  "cls": "MISSED_BY_ANNOTATORS",
+  "sub": "",
+  "why": "\"10 or 20 years\" is not in the source",
+  "post_kit": true
+ },
+ "RT-15128#372": {
+  "cls": "MISSED_BY_ANNOTATORS",
+  "sub": "",
+  "why": "\"10 or 20 years\" is not in the source",
+  "post_kit": true
+ },
+ "RT-15209#880": {
+  "cls": "HONEST",
+  "sub": "EVIDENCE_GLUED",
+  "why": "source \"1766____.\" (OCR underscores); output \"1766\"",
+  "post_kit": true
+ },
+ "RT-3861#36": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-3915#33": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-2896#32": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-1456#36": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-4035#36": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-1606#32": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-1678#28": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-3868#36": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-4780#28": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-694#36": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-4480#32": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-844#28": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-5530#32": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-3873#36": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-2878#36": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-2655#41": {
+  "cls": "META",
+  "sub": "WORDCOUNT",
+  "why": "the model states its own summary length (\"in N words\"); not a claim about the source",
+  "post_kit": true
+ },
+ "RT-3858#496": {
+  "cls": "UNCLEAR",
+  "sub": "DATE_EXTRA_PART",
+  "why": "output adds a year the evidence does not give (\"early December\" -> \"December 2023\")",
+  "post_kit": true
+ },
+ "RT-3858#505": {
+  "cls": "UNCLEAR",
+  "sub": "DATE_EXTRA_PART",
+  "why": "output adds a year the evidence does not give (\"early December\" -> \"December 2023\")",
+  "post_kit": true
+ },
+ "RT-1456#238": {
+  "cls": "HONEST",
+  "sub": "NUMWORD_EVIDENCE",
+  "why": "source: \"Ninety-one percent\"",
+  "post_kit": true
+ },
+ "RT-1453#25": {
+  "cls": "HONEST",
+  "sub": "NUMWORD_EVIDENCE",
+  "why": "source: \"Ninety-one percent\"",
+  "post_kit": true
+ },
+ "RT-2249#24": {
+  "cls": "HONEST",
+  "sub": "NUMWORD_EVIDENCE",
+  "why": "source: \"Three of the alleged attackers were killed\"",
+  "post_kit": true
+ },
+ "RT-10115#891": {
+  "cls": "HONEST",
+  "sub": "SLASH_RATING",
+  "why": "evidence business_stars 4.5; output \"Rating: 4.5/5\"",
+  "post_kit": true
+ },
+ "RT-10115#895": {
+  "cls": "HONEST",
+  "sub": "SLASH_RATING",
+  "why": "evidence business_stars 4.5; output \"Rating: 4.5/5\"",
+  "post_kit": true
+ },
+ "RT-6635#123": {
+  "cls": "HONEST",
+  "sub": "INTERPRETED",
+  "why": "JSON hours 0:0-0:0 every day, model says open 24/7",
+  "post_kit": true
+ },
+ "RT-6635#126": {
+  "cls": "HONEST",
+  "sub": "INTERPRETED",
+  "why": "JSON hours 0:0-0:0 every day, model says open 24/7",
+  "post_kit": true
+ },
+ "RT-16420#489": {
+  "cls": "HONEST",
+  "sub": "LEADING_DECIMAL",
+  "why": "source literally says \".25 inches\"; the frozen label rule mis-parsed \".25\" (label bug, found while reviewing a traced error token)",
+  "post_kit": true
+ },
+ "RT-962#107": {
+  "cls": "HONEST",
+  "sub": "DERIVED_DIFFERENCE",
+  "why": "25,000 people fought Ebola minus more than 10,000 who died = 15,000 survivors (a correct derivation; the annotated span is the trauma claim)",
+  "post_kit": true
+ }
+}

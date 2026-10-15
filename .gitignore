@@ -2,6 +2,9 @@ node_modules/
 dist/
 *.log
 
+# Raw third-party downloads for the benchmark (see bench/SOURCES.json); never committed
+bench/.cache/
+
 # Local environment files: never commit secrets
 .env
 .env.*
