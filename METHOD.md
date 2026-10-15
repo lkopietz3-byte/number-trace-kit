@@ -39,7 +39,7 @@ Number statuses: `traced` (same class and exact value), `rounded` (evidence roun
 | `maxDerivationMatches: 3`, `maxDerivationDensity: 0.5` | on a page with many numbers, a derived figure that can be built many ways says little. The guard turns it into `unknown` (`derivation-too-likely`) | raise either limit only if you accept looser matches |
 | `maxOperands: 2` | pairs only; triples multiply the candidate count | `maxOperands: 3` for three-operand `sum`, `difference` and `average` |
 | `roundSums: false` | sums and differences are exact, so only an exact match counts | `roundSums: true` (the `report` preset sets it) |
-| `signMode: 'explicit'` | an explicit sign must agree; an unsigned output may drop a sign, and is marked `signDiffers` | `'strict'` makes a dropped sign `unknown`; `'magnitude'` ignores signs |
+| `signMode: 'explicit'` | an explicit sign must agree (`-5%` is not `5%`); a negative in parentheses against positive evidence is `unknown` (`sign-differs`) because it may be a parenthetical figure; an unsigned output may drop a sign, and is marked `signDiffers` | `'strict'` makes a dropped sign `unknown`; `'magnitude'` ignores signs |
 | `allowBareEvidence: false`, `allowBareOutput: false` | a percent or amount against a unit-less number is a likely coincidence | set either to `true` (the `report` preset does); matches are marked `unitUnverified` |
 | unit on one side only is `unknown` (`unit-unverified`) | `5pm` against `5.0 stars` can be a coincidence between different quantities | no switch; write the unit on both sides or `ignore` the number |
 | `locale: 'en-US'` | a separator can be a decimal mark or a grouping mark; the locale decides | pass `locale` for the output and `evidenceLocale` for the evidence |

@@ -790,6 +790,15 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
 
 // ---- matching -----------------------------------------------------------------------------------------------
 
+/**
+ * A dropped sign is `unknown` in `strict` mode. In the default mode a written negative in parentheses is held the
+ * same way: `($5.2 million)` against `$5.2 million` could be a restated loss or a parenthetical figure, and the kit
+ * cannot tell, so it never calls it clean. A minus sign is stricter still (`signAllowed` rejects it outright).
+ */
+function signHeld(tok: NumberToken, signDiffers: boolean, mode: SignMode): boolean {
+  return signDiffers && (mode === 'strict' || (mode === 'explicit' && tok.signStyle === 'parentheses'))
+}
+
 function signAllowed(tok: NumberToken, outNeg: boolean, entNeg: boolean, mode: SignMode): boolean {
   if (mode === 'magnitude') return true
   if (tok.signStyle === 'minus') return outNeg === entNeg
@@ -1753,7 +1762,7 @@ function traceOne(
       }
       // A derivation is already guarded and counted (`matches`, density), so a unit on one side only stays a marked
       // match here; a sign the output dropped is unknown in strict sign mode.
-      if (hit.signDiffers && ctx.signMode === 'strict') return unknownTrace(tok, 'sign-differs')
+      if (signHeld(tok, hit.signDiffers, ctx.signMode)) return unknownTrace(tok, 'sign-differs')
       // A year or an ordinal (2031, 3rd) is a label. A derivation can build one by coincidence, and a count between
       // 1900 and 2100 written without a separator reads as a year, so the kit cannot tell: never a pass.
       if (isLabel(tok)) return unknownTrace(tok, 'label-derivation')
@@ -1926,7 +1935,7 @@ function matched(
   const shape = shapeOf(tok)
   const oneSided = best.length > 0 && shape.cls === 'plain' && best.every((e) => e.unit !== shape.unit)
   if (oneSided && !optIn) return unknownTrace(tok, 'unit-unverified')
-  if (signDiffers && ctx.signMode === 'strict') return unknownTrace(tok, 'sign-differs')
+  if (signHeld(tok, signDiffers, ctx.signMode)) return unknownTrace(tok, 'sign-differs')
   const unitUnverified = optIn || oneSided
   return {
     token: tok,

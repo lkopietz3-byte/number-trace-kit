@@ -126,9 +126,10 @@ describe('signs', () => {
     expect(r.evidence.map((e) => e.raw)).toEqual(['5'])
   })
 
-  it('magnitude mode ignores signs, and parentheses count as soft signs', () => {
+  it('magnitude mode ignores signs, and a written negative in parentheses is held, not passed (gate-review:F01)', () => {
     expect(only(trace('-5%', 'x 5%', { signMode: 'magnitude' })).status).toBe('traced')
-    expect(only(trace('(1,234)', 'x 1,234')).status).toBe('traced')
+    expect(only(trace('(1,234)', 'x 1,234'))).toMatchObject({ status: 'unknown', reason: 'sign-differs' })
+    expect(only(trace('(1,234)', 'x 1,234', { signMode: 'magnitude' })).status).toBe('traced')
     expect(only(trace('1,234', 'x (1,234)'))).toMatchObject({ status: 'traced', signDiffers: true })
   })
 })
