@@ -121,12 +121,14 @@ interface Shape {
 }
 
 function shapeOf(t: NumberToken): Shape {
-  if (t.kind === 'percent') return { cls: t.unit === 'pp' ? 'pp' : 'pct', unit: '' }
-  if (t.kind === 'currency') return { cls: `cur:${t.currency ?? ''}`, unit: '' }
+  // A rate ("$29/month", "25 mg/kg") is a class of its own: the denominator is part of the quantity.
+  const rate = t.rate ?? ''
+  if (t.kind === 'percent') return { cls: `${t.unit === 'pp' ? 'pp' : 'pct'}${rate}`, unit: '' }
+  if (t.kind === 'currency') return { cls: `cur:${t.currency ?? ''}${rate}`, unit: '' }
   if (t.kind === 'date-part') return { cls: 'date', unit: t.part ?? '' }
   // A time of day (minutes since midnight) matches only another time of day, never a count.
   if (t.kind === 'time') return { cls: 'time', unit: '' }
-  return { cls: 'plain', unit: t.unit ?? '' }
+  return { cls: 'plain', unit: `${t.unit ?? ''}${rate}` }
 }
 
 /** Keys a number is filed under: its own unit, and `*` so a unit-less output can find it. */
@@ -186,6 +188,10 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
   if (signStyle !== undefined && signStyle !== 'minus' && signStyle !== 'plus' && signStyle !== 'parentheses') {
     throw new TypeError(`${name}.signStyle is not valid.`)
   }
+  const rate = readOptionalString(getOwn(item, 'rate'), `${name}.rate`)
+  if (rate !== undefined && (rate.length < 2 || rate.length > 40 || rate.charCodeAt(0) !== 0x2f || (kind !== 'percent' && kind !== 'currency' && unit === undefined))) {
+    throw new TypeError(`${name}.rate must be a denominator such as "/month" or "/kg/day" on a percent, a currency amount or a number with a unit.`)
+  }
   const part = getOwn(item, 'part')
   if (part !== undefined && (typeof part !== 'string' || !DATE_PARTS.includes(part))) throw new TypeError(`${name}.part is not valid.`)
   const groupRaw = readOptionalString(getOwn(item, 'groupRaw'), `${name}.groupRaw`)
@@ -224,6 +230,7 @@ function readToken(item: Record<string, unknown>, name: string): { token: Number
     raw, start, end, value, scale, kind: kind as NumberKind, ambiguous: ambiguous || tooLong,
     ...(tooLong ? { ambiguity: 'too-long' as const } : ambiguity !== undefined ? { ambiguity: ambiguity as AmbiguityReason } : {}),
     ...(unit !== undefined ? { unit } : {}),
+    ...(rate !== undefined ? { rate } : {}),
     ...(currency !== undefined ? { currency } : {}),
     ...(signStyle !== undefined ? { signStyle } : {}),
     ...(part !== undefined ? { part: part as NonNullable<NumberToken['part']> } : {}),
@@ -479,9 +486,22 @@ interface Evidence {
   readonly count: number
 }
 
+/**
+ * The class a rated percent or amount ("$2.15 per share", "5%/yr") shares with the same figure written without its
+ * rate. Two different rates never match each other, but a figure restated without its rate ("EPS was $2.15") or
+ * given a rate the evidence leaves unsaid ("$50 per month" for "$50 a month") still traces.
+ */
+function unratedClass(e: Ent): string | undefined {
+  const rate = e.token.rate
+  if (rate === undefined || e.cls.length <= rate.length || !e.cls.endsWith(rate)) return undefined
+  return e.cls.startsWith('cur:') || e.cls.startsWith('pct') || e.cls.startsWith('pp') ? e.cls.slice(0, e.cls.length - rate.length) : undefined
+}
+
 function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
   const target = weak ? ev.weak : ev.strong
   for (const u of regKeys(ent.cls, ent.unit)) target.add(entKey(ent.cls, u, ent.neg, ent.key), ent)
+  const unrated = unratedClass(ent)
+  if (unrated !== undefined) target.add(entKey(unrated, '', ent.neg, ent.key), ent)
   // For allowBareOutput: a bare output number may match an amount in any currency.
   if (ent.cls.startsWith('cur:')) target.add(entKey('curany', '', ent.neg, ent.key), ent)
   if (weak) {
@@ -627,7 +647,7 @@ function applyHints(token: NumberToken, exp: number, currency: string | undefine
   const bare = (token.kind === 'count' || token.kind === 'decimal') && plain
   // A cell that already prints its currency ("$ 1,577" on the first row and the totals of a table in millions)
   // is in the table's scale too, when the caller says so; the currency it prints stays.
-  const priced = scaleCurrency && exp !== 0 && token.kind === 'currency' && plain
+  const priced = scaleCurrency && exp !== 0 && token.kind === 'currency' && plain && token.rate === undefined
   if (!bare && !priced) return token
   if (priced) {
     const d = parseDecimal(token.value)
@@ -1026,6 +1046,8 @@ class Matcher {
         const r = roundRat(rat, scale, mode)
         for (const u of regKeys(ent.cls, ent.unit)) idx.add(`${mode}\u0000${entKey(ent.cls, u, ent.neg, r.mantissa.toString())}`, ent)
         if (ent.cls.startsWith('cur:')) idx.add(`${mode}\u0000${entKey('curany', '', ent.neg, r.mantissa.toString())}`, ent)
+        const unrated = unratedClass(ent)
+        if (unrated !== undefined) idx.add(`${mode}\u0000${entKey(unrated, '', ent.neg, r.mantissa.toString())}`, ent)
       }
     }
     this.rounded.set(cacheKey, idx)
@@ -1728,6 +1750,13 @@ function traceOne(
   for (const v of variants) {
     const exact = lookup(ev.strong, v.shape, outNeg, key, v.bare).filter(allow)
     if (exact.length > 0) return matched(tok, 'traced', exact, outNeg, undefined, v.unverified, ctx)
+  }
+
+  // A rated percent or amount ("$50 per month") against the same figure with no rate in the evidence.
+  if (tok.rate !== undefined && (shape.cls.startsWith('cur:') || shape.cls.startsWith('pct') || shape.cls.startsWith('pp'))) {
+    const baseCls = shape.cls.slice(0, shape.cls.length - tok.rate.length)
+    const unrated = lookup(ev.strong, { cls: baseCls, unit: '' }, outNeg, key).filter((e) => e.cls === baseCls).filter(allow)
+    if (unrated.length > 0) return matched(tok, 'traced', unrated, outNeg, undefined, false, ctx)
   }
 
   // 2. The evidence is more precise and rounds to what the output shows.

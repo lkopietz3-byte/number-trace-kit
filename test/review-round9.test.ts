@@ -492,3 +492,62 @@ describe('gate-false-pass:G5-P3 currency symbols, per mille and the multiplicati
     expect(extractNumbers('A 3×4 cm card').map((t) => [t.value, t.unit])).toEqual([['3', 'cm'], ['4', 'cm']])
   })
 })
+
+describe('gate-false-pass:G5-F03 gate-hostile:G13 the denominator of a rate', () => {
+  const different: [string, string][] = [
+    ['25 mg/kg', '25 mg'], ['25 mg/kg/day', '25 mg/day'], ['25 mL/hr', '25 mL'], ['25 mg/dL', '25 mg'], ['25 km/h', '25 km'],
+    ['25 MB/s', '25 MB'], ['$29/month', '$29/year'], ['$25/hour', '$25/day'], ['5%/yr', '5%/month'], ['$0.12/kWh', '$0.12/MWh'],
+    ['25 mg/s', '25 mg/min'], ['5% per year', '5% per month'], ['25 mg', '25 mg/kg'],
+  ]
+  it.each(different)('gate-false-pass:G5-F03 %s is not %s', (a, b) => {
+    expect(verdict(`It is ${a} here.`, `It is ${b} here.`)).toBe('untraced')
+    expect(verdict(`It is ${a} here.`, `It is ${a} here.`)).toBe('clean')
+  })
+
+  it('gate-hostile:G13 an amount or percent whose rate only one side writes still traces (a restated figure, "a month")', () => {
+    expect(verdict('EPS was $2.15.', 'Diluted EPS increased 15% to $2.15 per share.')).toBe('clean')
+    expect(verdict('Plan is $29/month.', 'Plan is $29 a month.')).toBe('clean')
+    expect(verdict('Plan is $29.', 'Plan is $29/month.')).toBe('clean')
+    expect(verdict('Plan is $30/month.', 'Plan is $29 a month.')).toBe('untraced')
+    expect(verdict('Growth is 5%/yr.', 'Growth is 5%.')).toBe('clean')
+  })
+
+  it('gate-hostile:G13 the same number as a rate against a bare number is unknown', () => {
+    expect(verdict('Dose is 25 mg/kg.', 'Dose is 25.')).toBe('unknown')
+    expect(verdict('Price is $29/month.', 'Price is 29.')).toBe('untraced')
+  })
+
+  it('gate-false-pass:G5-F03 a slash and the word per are the same rate', () => {
+    expect(verdict('Dose is 25 mg per kg.', 'Dose is 25 mg/kg.')).toBe('clean')
+    expect(verdict('Speed is 25 km per hour.', 'Speed is 25 km/h.')).toBe('clean')
+    expect(verdict('Plan is $29 per month.', 'Plan is $29/month.')).toBe('clean')
+    expect(verdict('Plan is $29/mo.', 'Plan is $29/month.')).toBe('clean')
+    expect(verdict('Growth is 5% per year.', 'Growth is 5%/yr.')).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-F03 the token carries the rate and the raw text includes it', () => {
+    expect(extractNumbers('Plan $29/month')[0]).toMatchObject({ raw: '$29/month', value: '29', currency: 'USD', rate: '/month' })
+    expect(extractNumbers('Dose 25 mg/kg/day')[0]).toMatchObject({ raw: '25 mg/kg/day', unit: 'mg', rate: '/kg/day' })
+    expect(extractNumbers('Growth 5% per year')[0]).toMatchObject({ raw: '5% per year', rate: '/year' })
+    expect(extractNumbers('Speed 25 km/h')[0]).toMatchObject({ unit: 'km', rate: '/hour' })
+  })
+
+  it('gate-false-pass:G5-F03 a range shares the rate written once', () => {
+    expect(extractNumbers('Plans cost $5-10/month').map((t) => [t.value, t.currency, t.rate])).toEqual([['5', 'USD', '/month'], ['10', 'USD', '/month']])
+    expect(verdict('Plans cost $5-10/month.', 'Plans cost $5-10/year.')).toBe('untraced')
+  })
+
+  it('gate-false-pass:G5-F03 a slash that is not a rate is left alone', () => {
+    for (const text of ['25 km/4 and 3 kg/ and 10/12/2026 and 3/4', '1 USD/EUR and and/or 5 kg', '5 kg/bag']) {
+      expect(extractNumbers(text).every((t) => t.rate === undefined), text).toBe(true)
+    }
+  })
+
+  it('gate-false-pass:G5-F03 tokens you extracted keep the rate, and a malformed rate is a TypeError', () => {
+    expect(verdict('Plan $29/month.', extractNumbers('Plan $29/month'))).toBe('clean')
+    expect(verdict('Plan $29/year.', extractNumbers('Plan $29/month'))).toBe('untraced')
+    const token = extractNumbers('Plan $29/month')[0]
+    expect(() => traceNumbers('x 1', [{ ...token, rate: 'month' }] as never)).toThrow(TypeError)
+    expect(() => traceNumbers('x 1', [{ ...token, rate: 5 }] as never)).toThrow(TypeError)
+  })
+})

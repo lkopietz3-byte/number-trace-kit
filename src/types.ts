@@ -64,6 +64,12 @@ export interface NumberToken {
    * Absent when the number is written out. An evidence `scale` hint is never applied to a number that has one.
    */
   readonly magnitude?: number
+  /**
+   * The denominator of a rate written after a slash or the word per: `/month` for `$29/month` and `$29 per month`,
+   * `/kg/day` for `25 mg/kg/day`. The number is a price or an amount per that unit, and traces only to a number with
+   * the same rate. Absent when no rate is written.
+   */
+  readonly rate?: string
   /** Written in parentheses ("(557)") but read as positive because it is a bare number; it may be an accounting negative. */
   readonly parenthesized?: true
   /** For date parts and fraction halves: the whole text this part came from, such as `10/12/2026` or `3/4`. */

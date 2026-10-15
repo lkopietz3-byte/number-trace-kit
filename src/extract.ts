@@ -315,6 +315,18 @@ function own<T>(table: Readonly<Record<string, T>>, key: string): T | undefined 
   return Object.hasOwn(table, key) ? table[key] : undefined
 }
 
+// The denominator of a rate ("/h", "/kg", "/month"): single letters are exact, longer words are compared in lower case.
+const RATE_SINGLE: Readonly<Record<string, string>> = { s: 'second', h: 'hour', d: 'day', m: 'm', l: 'l', L: 'l' }
+const RATE_WORDS: Readonly<Record<string, string>> = {
+  hr: 'hour', hrs: 'hour', wk: 'week', wks: 'week', mo: 'month', mos: 'month', mth: 'month', yr: 'year', yrs: 'year', annum: 'year',
+  dl: 'dl', kwh: 'kWh', mwh: 'MWh', gwh: 'GWh', twh: 'TWh', person: 'person', people: 'person', user: 'user', users: 'user', seat: 'seat', seats: 'seat', share: 'share',
+  shares: 'share', unit: 'unit', units: 'unit', item: 'item', items: 'item', head: 'head', night: 'night', nights: 'night',
+}
+function rateWord(w: string): string | undefined {
+  if (w.length === 1) return own(RATE_SINGLE, w)
+  return own(RATE_WORDS, w.toLowerCase()) ?? spacedUnit(w) ?? own(GLUED_UNITS, w)
+}
+
 /** What a word after a hyphen ("100-days", "12-percent", "50-dollars") says about the number before it. */
 function hyphenWord(w: string): { unit?: string; percent?: '%'; currency?: string } | undefined {
   const lower = w.toLowerCase()
@@ -612,6 +624,8 @@ interface Suffix {
   dollarWord: boolean
   /** A unit that is also a magnitude ("2.5m": meters, or millions; "48 MM"): the power of ten of the other reading, or 0. */
   unitMagnitudeAlt: number
+  /** The denominator of a rate written after the number and its unit ("/month", "/kg/day"). */
+  rate?: string
 }
 
 /** Extract the numbers from a text. Linear time; never throws on odd characters. */
@@ -659,6 +673,8 @@ export function scan(
     percent?: string
     currency?: string
     unit?: string
+    /** The denominator of a rate written on one member of a range ("$5-10/month"). */
+    rate?: string
     exp: number
     loose: boolean
     /** A member has a magnitude word the kit cannot value, so the others cannot be read either. */
@@ -1568,7 +1584,45 @@ export function scan(
     return mag === undefined ? null : { exp: mag === null ? null : mag.exp, end: we }
   }
 
+  /**
+   * A rate: "/month", "/kg/day" or " per month" right after a number that has a unit, a percent sign or a currency.
+   * The denominator is part of the quantity ("$29/month" is not "$29/year" and "25 mg/kg" is not "25 mg").
+   */
+  const attachRate = (sfx: Suffix, hasCurrency: boolean): void => {
+    if (sfx.skipTo >= 0 || sfx.superscript || sfx.tooLong || sfx.unreadMagnitude || sfx.ordinal) return
+    const u = sfx.unit
+    const quantity = sfx.percent !== undefined || sfx.currency !== undefined || hasCurrency || (u !== undefined && u !== 'am' && u !== 'pm' && u !== 'x' && u !== 'decade')
+    if (!quantity) return
+    let p = sfx.end
+    let rate = ''
+    for (let k = 0; k < 2; k++) {
+      let q: number
+      if (at(p) === 0x2f) q = p + 1
+      else if (isGap(at(p)) && (at(p + 1) | 0x20) === 0x70 && (at(p + 2) | 0x20) === 0x65 && (at(p + 3) | 0x20) === 0x72 && isGap(at(p + 4))) q = p + 5
+      else break
+      if (!isLetter(at(q))) break
+      const w = readWord(q, 10)
+      if (w.length > 10) break
+      const we = q + w.length
+      if (isLetter(at(we)) || isDigit(at(we)) || at(we) === 0x5f || isMark(at(we))) break
+      const den = rateWord(w)
+      if (den === undefined) break
+      rate += `/${den}`
+      p = we
+    }
+    if (rate !== '') {
+      sfx.rate = rate
+      sfx.end = p
+    }
+  }
+
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
+    const sfx = readSuffixBase(e, hasCurrency, isInteger, isZero, resolution)
+    attachRate(sfx, hasCurrency)
+    return sfx
+  }
+
+  const readSuffixBase = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean): Suffix => {
     const sfx: Suffix = noProto({
       end: e, exp10: 0, ordinal: false, superscript: false, looseMagnitude: false, skipTo: -1, skipReason: 'identifier', tooLong: false, scientific: false, unreadMagnitude: false, dollarWord: false, unitMagnitudeAlt: 0,
     })
@@ -2417,6 +2471,7 @@ export function scan(
         kind = sub.frac !== '' || tok.scale > 0 ? 'decimal' : 'count'
       }
       if (sfx?.unit !== undefined && kind !== 'percent' && kind !== 'currency') tok.unit = sfx.unit
+      if (sfx?.rate !== undefined) tok.rate = sfx.rate
       tok.kind = kind
       tok.start = rawStart
       tok.end = rawEnd
@@ -2558,6 +2613,8 @@ export function scan(
         m.alternates = [...(m.alternates ?? []), { value: decimalString(inf.neg, inf.int, inf.frac, 0), scale: inf.frac.length }]
       }
     }
+    // "$5-10/month": the rate is written once and every member has it.
+    if (g.kind === 'range' && g.rate !== undefined && m.rate === undefined && (m.kind === 'percent' || m.kind === 'currency' || m.unit !== undefined)) m.rate = g.rate
     // Anything that now has a unit, a currency, a percent sign or a magnitude is not a year.
     if (m.kind === 'year' && (m.unit !== undefined || (inf !== undefined && inf.exp !== 0))) m.kind = 'count'
     if (g.kind === 'range' && g.currency !== undefined && m.ambiguity === 'suffix') {
@@ -2627,6 +2684,10 @@ export function scan(
       g.unit = m.unit
       changed = true
     }
+    if (g.kind === 'range' && m.rate !== undefined && g.rate === undefined) {
+      g.rate = m.rate
+      changed = true
+    }
     if (m.ambiguity === 'magnitude' && g.unread !== true) {
       g.unread = true
       changed = true
@@ -2658,6 +2719,9 @@ export function scan(
     for (const t of chain) if (t.ambiguity === 'fraction') t.groupRaw = whole
   }
   readClockHours(out)
+  // A rate belongs to a percent, an amount or a measured number. One that was read for a range member that did not
+  // become one (the group did not share its currency) is dropped.
+  for (const t of out) if (t.rate !== undefined && t.kind !== 'percent' && t.kind !== 'currency' && t.unit === undefined) delete t.rate
   if (unreadDates.size > 0) {
     for (const t of out) {
       const raw = unreadDates.get(t.start)
