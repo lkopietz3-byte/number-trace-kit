@@ -1194,6 +1194,9 @@ export function scan(
   /** Pass over [a, b): keep its digits as weak evidence and, if asked, record it as skipped. */
   const skip = (a: number, b: number, reason: SkipKind): void => {
     noteIdentifier(a, b)
+    // Nothing read later may reach back into a stretch that was passed over ("500CA$25": the CA is the skip's).
+    // This holds for evidence and output alike, so the same text always reads the same numbers.
+    floor = Math.max(floor, b)
     if (skips === null) return
     const from = Math.max(a, skipFloor)
     if (b <= from) return
@@ -2012,7 +2015,10 @@ export function scan(
     // ---- identifiers glued to the number ("X3", "v2.1", "COVID-19") ------------
     if (cur === null && !bare) {
       const before = at(i0 - 1)
-      if (before === 0x2d && i0 - 1 >= floor && !hyphenQuantityAt(i0)) {
+      // A number just read right before the hyphen ("USD100-200k": the 100 is already an amount) makes this the
+      // other end of a range, not the middle of a name.
+      const afterNumber = lastPlain()?.end === i0 - 1
+      if (before === 0x2d && i0 - 1 >= floor && !afterNumber && !hyphenQuantityAt(i0)) {
         // Llama-3.3-70B-Instruct, gpt-5.4-nano-2026-03-17
         const we = hyphenIdentifierEnd(i0)
         if (we > i0) {
@@ -2169,7 +2175,7 @@ export function scan(
       let sfx: Suffix | undefined
       if (isLast) {
         const intDigits = sub.frac === ''
-        sfx = readSuffix(digitsEnd, hasPrefixCurrency, intDigits && sub.alt === undefined, sub.int === '0' && intDigits, intDigits && RESOLUTIONS.has(sub.int))
+        sfx = readSuffix(digitsEnd, hasPrefixCurrency || (isFirst && rangePrev?.kind === 'currency'), intDigits && sub.alt === undefined, sub.int === '0' && intDigits, intDigits && RESOLUTIONS.has(sub.int))
         if (sfx.skipTo >= 0) {
           // The number is glued to an identifier ("3D", "5G") or to letters the kit cannot read ("12foo").
           result = Math.max(sfx.skipTo, chainEnd)

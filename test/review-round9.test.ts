@@ -137,3 +137,73 @@ describe('gate-review:F02 gate-hostile:G03 gate-false-pass:G5-F06 a currency cod
     expect(extractNumbers('AMD 5 chips')[0]).toMatchObject({ kind: 'count' })
   })
 })
+
+describe('gate-false-pass:G5-F02 a currency code glued to the low end of a range', () => {
+  const tails: [string, string, string][] = [
+    ['USD100-200k', 'USD100-300k', 'USD100-200k'],
+    ['USD100-200K', 'USD100-300K', 'USD100-200K'],
+    ['CHF100-200k', 'CHF100-300k', 'CHF100-200k'],
+    ['EUR5-7m', 'EUR5-9m', 'EUR5-7m'],
+    ['GBP5-7m', 'GBP5-9m', 'GBP5-7m'],
+    ['AUD5-7m', 'AUD5-9m', 'AUD5-7m'],
+    ['CAD5-7m', 'CAD5-9m', 'CAD5-7m'],
+    ['JPY5-7m', 'JPY5-9m', 'JPY5-7m'],
+    ['USD5-7bn', 'USD5-9bn', 'USD5-7bn'],
+    ['USD5-7t', 'USD5-9t', 'USD5-7t'],
+    ['INR5-7cr', 'INR5-9cr', 'INR5-7cr'],
+  ]
+  it.each(tails)('gate-false-pass:G5-F02 %s: a wrong upper bound is untraced and the same text is clean', (honest, wrong, same) => {
+    expect(verdict(`Salary ${honest}`, `Salary ${wrong}`)).toBe('untraced')
+    expect(verdict(`Salary ${honest}`, `Salary ${same}`)).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-F02 the spaced and symbol spellings of the same range agree with the glued one', () => {
+    expect(verdict('Salary USD100-200k', 'Salary USD 100-200k')).toBe('clean')
+    expect(verdict('Salary USD 100-200k', 'Salary USD100-200k')).toBe('clean')
+    expect(verdict('Salary EUR100-200k', 'Salary €100,000-€200,000')).toBe('clean')
+    expect(verdict('Salary $100-200k', 'Salary $100-300k')).toBe('untraced')
+  })
+
+  it('gate-false-pass:G5-F02 model names with a hyphen stay identifiers', () => {
+    expect(trace('Qwen3-8B and gpt-4-turbo-2026 and Llama-3.1-70B', 'x').numbers).toEqual([])
+    expect(trace('Qwen3-8B and gpt-4 here', 'x').numbers.map((n) => n.token.raw)).toEqual(['4'])
+    expect(trace('The A100-80GB card', 'x').verdict).toBe('clean')
+  })
+})
+
+describe('gate-hostile:G10 a skipped form never overlaps a number token', () => {
+  const overlaps = (text: string): string[] => {
+    const r = trace(text, 'x')
+    const found: string[] = []
+    for (const s of r.skipped) {
+      for (const n of r.numbers) {
+        if (s.start < n.token.end && n.token.start < s.end) found.push(`${JSON.stringify(s.raw)} [${s.start},${s.end}) vs ${JSON.stringify(n.token.raw)} [${n.token.start},${n.token.end})`)
+      }
+    }
+    return found
+  }
+
+  it.each(['Revenue 500CA$25', 'in250USD 1,234.56', 'Cost 5Jan 9', 'Price 12foo$5', 'Total 7xyz€9', 'x 5Oct 12', 'a 3Mar 4 b'])('gate-hostile:G10 %s', (text) => {
+    expect(overlaps(text)).toEqual([])
+  })
+
+  it('gate-hostile:G10 seeded random text never overlaps', () => {
+    const alphabet = '0123456789  ,.$€-%CAUSDJanOctMar_x/():kKmMbB '
+    let seed = 20261014
+    const next = (): number => {
+      seed = (seed + 0x6d2b79f5) | 0
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+    const bad: string[] = []
+    for (let k = 0; k < 6000; k++) {
+      let text = ''
+      const len = 3 + Math.floor(next() * 22)
+      for (let i = 0; i < len; i++) text += alphabet[Math.floor(next() * alphabet.length)]
+      const found = overlaps(text)
+      if (found.length > 0) bad.push(`${JSON.stringify(text)}: ${found[0]}`)
+    }
+    expect(bad.slice(0, 5)).toEqual([])
+  })
+})
