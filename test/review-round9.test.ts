@@ -936,6 +936,14 @@ describe('gate-review:F19 a parenthetical right after a figure is an aside, not 
     expect(verdict('Growth was strong (12.5%).', 'Growth was 12.5%.')).toBe('unknown')
   })
 
+  it('gate-review:F19 an aside is clean under strict too, and a parenthesized negative on its own is held there', () => {
+    const strict = { signMode: 'strict' as const }
+    expect(verdict('Revenue was $5.2 million ($5,200,000).', 'Revenue was $5.2 million, or $5,200,000.', strict)).toBe('clean')
+    expect(verdict('It cost €200 ($300).', 'It cost €200 or $300.', strict)).toBe('clean')
+    expect(verdict('Net loss was ($5.2 million).', 'Net income was $5.2 million.', strict)).toBe('unknown')
+    expect(verdict('Net loss was ($5.2 million).', 'Net income was $5.2 million.', { signMode: 'magnitude' })).toBe('clean')
+  })
+
   it('gate-review:F19 tokens carry no text, so a parenthesized negative from tokens is held', () => {
     expect(verdict(extractNumbers('It cost €200 ($300).'), 'It cost €200 or $300.')).toBe('unknown')
   })

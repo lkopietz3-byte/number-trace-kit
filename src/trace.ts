@@ -834,7 +834,10 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
  * cannot tell, so it never calls it clean. A minus sign is stricter still (`signAllowed` rejects it outright).
  */
 function signHeld(tok: NumberToken, signDiffers: boolean, mode: SignMode, aside: boolean): boolean {
-  return signDiffers && (mode === 'strict' || (mode === 'explicit' && tok.signStyle === 'parentheses' && !aside))
+  if (!signDiffers) return false
+  // A parenthesized figure right after another figure is an aside, which has no sign to disagree about, in every mode.
+  if (tok.signStyle === 'parentheses') return mode !== 'magnitude' && !aside
+  return mode === 'strict'
 }
 
 /**
