@@ -1,14 +1,48 @@
 # number-trace-kit
 
-Does every number in this AI output trace to the evidence it was given, and do the rows add up to the printed totals?
+Does every number in an AI answer appear in the evidence it was given, and do the rows add up to the printed total?
 
-A small TypeScript library that pulls the numbers out of a text, normalizes them into exact decimals, and checks each one against the numbers in the evidence you supply. It also adds up rows and compares the sum to a printed total, to the cent. All comparisons use exact decimal arithmetic (BigInt), never floats.
+A small TypeScript library that pulls the numbers out of a text, turns them into exact decimals, and checks each one against the numbers in the evidence you supply. It also adds up rows and compares the sum to a printed total, to the cent. Comparisons use exact decimal arithmetic (BigInt), never floats. No dependencies, no network, no model calls; the same input gives the same result.
 
-**Who it is for.** Developers who ship AI-written summaries, reports or answers and hold the source text the numbers should come from: finance and pricing pages, extracted tables, invoices, metrics write-ups. It is a deterministic check you can run in tests, CI or a review queue.
+**Who it is for.** Developers who ship AI-written summaries, reports or answers and hold the source text the numbers should come from: finance and pricing pages, extracted tables, invoices, metrics write-ups. Run it in tests, CI or a review queue.
 
-**What it does not do.** It checks numbers, not sentences. It does not know whether the evidence is true, does not read number words or context, and cannot tell "up 30%" from "down 30%". `traced` means the number, in that unit, appears in the evidence; it does not mean the claim is right. See Known limits and What it does not do below.
+**What it does not do.** It checks that numbers are present in the evidence. It does not check that they are true, that they sit in the right sentence, or that the claim around them is right, and it is not a certification of accuracy or compliance (see [METHOD.md](METHOD.md)). `traced` means the number, in that unit, appears in the evidence.
 
-Status: version 0.1.0, private and unreleased. The package is marked `"private": true` and `UNLICENSED`; it is not published anywhere and no license has been chosen.
+Version 0.1.0, MIT license.
+
+## Install
+
+```sh
+npm i number-trace-kit
+```
+
+ES module for Node 20 or newer (and bundlers); TypeScript types ship with it.
+
+## First example
+
+```js
+import { traceNumbers } from 'number-trace-kit'
+
+const evidence = 'Subtotal $1,200.00. Tax (8.25%) $99.00. Total due $1,299.00.'
+const output = 'Total due is $1,299.00, including 8.3% tax. Payment is due in 45 days.'
+
+const result = traceNumbers(output, evidence)
+console.log(result.verdict)
+for (const n of result.numbers) console.log(n.token.raw, n.status)
+```
+
+```text
+untraced
+$1,299.00 traced
+8.3% rounded
+45 days untraced
+```
+
+`$1,299.00` is in the evidence. `8.3%` is `8.25%` rounded to one decimal. `45 days` is nowhere in the evidence, so the verdict is `untraced`.
+
+## Accuracy at a glance
+
+On 289 real RAGTruth answers with annotator labels (preset `strict`, list markers ignored), 96 of the 106 numbers that the annotators marked as absent from the source were flagged `untraced`, the other 10 were sent to a person as `unknown`, and none passed. 14 of 697 honest numbers (2.0%) were flagged, and 20 of 135 honest answers (14.8%) needed a person. On a 150-answer holdout labeled before the kit ran, it flagged 71 of 75 answers with an unsupported number and 11 of 75 clean answers; a plain regex check found about the same (74 of 75 and 22 of 75). It cannot see a right number in the wrong place: on 153 FinanceBench answers with a wrong headline number, 8 came back `clean`. Denominators, intervals, corpora and revision are in [Accuracy on real data](#accuracy-on-real-data); every verdict, default and measured rate is in [METHOD.md](METHOD.md).
 
 ## What it does
 
@@ -18,9 +52,9 @@ Status: version 0.1.0, private and unreleased. The package is marked `"private":
 
 It does not call a model, read a network, or use the clock or randomness. Same input, same options, same result.
 
-## Install and use
+## Modules and TypeScript
 
-Not published to npm yet (see Status). From a checkout: `npm ci`, then `npm run build`, then import from `dist/index.js`, or `npm pack` and install the tarball. Once it is published: `npm install number-trace-kit`.
+Install with `npm i number-trace-kit`; from a checkout: `npm ci`, `npm run build`, then import from `dist/index.js`.
 
 It is an ES module with no dependencies and no `node:` imports, so it also runs in a browser or an edge runtime through a bundler.
 
@@ -255,9 +289,11 @@ reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '125
 - The result is `{ ok, sum, total, difference, tolerance, rows }` with exact decimal strings. `difference` is `sum - total`; `ok` is `|difference| <= tolerance` (inclusive). Zero prints as `0`.
 - Empty rows, a missing total, a negative tolerance and unknown keys are errors, not passes.
 
-## Accuracy on real output
+## Accuracy on real data
 
-Every number below is printed by `npm run bench`, with its denominator and a 95% Wilson interval. The data, the labels and the scoring code are in `bench/` (not in the npm package), and `bench/METHOD.md` says how each label was made, which were made after the kit's verdicts were seen, and what each corpus cannot show. The corpora are third-party text with their own terms: the repository holds the model answers, the annotators' labels and number-centered excerpts of the sources, and `npm run bench:fetch` downloads the rest from pinned URLs, checked against hashes (FinanceBench is CC BY-NC and is never committed). Read the numbers as what one run on one sample said, not as a rate you will see on your own data.
+Corpus and revision: every number below is for source revision `3b0be92` (version 0.1.0; later commits changed documentation and packaging, not the matching code), Node 26.3.0, ICU 78.3. The labeled-benchmark rows and the committed-excerpt parts of the RAGTruth and holdout rows were rerun offline on 2026-10-14 and match. The rows that also use the raw downloads (the 105 data-to-text answers, FinanceBench, the full holdout) come from the earlier run that had them and were not rerun for this release.
+
+Every number below is printed by `npm run bench`, with its denominator and a 95% Wilson interval. The data, the labels and the scoring code are in `bench/` in the [repository](https://github.com/lkopietz3-byte/number-trace-kit) (not in the npm package), and `bench/METHOD.md` says how each label was made, which were made after the kit's verdicts were seen, and what each corpus cannot show. The corpora are third-party text with their own terms: the repository holds the model answers, the annotators' labels and number-centered excerpts of the sources, and `npm run bench:fetch` downloads the rest from pinned URLs, checked against hashes (FinanceBench is CC BY-NC and is never committed). Read the numbers as what one run on one sample said, not as a rate you will see on your own data.
 
 **A holdout the kit had never been run on, against plain checkers.** 150 RAGTruth answers from the train split, labeled from the annotators' spans before the kit ran: 75 with a number the annotators marked as absent from the source, 75 with no annotation at all. The labels and the code that made them are pinned by hash. "Flagged" means the checker marked a number as not in the evidence; the kit's `unknown` is not a flag.
 
