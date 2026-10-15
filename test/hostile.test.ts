@@ -481,3 +481,101 @@ describe('S5 hostile:F6 options, documents and rows are read as own properties o
     expect(() => traceNumbers('5', [{ id: 'a' } as never])).toThrow(TypeError)
   })
 })
+
+describe('S6 hostile:F4 hostile:F3 false-pass:F20: resource caps', { timeout: 120_000 }, () => {
+  const dense = (n: number): string => '1.5 '.repeat(n)
+
+  it('S6 hostile:F4 evidence with too many numbers is a RangeError, thrown before the rest is read', () => {
+    expect(() => traceNumbers('5', dense(1001), { maxEvidenceNumbers: 1000 })).toThrow(RangeError)
+    expect(() => traceNumbers('5', dense(1000), { maxEvidenceNumbers: 1000 })).not.toThrow()
+    // The limit is on the evidence as a whole, across documents and across caller tokens.
+    expect(() => traceNumbers('5', [{ id: 'a', text: dense(600) }, { id: 'b', text: dense(600) }], { maxEvidenceNumbers: 1000 })).toThrow(RangeError)
+    expect(() => traceNumbers('5', extractNumbers(dense(600)), { maxEvidenceNumbers: 500 })).toThrow(RangeError)
+    // Stopping early: 2 million numbers with a limit of 1,000 cost about what 1,000 numbers cost.
+    const huge = dense(1_200_000)
+    const t = cpu(() => expect(() => traceNumbers('5', huge, { maxEvidenceNumbers: 1000 })).toThrow(RangeError), 1)
+    expect(t).toBeLessThan(2)
+  })
+
+  it('S6 hostile:F4 the default limit is 500,000 numbers, and the option can only lower it', () => {
+    expect(() => traceNumbers('5', '1 '.repeat(500_001))).toThrow(/500000 numbers/)
+    expect(() => traceNumbers('5', '1', { maxEvidenceNumbers: 500_001 })).toThrow(RangeError)
+    expect(() => traceNumbers('5', '1', { maxEvidenceNumbers: 0 })).toThrow(RangeError)
+    expect(() => traceNumbers('5', '1', { maxEvidenceNumbers: 1.5 })).toThrow(TypeError)
+    expect(traceNumbers('5', '1 2 3', { maxEvidenceNumbers: 3 }).evidenceNumbers).toBe(3)
+  })
+
+  const evidence84 = Array.from({ length: 84 }, (_, i) => `${(i * 7919) % 10007}.${String((i * 31) % 100).padStart(2, '0')}`).join(' ; ')
+  const scales = (n: number): string => Array.from({ length: n }, (_, i) => `77.${'3'.repeat(i + 1)}`).join(' ')
+
+  it('S6 hostile:F3 more than 12 distinct output scales: the extra derived lookups are unknown, never traced or untraced', () => {
+    const r = traceNumbers(scales(20), evidence84, { preset: 'report' })
+    const statuses = r.numbers.map((n) => `${n.status}:${n.reason ?? ''}`)
+    // Twelve scales are answered. A form like 77.333 is also a grouped integer, and that second reading takes a scale too.
+    const first = statuses.indexOf('unknown:scale-cap')
+    expect(first).toBeGreaterThanOrEqual(10)
+    expect(first).toBeLessThanOrEqual(12)
+    expect(statuses.slice(0, first).every((s) => s === 'untraced:')).toBe(true)
+    expect(statuses.slice(first).every((s) => s === 'unknown:scale-cap')).toBe(true)
+    // A number that matches the evidence directly still resolves at any scale.
+    const direct = traceNumbers(`${scales(14)} 0.19`, `${evidence84}; 0.19`, { preset: 'report' })
+    expect(direct.numbers[14]).toMatchObject({ status: 'traced' })
+  })
+
+  it('S6 hostile:F3 59 distinct scales cost no more than 3 times one scale (CPU time)', () => {
+    const run = (text: string) => (): void => {
+      traceNumbers(text, evidence84, { preset: 'report' })
+    }
+    const one = run('77.3')
+    const many = run(scales(59))
+    one()
+    many()
+    expect(cpu(many, 3)).toBeLessThanOrEqual(3 * Math.max(cpu(one, 3), 0.05))
+  })
+
+  it('S6 false-pass:F20 the candidate cap counts what will be generated, so a page of 120 mixed numbers is still searched', () => {
+    const mixed = [
+      ...Array.from({ length: 40 }, (_, i) => String(1000 + i * 37)),
+      ...Array.from({ length: 40 }, (_, i) => `${(i * 13) % 97 + 1}.${(i * 7) % 10}%`),
+      ...Array.from({ length: 40 }, (_, i) => `$${(i * 7919) % 100003 + 11}`),
+    ].join('; ')
+    const r = traceNumbers('Revenue was $987,654,321.', mixed, { preset: 'report' })
+    expect(r.candidateCapHit).toBe(false)
+    expect(r.numbers[0]?.status).toBe('untraced')
+    expect(r.derivationCandidates).toBeGreaterThan(10_000)
+    expect(r.derivationCandidates).toBeLessThanOrEqual(50_000)
+    // Same-class evidence still hits the cap, and then the verdict is unknown, not untraced.
+    const sameClass = Array.from({ length: 120 }, (_, i) => `$${(i * 7919) % 100003 + 11}`).join('; ')
+    const capped = traceNumbers('Revenue was $987,654,321.', sameClass, { preset: 'report' })
+    expect(capped.candidateCapHit).toBe(true)
+    expect(capped.numbers[0]).toMatchObject({ status: 'unknown', reason: 'candidate-cap' })
+  })
+
+  it('S6 false-pass:F20 with the cap hit, direct exact and rounded matches still resolve', () => {
+    const sameClass = Array.from({ length: 120 }, (_, i) => `$${(i * 7919) % 100003 + 11}.25`).join('; ')
+    const r = traceNumbers('One was $11.25, another about $7,930 and a third $987,654,321.', sameClass, { preset: 'report' })
+    expect(r.candidateCapHit).toBe(true)
+    expect(r.numbers.map((n) => n.status)).toEqual(['traced', 'rounded', 'unknown'])
+  })
+
+  it('S6 false-pass:F20 the estimate is never below what is generated', () => {
+    let seed = 7
+    const next = (): number => {
+      seed = (seed * 1664525 + 1013904223) >>> 0
+      return seed / 4294967296
+    }
+    for (let it = 0; it < 40; it++) {
+      const n = 4 + Math.floor(next() * 40)
+      const parts = Array.from({ length: n }, () => {
+        const v = 1 + Math.floor(next() * 900)
+        const form = next()
+        return form < 0.3 ? `${v}` : form < 0.55 ? `${v}%` : form < 0.8 ? `$${v}.5` : form < 0.9 ? `${v} kg` : `${v} pp`
+      })
+      for (const maxOperands of [2, 3] as const) {
+        const cap = 3000
+        const r = traceNumbers('5', parts.join('; '), { preset: 'report', maxOperands, maxCandidates: cap })
+        if (!r.candidateCapHit) expect(r.derivationCandidates).toBeLessThanOrEqual(cap)
+      }
+    }
+  })
+})

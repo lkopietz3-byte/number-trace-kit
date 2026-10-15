@@ -180,6 +180,11 @@ export interface TraceOptions {
   /** Hard cap on derivation candidates for one call. Default 5000, maximum 1000000. */
   readonly maxCandidates?: number
   /**
+   * Most numbers the evidence may hold, 1 to 500,000 (also the default). More is a `RangeError`, thrown as soon as the
+   * limit is passed, because every evidence number costs about a kilobyte of heap.
+   */
+  readonly maxEvidenceNumbers?: number
+  /**
    * Let a percent or currency number in the output trace to an evidence number
    * that has no unit at all (an invoice table that prints `1,234.50` where the
    * summary says `$1,234.50`). Marked `unitUnverified`. Default false.

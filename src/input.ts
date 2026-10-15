@@ -27,7 +27,7 @@ export function readOptions<K extends string>(
   where: string,
 ): Partial<Record<K, unknown>> {
   // No prototype: a key the caller did not set must read as absent, not as something planted on Object.prototype.
-  const out = Object.create(null) as Partial<Record<K, unknown>>
+  const out = noProto({}) as Partial<Record<K, unknown>>
   if (options === undefined || options === null) return out
   if (typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError(`${where}: options must be an object, got ${describe(options)}.`)
@@ -50,8 +50,15 @@ export function readOptions<K extends string>(
  * missing field as undefined, never as something planted on `Object.prototype`.
  */
 export function noProto<T extends object>(value: T): T {
-  return Object.assign(Object.create(null) as T, value)
+  return Object.assign(new NoProtoRecord(), value)
 }
+
+/**
+ * The instances' prototype chain ends before `Object.prototype`. Unlike `Object.create(null)` the instances keep
+ * fast property access and a compact layout, which matters for the millions of tokens a large evidence text makes.
+ */
+class NoProtoRecord {}
+Object.setPrototypeOf(NoProtoRecord.prototype, null)
 
 /**
  * Read a property the caller set on this very object. An inherited property (one planted on `Object.prototype`, or

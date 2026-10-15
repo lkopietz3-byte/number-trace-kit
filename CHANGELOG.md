@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (S6: resource caps)
+
+- Evidence with more than 500,000 numbers is a `RangeError` thrown as soon as the limit is passed, before the rest of the text is read or stored (hostile:F4). Dense numeric evidence of 16 MB (four texts under the 50 MB limit) used to abort the process with an out-of-memory error at a 1 GB heap that no `try` can catch; it now throws. The new option `maxEvidenceNumbers` lowers the limit (1 to 500,000).
+- Derived lookups are answered for at most 12 distinct output scales; a number at a later scale that is not a direct match is `unknown` with the new reason `scale-cap`, never `traced` or `untraced` (hostile:F3). The derivation index of a scale now holds only the candidates near that scale's numbers, so a 2 KB output with 59 distinct precisions under `report` takes the CPU time of one with a single precision (about 0.15 s with 84 evidence numbers, against 12 s before).
+- The candidate cap is estimated from what will be generated instead of from every pair times every derivation (false-pass:F20, hostile:F12). A page of 120 mixed numbers (counts, percents and amounts) has a few thousand candidates, not 78,000, so under `report` a fabricated `$987,654,321` is `untraced` instead of `unknown` (`candidate-cap`); 120 amounts alone still hit the cap, and direct exact and rounded matches resolve either way. README now says how many same-class numbers the default caps allow.
+
 ### Fixed (S5: own properties only)
 
 - Options, evidence documents, caller tokens and reconcile rows are read as own properties only (hostile:F6). With `Object.prototype.ignoreSmallIntegersUpTo`, `.tolerance`, `.text` or `.amount` planted, `traceNumbers('Revenue was 9999.', 'Revenue was 5.')` came back `clean` and `reconcile({ rows: [{ amount: '1' }], total: '999' })` came back `ok: true`; both now give the verdict the caller's own values give. The tokens, suffix and group records and currency matches the kit builds have no prototype for the same reason (a planted `unit`, `currency`, `part` or `percent` changed verdicts), so **returned tokens have no prototype**: `token.hasOwnProperty` is not there, and everything else (spread, `JSON.stringify`, `Object.keys`, property reads) behaves as before.

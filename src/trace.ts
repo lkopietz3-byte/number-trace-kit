@@ -6,6 +6,7 @@ import {
   isNegativeValue,
   mantissaAt,
   parseDecimal,
+  pow10,
   ratAdd,
   ratDiv,
   ratMul,
@@ -14,7 +15,7 @@ import {
   toRat,
 } from './decimal.js'
 import type { Dec, Rat } from './decimal.js'
-import { scan } from './extract.js'
+import { NumberLimitError, scan } from './extract.js'
 import type { SkipRecord } from './extract.js'
 import {
   MAX_TEXT_LENGTH,
@@ -56,6 +57,8 @@ const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'perce
 const DATE_PARTS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 const MAX_LIST = 8
 const MAX_EVIDENCE_TOTAL = 50_000_000
+/** Most numbers the evidence may hold. Each costs on the order of a kilobyte of heap, so this keeps a hostile text from aborting the process. */
+const MAX_EVIDENCE_NUMBERS = 500_000
 const DEFAULT_MAX_CANDIDATES = 5_000
 const WINDOW_BEFORE = 32
 const WINDOW_AFTER = 16
@@ -257,6 +260,7 @@ interface Ctx {
   readonly ignoreYears: boolean
   readonly ignoreSmall: number
   readonly ignoreStructure: boolean
+  readonly maxEvidenceNumbers: number
   readonly pattern: RegExp | null
 }
 
@@ -366,7 +370,7 @@ function readContext(options: unknown): Ctx {
   const raw = readOptions(
     options,
     [
-      'preset', 'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates', 'maxOperands',
+      'preset', 'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates', 'maxOperands', 'maxEvidenceNumbers',
       'maxDerivationMatches', 'maxDerivationDensity', 'roundSums', 'evidenceOrder', 'evidenceScale', 'evidenceCurrency', 'evidenceScaleApplies', 'allowBareOutput',
       'allowBareEvidence', 'signMode', 'ignore', 'ignoreKinds', 'ignoreYears', 'ignoreSmallIntegersUpTo', 'ignoreStructure', 'ignorePattern',
     ] as const,
@@ -377,7 +381,7 @@ function readContext(options: unknown): Ctx {
   }
   // The preset supplies defaults; anything passed explicitly wins.
   const base = PRESETS[raw.preset ?? 'strict']
-  const o = Object.assign(Object.create(null) as Record<string, unknown>, base)
+  const o = noProto({ ...base })
   for (const [k, v] of Object.entries(raw)) if (v !== undefined && k !== 'preset') o[k] = v
   const loc = resolveLocale(o['locale'])
   const evLoc = o['evidenceLocale'] === undefined ? loc : resolveLocale(o['evidenceLocale'], 'evidenceLocale')
@@ -402,6 +406,7 @@ function readContext(options: unknown): Ctx {
     modes = [...picked]
   }
   const maxCandidates = readInteger(o['maxCandidates'], 'maxCandidates', 1, 1_000_000, DEFAULT_MAX_CANDIDATES)
+  const maxEvidenceNumbers = readInteger(o['maxEvidenceNumbers'], 'maxEvidenceNumbers', 1, MAX_EVIDENCE_NUMBERS, MAX_EVIDENCE_NUMBERS)
   const maxOperands = readInteger(o['maxOperands'], 'maxOperands', 2, 3, 2) as 2 | 3
   const signMode = o['signMode'] === undefined ? 'explicit' : o['signMode']
   if (signMode !== 'explicit' && signMode !== 'magnitude' && signMode !== 'strict') {
@@ -449,7 +454,7 @@ function readContext(options: unknown): Ctx {
   return {
     loc, evLoc, parenNeg, derivations, modes, maxCandidates, maxOperands, signMode, allowBare, allowBareOut, maxMatches, maxDensity,
     roundSums, newestFirst: order === 'newest-first', evScale, evCurrency, evScaleCurrency,
-    ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, ignoreStructure, pattern,
+    ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, ignoreStructure, maxEvidenceNumbers, pattern,
   }
 }
 
@@ -653,6 +658,20 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     }
     return text
   }
+  const tooManyNumbers = (): RangeError =>
+    new RangeError(
+      `evidence has more than ${ctx.maxEvidenceNumbers} numbers; split it, or keep only the passages the output can cite ` +
+        `(the maxEvidenceNumbers option can lower the limit, which is at most ${MAX_EVIDENCE_NUMBERS}).`,
+    )
+  /** Scan one evidence text, stopping as soon as the evidence as a whole holds too many numbers. */
+  const scanEvidence = (body: string): NumberToken[] => {
+    try {
+      return scan(body, ctx.evLoc, ctx.parenNeg, true, null, ctx.maxEvidenceNumbers - count)
+    } catch (e) {
+      if (e instanceof NumberLimitError) throw tooManyNumbers()
+      throw e
+    }
+  }
   const feed = (
     tokens: readonly NumberToken[],
     idOf: (t: NumberToken) => string,
@@ -661,6 +680,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     currency = ctx.evCurrency,
     scaleCurrency = ctx.evScaleCurrency,
   ): void => {
+    if (count + tokens.length > ctx.maxEvidenceNumbers) throw tooManyNumbers()
     for (const t of tokens) {
       ingest(ev, applyHints(t, exp, currency, scaleCurrency), idOf(t))
       count++
@@ -698,7 +718,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
   }
   if (typeof evidence === 'string') {
     const whole = takeText(evidence)
-    feed(scan(whole, ctx.evLoc, ctx.parenNeg, true), () => 'evidence', whole)
+    feed(scanEvidence(whole), () => 'evidence', whole)
   } else {
     const items = snapshotArray(evidence, 'evidence')
     // Tokens a caller extracted come one by one; the ones that follow each other in one
@@ -726,7 +746,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
         const docApplies = getOwn(item, 'scaleApplies')
         const body = takeText(readString(text, `evidence[${index}].text`))
         feed(
-          scan(body, ctx.evLoc, ctx.parenNeg, true),
+          scanEvidence(body),
           () => id,
           body,
           docScale === undefined ? ctx.evScale : scaleExponent(docScale, `evidence[${index}].scale`),
@@ -794,6 +814,52 @@ interface Candidate {
   readonly reversed: boolean
   /** The value depends on which operand came first (a change, a ratio). Sums, products and averages do not. */
   readonly ordered: boolean
+  /** Position in its list, so the index picks the same candidate whatever order the windows are filed in. */
+  readonly order: number
+  /** The index key prefixes this candidate is filed under (class, unit and sign), built once on first use. */
+  prefixes?: string[]
+}
+
+/** A candidate list sorted by value, with each value as fixed point (floor of value times 10^FIX_DIGITS). */
+interface SortedCandidates {
+  readonly fix: readonly bigint[]
+  readonly cands: readonly Candidate[]
+}
+
+/**
+ * The derivation index of one output scale. Only the candidates whose value lies near an output number at that
+ * scale are filed (`ranges` are the filed stretches of the sorted list); a scale that asks for more than
+ * MAX_RANGES separate stretches is filed completely once.
+ */
+interface ScaleIndex {
+  map: Map<string, DerivedAgg>
+  ranges: [number, number][]
+  full: boolean
+}
+
+const FIX_DIGITS = 40
+const MAX_RANGES = 64
+/** Distinct output scales whose derived lookups are answered; the rest are `unknown` (`scale-cap`). */
+const MAX_DERIVATION_SCALES = 12
+
+const MODES_UP: ReadonlySet<RoundingMode> = new Set<RoundingMode>(['half-up'])
+const MODES_EVEN: ReadonlySet<RoundingMode> = new Set<RoundingMode>(['half-even'])
+const MODES_BOTH: ReadonlySet<RoundingMode> = new Set<RoundingMode>(['half-up', 'half-even'])
+
+/**
+ * The key prefixes a candidate is filed under. A plain-number candidate is also filed under "*" so an output with a
+ * unit the evidence lacks (or the reverse) can find it; the lookup marks that as unverified. For allowBareOutput a
+ * bare output number may match an amount in any currency.
+ */
+function filedPrefixes(cand: Candidate): string[] {
+  const sign = cand.neg ? '-' : '+'
+  const out: string[] = []
+  for (const k of cand.keys) {
+    out.push(`${k.cls}\u0000${k.unit}\u0000${sign}`)
+    if (k.cls === 'plain') out.push(`plain\u0000*\u0000${sign}`)
+    if (k.cls.startsWith('cur:')) out.push(`curany\u0000\u0000${sign}`)
+  }
+  return out
 }
 
 interface DerivedHit {
@@ -813,7 +879,7 @@ interface DerivedHit {
 
 interface DerivedSlot {
   readonly cand: Candidate
-  readonly modes: Set<RoundingMode>
+  readonly modes: ReadonlySet<RoundingMode>
   readonly exact: boolean
 }
 
@@ -828,9 +894,78 @@ interface DerivedAgg {
 type HeldReason = 'twin-operands' | 'zero-operand'
 const HELD_REASONS: readonly HeldReason[] = ['twin-operands', 'zero-operand']
 
+/** Sorted positions [a, b) of the candidates whose value can round to within 25 units of `mantissa` at `scale`. */
+function windowOf(fix: readonly bigint[], scale: number, mantissa: bigint): [number, number] {
+  const margin = 26n
+  const low = mantissa > margin ? mantissa - margin : 0n
+  const high = mantissa + margin
+  let lo: bigint
+  let hi: bigint
+  if (scale <= FIX_DIGITS) {
+    const up = pow10(FIX_DIGITS - scale)
+    lo = low * up
+    hi = high * up
+  } else {
+    const down = pow10(scale - FIX_DIGITS)
+    lo = low / down
+    hi = high / down + 1n
+  }
+  // One unit of slack for the floor in the fixed-point value.
+  lo -= 1n
+  hi += 1n
+  return [firstAtLeast(fix, lo), firstAtLeast(fix, hi + 1n)]
+}
+
+/** The first position whose value is at least `bound` (the length when none is). */
+function firstAtLeast(fix: readonly bigint[], bound: bigint): number {
+  let lo = 0
+  let hi = fix.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    const v = fix[mid]
+    if (v !== undefined && v < bound) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/** The parts of [a, b) that no range in the sorted, disjoint `ranges` covers. */
+function uncovered(a: number, b: number, ranges: readonly [number, number][]): [number, number][] {
+  const out: [number, number][] = []
+  let at = a
+  for (const [x, y] of ranges) {
+    if (y <= at) continue
+    if (x >= b) break
+    if (x > at) out.push([at, x])
+    at = Math.max(at, y)
+    if (at >= b) break
+  }
+  if (at < b) out.push([at, b])
+  return out
+}
+
+/** Add [a, b) to the sorted, disjoint `ranges`, merging what it touches. */
+function addRange(ranges: [number, number][], a: number, b: number): void {
+  let first = 0
+  while (first < ranges.length && (ranges[first]?.[1] ?? 0) < a) first++
+  let last = first
+  let lo = a
+  let hi = b
+  while (last < ranges.length && (ranges[last]?.[0] ?? Infinity) <= b) {
+    lo = Math.min(lo, ranges[last]?.[0] ?? lo)
+    hi = Math.max(hi, ranges[last]?.[1] ?? hi)
+    last++
+  }
+  ranges.splice(first, last - first, [lo, hi])
+}
+
 class Matcher {
   private readonly rounded = new Map<string, Index>()
-  private readonly derivedIdx = new Map<number, Map<string, DerivedAgg>>()
+  private readonly derivedIdx = new Map<number, ScaleIndex>()
+  private readonly sortedLists = new Map<readonly Candidate[], SortedCandidates>()
+  private readonly scalesSeen = new Set<number>()
+  /** Set when a derived lookup was refused for want of a free output scale (see MAX_DERIVATION_SCALES). */
+  scaleCapped = false
   readonly candidates: Candidate[] = []
   /**
    * Candidates that must never make a number `derived`, filed by the reason a match is `unknown` instead.
@@ -840,7 +975,7 @@ class Matcher {
    * or the density, and each says nothing about the claim: it could be one fact written twice or two real rows.
    */
   readonly held: Record<HeldReason, Candidate[]> = { 'twin-operands': [], 'zero-operand': [] }
-  private readonly heldIdx: Record<HeldReason, Map<number, Map<string, DerivedAgg>>> = { 'twin-operands': new Map(), 'zero-operand': new Map() }
+  private readonly heldIdx: Record<HeldReason, Map<number, ScaleIndex>> = { 'twin-operands': new Map(), 'zero-operand': new Map() }
   capHit = false
 
   constructor(private readonly ev: Evidence, private readonly ctx: Ctx) {
@@ -935,15 +1070,29 @@ class Matcher {
     }
     const m = ops.length
     if (m < 2) return
-    let per = 0
+    // Count what the loops below will generate, before they run. Only operands of one class and unit pair up for
+    // a sum, a difference, a ratio, a change, a percent or an average; across classes only a count times an amount
+    // and a percent of an amount make a candidate. Counting every pair as if it made all of them would give up on
+    // a page of 100 mixed numbers that has a few thousand candidates.
     const d = this.ctx.derivations
-    if (d.has('sum')) per += 1
-    if (d.has('difference')) per += 2
-    if (d.has('ratio')) per += 2
-    if (d.has('percent-change')) per += 2
-    if (d.has('percent-of')) per += 2
-    if (d.has('average')) per += 1
-    if (d.has('product')) per += 1
+    const groups = new Map<string, number>()
+    let counts = 0
+    let percents = 0
+    let points = 0
+    for (const e of ops) {
+      const g = `${e.cls}\u0000${e.unit}`
+      groups.set(g, (groups.get(g) ?? 0) + 1)
+      if (isCount(e)) counts++
+      if (e.cls === 'pct') percents++
+      if (e.cls === 'pp') points++
+    }
+    let perSame = 0
+    if (d.has('sum')) perSame += 1
+    if (d.has('difference')) perSame += 2
+    if (d.has('ratio')) perSame += 2
+    if (d.has('percent-change')) perSame += 2
+    if (d.has('percent-of')) perSame += 2
+    if (d.has('average')) perSame += 1
     // Three-operand candidates: a sum, a difference (each figure less the other two) and a mean.
     let perTriple = 0
     if (this.ctx.maxOperands === 3) {
@@ -951,8 +1100,14 @@ class Matcher {
       if (d.has('difference')) perTriple += 3
       if (d.has('average')) perTriple += 1
     }
-    const triples = m >= 3 ? (m * (m - 1) * (m - 2)) / 6 : 0
-    const total = (m * (m - 1)) / 2 * per + triples * perTriple
+    let total = 0
+    for (const [g, size] of groups) {
+      const pairs = (size * (size - 1)) / 2
+      total += pairs * (perSame + (d.has('product') && g === 'plain\u0000' ? 1 : 0))
+      if (size >= 3) total += ((size * (size - 1) * (size - 2)) / 6) * perTriple
+    }
+    if (d.has('product')) total += counts * (m - points - percents - counts)
+    if (d.has('percent-of')) total += percents * (m - percents - points)
     if (total > this.ctx.maxCandidates) {
       this.capHit = true
       return
@@ -968,7 +1123,7 @@ class Matcher {
       // A product, a ratio or a percent of is zero only through a zero operand, which tells nothing about the claim.
       const zero = r.p === 0n && (kind === 'product' || kind === 'ratio' || kind === 'percent-of')
       const target = twin ? this.held['twin-operands'] : zero ? this.held['zero-operand'] : this.candidates
-      target.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed: reversed === true, ordered: reversed !== undefined })
+      target.push({ kind, keys, abs: { p: neg ? -r.p : r.p, q: r.q }, neg, operands, reversed: reversed === true, ordered: reversed !== undefined, order: target.length })
     }
     const HUNDRED: Rat = { p: 100n, q: 1n }
     for (let i = 0; i < m; i++) {
@@ -1067,51 +1222,104 @@ class Matcher {
    * reversed, exact or rounded), never a list, so many candidates landing on
    * one value cost nothing extra to look up.
    */
-  private derivedIndex(scale: number, held?: HeldReason): Map<string, DerivedAgg> {
+  private derivedIndex(scale: number, mantissa: bigint, held?: HeldReason): Map<string, DerivedAgg> {
     const cache = held === undefined ? this.derivedIdx : this.heldIdx[held]
-    let idx = cache.get(scale)
-    if (idx !== undefined) return idx
-    idx = new Map()
+    let si = cache.get(scale)
+    if (si === undefined) {
+      if (!this.scalesSeen.has(scale)) {
+        // Every distinct output scale costs a pass over the candidates near its numbers; past the cap the lookup
+        // finds nothing and the caller says `unknown`, never `untraced`.
+        if (this.scalesSeen.size >= MAX_DERIVATION_SCALES) {
+          this.scaleCapped = true
+          return new Map()
+        }
+        this.scalesSeen.add(scale)
+      }
+      si = { map: new Map(), ranges: [], full: false }
+      cache.set(scale, si)
+    }
+    if (si.full) return si.map
+    const sorted = this.sortedFor(held === undefined ? this.candidates : this.held[held])
+    // The window of values that can round to within 25 units of the output (the density looks that far).
+    const [a, b] = windowOf(sorted.fix, scale, mantissa)
+    if (a >= b) return si.map
+    for (const [x, y] of uncovered(a, b, si.ranges)) this.fileRange(si.map, sorted, x, y, scale)
+    addRange(si.ranges, a, b)
+    if (si.ranges.length > MAX_RANGES) {
+      // Many separate windows: file everything once and stop tracking.
+      si.map = new Map()
+      this.fileRange(si.map, sorted, 0, sorted.cands.length, scale)
+      si.full = true
+    }
+    return si.map
+  }
+
+  private sortedFor(list: readonly Candidate[]): SortedCandidates {
+    let sorted = this.sortedLists.get(list)
+    if (sorted !== undefined) return sorted
+    const unit = pow10(FIX_DIGITS)
+    const keyed = list.map((cand) => ({ cand, fix: (cand.abs.p * unit) / cand.abs.q }))
+    keyed.sort((x, y) => (x.fix < y.fix ? -1 : x.fix > y.fix ? 1 : x.cand.order - y.cand.order))
+    sorted = { fix: keyed.map((k) => k.fix), cands: keyed.map((k) => k.cand) }
+    this.sortedLists.set(list, sorted)
+    return sorted
+  }
+
+  /** File the candidates at sorted positions [from, to) in the index of one output scale. */
+  private fileRange(index: Map<string, DerivedAgg>, sorted: SortedCandidates, from: number, to: number, scale: number): void {
     // With rounding turned off only exact values count, but they are still found.
     const exactOnly = this.ctx.modes.length === 0
-    const modes: readonly RoundingMode[] = exactOnly ? ['half-up'] : this.ctx.modes
-    for (const cand of held === undefined ? this.candidates : this.held[held]) {
-      const byMantissa = new Map<string, { modes: Set<RoundingMode>; exact: boolean }>()
-      for (const mode of modes) {
-        const r = roundRat(cand.abs, scale, mode)
-        // Sums and differences are exact arithmetic, so only an exact match counts.
-        if (!r.exact && (exactOnly || ((cand.kind === 'sum' || cand.kind === 'difference') && !this.ctx.roundSums))) continue
-        const m = r.mantissa.toString()
-        const slot = byMantissa.get(m) ?? { modes: new Set<RoundingMode>(), exact: r.exact }
-        slot.modes.add(mode)
-        byMantissa.set(m, slot)
-      }
-      for (const [m, found] of byMantissa) {
-        // A plain-number candidate is also filed under "*" so an output with a unit the
-        // evidence lacks (or the reverse) can find it; the lookup marks that as unverified.
-        const filed: Shape[] = []
-        for (const k of cand.keys) {
-          filed.push(k)
-          if (k.cls === 'plain') filed.push({ cls: 'plain', unit: '*' })
-          // allowBareOutput: a bare output number may match an amount in any currency.
-          if (k.cls.startsWith('cur:')) filed.push({ cls: 'curany', unit: '' })
+    const useUp = exactOnly || this.ctx.modes.includes('half-up')
+    const useEven = !exactOnly && this.ctx.modes.includes('half-even')
+    const factor = scale >= 0 ? pow10(scale) : 1n
+    const divisor = scale < 0 ? pow10(-scale) : 1n
+    for (let n = from; n < to; n++) {
+      const cand = sorted.cands[n]
+      if (cand === undefined) continue
+      // One division gives both rounding modes.
+      const den = cand.abs.q * divisor
+      const num = cand.abs.p * factor
+      const quo = num / den
+      const rem = num - quo * den
+      const exact = rem === 0n
+      // Sums and differences are exact arithmetic, so only an exact match counts.
+      if (!exact && (exactOnly || ((cand.kind === 'sum' || cand.kind === 'difference') && !this.ctx.roundSums))) continue
+      let up = quo
+      let even = quo
+      if (!exact) {
+        const twice = rem * 2n
+        if (twice > den) {
+          up = quo + 1n
+          even = up
+        } else if (twice === den) {
+          up = quo + 1n
+          even = quo % 2n === 0n ? quo : quo + 1n
         }
-        for (const k of filed) {
-          const key = `${k.cls}\u0000${k.unit}\u0000${cand.neg ? '-' : '+'}${m}`
-          let agg = idx.get(key)
+      }
+      const at = (this.against(cand) ? 2 : 0) + (exact ? 0 : 1)
+      const prefixes = (cand.prefixes ??= filedPrefixes(cand))
+      const file = (mantissa: bigint, modes: ReadonlySet<RoundingMode>): void => {
+        const m = mantissa.toString()
+        for (const prefix of prefixes) {
+          const key = prefix + m
+          let agg = index.get(key)
           if (agg === undefined) {
             agg = { count: 0, slots: [undefined, undefined, undefined, undefined] }
-            idx.set(key, agg)
+            index.set(key, agg)
           }
           agg.count++
-          const at = (this.against(cand) ? 2 : 0) + (found.exact ? 0 : 1)
-          agg.slots[at] ??= { cand, modes: found.modes, exact: found.exact }
-          if (cand.abs.p === 0n) agg.zero ??= { cand, modes: found.modes, exact: found.exact }
+          // The first candidate in candidate order, whatever order the windows are filed in.
+          const held = agg.slots[at]
+          if (held === undefined || cand.order < held.cand.order) agg.slots[at] = { cand, modes, exact }
+          if (cand.abs.p === 0n && (agg.zero === undefined || cand.order < agg.zero.cand.order)) agg.zero = { cand, modes, exact }
         }
       }
+      if (useUp && useEven && up === even) file(up, MODES_BOTH)
+      else {
+        if (useUp) file(up, MODES_UP)
+        if (useEven) file(even, MODES_EVEN)
+      }
     }
-    cache.set(scale, idx)
-    return idx
   }
 
   /**
@@ -1150,7 +1358,7 @@ class Matcher {
     held?: HeldReason,
   ): DerivedHit | null {
     if ((held === undefined ? this.candidates : this.held[held]).length === 0) return null
-    const idx = this.derivedIndex(scale, held)
+    const idx = this.derivedIndex(scale, mantissa, held)
     const tries: { cls: string; unit: string; unverified: boolean }[] = [{ cls: shape.cls, unit: shape.unit, unverified: false }]
     if (shape.cls === 'plain') {
       if (!strict) tries.push({ cls: 'plain', unit: shape.unit === '' ? '*' : '', unverified: true })
@@ -1467,6 +1675,7 @@ function traceOne(
   }
   // An exact zero has no sign to disagree about.
   const allow = (e: Ent): boolean => key === '0' || signAllowed(tok, outNeg, e.neg, ctx.signMode)
+  matcher.scaleCapped = false
 
   if (weakPrimary(tok)) {
     if (
@@ -1477,6 +1686,7 @@ function traceOne(
     }
     // An incomplete derivation search stays unknown.
     if (ctx.derivations.size > 0 && matcher.capHit) return unknownTrace(tok, 'candidate-cap')
+    if (matcher.scaleCapped) return unknownTrace(tok, 'scale-cap')
     const near = nearMisses(tok, shape, outNeg, key, ev, ctx)
     return { token: tok, status: 'untraced', evidence: [], ...(near.length > 0 ? { nearMisses: near } : {}) }
   }
@@ -1540,6 +1750,7 @@ function traceOne(
 
   // 5. The search was too large to run.
   if (ctx.derivations.size > 0 && matcher.capHit) return unknownTrace(tok, 'candidate-cap')
+  if (matcher.scaleCapped) return unknownTrace(tok, 'scale-cap')
 
   // A bare hour with am or pm ("5pm") is not cleared by a unit-less number of the same size (a 5.0 rating): cannot tell.
   if (tok.kind === 'time' && bareHourMatches(tok, ev)) return unknownTrace(tok, 'unit-unverified')

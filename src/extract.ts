@@ -524,12 +524,16 @@ export function extractNumbers(text: string, options?: ExtractOptions): NumberTo
  * make an output number `unknown`, never `traced`. With `skips` set, every
  * stretch that holds digits but was not read as a number is appended to it.
  */
+/** Thrown by `scan` when the text holds more numbers than the caller allowed. */
+export class NumberLimitError extends RangeError {}
+
 export function scan(
   text: string,
   info: LocaleInfo,
   parenNeg: boolean,
   identifiers = false,
   skips: SkipRecord[] | null = null,
+  maxTokens = Infinity,
 ): NumberToken[] {
   const n = text.length
   if (n > MAX_TEXT_LENGTH) {
@@ -1615,6 +1619,8 @@ export function scan(
 
   let i = 0
   while (i < n) {
+    // Stop as soon as the text has more numbers than allowed, before the rest of it is read and stored.
+    if (out.length + idTokens.length > maxTokens) throw new NumberLimitError(`The text has more than ${maxTokens} numbers.`)
     const c = f[i] ?? 0
     if (c < 0x30 || c > 0x39) {
       if (VULGAR_FRACTIONS.has(c)) {

@@ -70,6 +70,18 @@ source entry is `src/index.ts`; the package export resolves to generated
   Evidence indexes cap each key's list at eight entries; the derivation index
   keeps a count and the first candidate of each kind per key, so candidates that
   collide on one value cost one lookup, not a rescan.
+  Cost, stated exactly: extraction is linear in characters; the evidence heap is
+  about a kilobyte per number, so evidence is capped at 500,000 numbers
+  (`maxEvidenceNumbers` lowers it) and the scan stops the moment it is exceeded.
+  Derivation candidates are counted before they are built (same-class pairs
+  times derivations, plus the count-times-amount and percent-of-amount pairs)
+  and cost one sort by value. The derivation index of one output scale holds
+  only the candidates within 26 units of the numbers written at that scale; a
+  scale that needs more than 64 separate stretches is filed whole once. At most
+  12 distinct scales are answered, so the worst case is candidates times 12,
+  and the usual case for an output with many precisions is candidates plus a
+  few lookups per scale. The rounding index of a scale (direct matches) is still
+  one pass over the evidence per distinct scale.
 - **A caller RegExp is never run on caller text at large.** `ignorePattern` is
   copied into a private global RegExp and tested only on a window around each
   number (at most 64 characters of the number, 32 before, 16 after). Empty
