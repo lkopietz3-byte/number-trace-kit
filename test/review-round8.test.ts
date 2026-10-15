@@ -549,3 +549,39 @@ describe('triage field:F9 the documented recipe for counts about the answer itse
     expect(verdict('There were 7 words in the headline.', 'The headline had 9 words.', { ignorePattern: pattern })).toBe('clean')
   })
 })
+
+describe('L1 false-pass:F13 a number rounded to trailing zeros is unknown, not untraced', () => {
+  it('L1 false-pass:F13 About 1,200 from 1,234 and Nearly 80% from 78.4%', () => {
+    const a = traceNumbers('About 1,200 employees', 'The company has 1,234 employees.')
+    expect(a.numbers[0]).toMatchObject({ status: 'unknown', reason: 'coarse-rounding' })
+    expect(traceNumbers('Nearly 80% of users', '78.4% of users').numbers[0]).toMatchObject({ status: 'unknown', reason: 'coarse-rounding' })
+    expect(traceNumbers('Over 10,000 visits', '10,432 visits').numbers[0]).toMatchObject({ status: 'unknown', reason: 'coarse-rounding' })
+    expect(traceNumbers('About $1,200', 'Cost $1,234.50').numbers[0]).toMatchObject({ status: 'unknown', reason: 'coarse-rounding' })
+    expect(traceNumbers('Down about -1,200', 'Change -1,234').numbers[0]).toMatchObject({ status: 'unknown', reason: 'coarse-rounding' })
+  })
+
+  it('L1 false-pass:F13 a number that is no rounding of the evidence is still untraced', () => {
+    expect(verdict('About 1,300 employees', 'The company has 1,234 employees.')).toBe('untraced')
+    expect(verdict('About 1,200 employees', 'The company has 1,264 employees.')).toBe('untraced')
+    expect(verdict('Nearly 90% of users', '78.4% of users')).toBe('untraced')
+    // The rounding place must be below the leading digit of the evidence: 90 is not "about 100".
+    expect(verdict('About 100 days', 'The first 90 days matter.')).toBe('untraced')
+    expect(verdict('About 1,000 users', 'There are 940 users.')).toBe('untraced')
+    expect(verdict('About 1,000 users', 'There are 950 users.')).toBe('unknown')
+    expect(verdict('About 1,000 users', 'There are 1,049 users.')).toBe('unknown')
+    // A different kind is not a rounding of it; a unit on one side only is unknown, as for an exact match.
+    expect(verdict('About 1,200 kg', 'The company has 1,234 employees.')).toBe('unknown')
+    expect(verdict('About 1,200 kg', 'The company weighs 1,234 lb.')).toBe('untraced')
+    expect(verdict('About 1,200%', 'The company has 1,234 employees.')).toBe('untraced')
+    // Precision that is written stays precision.
+    expect(verdict('Exactly 1,200.0 employees', 'The company has 1,234 employees.')).toBe('untraced')
+    // A year is a label, not a rounding.
+    expect(verdict('In 2000', 'In 2013')).toBe('untraced')
+  })
+
+  it('L1 false-pass:F13 the spelled-out rounding is still rounded, and an exact match is still traced', () => {
+    expect(traceNumbers('About 1.2K employees', 'The company has 1,234 employees.').numbers[0]?.status).toBe('rounded')
+    expect(traceNumbers('About 1.2 thousand employees', 'The company has 1,234 employees.').numbers[0]?.status).toBe('rounded')
+    expect(traceNumbers('There are 1,200 employees.', 'There are 1,200 employees.').numbers[0]?.status).toBe('traced')
+  })
+})

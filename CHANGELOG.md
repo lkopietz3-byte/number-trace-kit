@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (L1: coarse rounding)
+
+- A whole number that ends in zeros and is a rounding of evidence at hundreds, thousands and so on (`About 1,200` from `1,234`, `Nearly 80%` from `78.4%`, `Over 10,000` from `10,432`) is `unknown` with the new reason `coarse-rounding`, not `untraced` (false-pass:F13): the honest paraphrase no longer fails while `1.2K` was accepted. `1,300` against `1,234` is still `untraced`, and so is `100` against `90`: the rounding place has to be below the evidence number's leading digit. It only ever turns a failure into `unknown`. The labeled benchmark is unchanged for the default, `strict`, `report` and `allowBareEvidence` runs, and the field corpus has the same 96 of 106 unsupported numbers caught.
+
 ### Fixed (S9: messages and locales)
 
 - Evidence given as an array of strings (the natural shape for retrieved chunks) now says what to do: `evidence[0] must be a { id, text } object or a number token, got string. Wrap each string as { id, text }, or join the strings into one string.` A missing or wrong-typed `evidence` says `evidence must be a string or an array of { id, text } documents or tokens`, and a wrong `output` says `output must be a string or an array of tokens`; before, both said "must be an array" although a string is valid (docs-release:F1, docs-release:F2).

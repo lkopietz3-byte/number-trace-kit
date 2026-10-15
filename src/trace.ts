@@ -1776,6 +1776,9 @@ function traceOne(
   if (ctx.derivations.size > 0 && matcher.capHit) return unknownTrace(tok, 'candidate-cap')
   if (matcher.scaleCapped) return unknownTrace(tok, 'scale-cap')
 
+  // "About 1,200" from 1,234 and "nearly 80%" from 78.4%: trailing zeros are a rounding the writer did not spell out.
+  if (coarselyRounded(tok, outNeg, mantissa, variants, matcher)) return unknownTrace(tok, 'coarse-rounding')
+
   // "the 30th" next to a date whose day is 30: a day of the month or a rank, the kit cannot tell.
   if (tok.kind === 'ordinal' && lookup(ev.strong, { cls: 'date', unit: 'day' }, false, key).length > 0) return unknownTrace(tok, 'ordinal-date')
 
@@ -1795,6 +1798,33 @@ function bareHourMatches(tok: NumberToken, ev: Evidence): boolean {
   if (!Number.isInteger(hour)) return false
   hour = hour % 12 === 0 ? 12 : hour % 12
   return lookup(ev.strong, { cls: 'plain', unit: '' }, false, String(hour), true).length > 0
+}
+
+/**
+ * Does evidence round to this number at a coarser precision than the one it shows? "1,200" has no decimals, but the
+ * two zeros may be rounding ("About 1,200" from 1,234): at hundreds 1,234 gives 1,200. Only a number written with
+ * no decimals and no magnitude, in a kind that is a quantity, is looked at, only to turn a failure into `unknown`, and
+ * only when the rounding place is below the evidence number's leading digit (90 is not "about 100").
+ */
+function coarselyRounded(
+  tok: NumberToken,
+  outNeg: boolean,
+  mantissa: bigint,
+  variants: readonly Variant[],
+  matcher: Matcher,
+): boolean {
+  if (tok.kind !== 'count' && tok.kind !== 'decimal' && tok.kind !== 'percent' && tok.kind !== 'currency') return false
+  if (tok.scale !== 0 || tok.magnitude !== undefined || tok.ambiguous) return false
+  let m = mantissa
+  for (let k = 1; k <= 6 && m !== 0n && m % 10n === 0n; k++) {
+    m /= 10n
+    for (const v of variants) {
+      const hit = matcher.findRounded('strong', tok, -k, v.shape, outNeg, m, v.bare)
+      // The rounding place must be below the evidence number's leading digit: 90 is not "about 100".
+      if (hit !== null && hit.ents.some((e) => e.dec.n.toString().length - e.dec.s > k)) return true
+    }
+  }
+  return false
 }
 
 function isLabel(tok: NumberToken): boolean {
