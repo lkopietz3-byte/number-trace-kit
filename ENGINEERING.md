@@ -114,7 +114,7 @@ source entry is `src/index.ts`; the package export resolves to generated
   records the kit builds with optional fields (tokens, suffix and group records,
   currency matches) have no prototype (`noProto`), so a polluted `Object.prototype`
   (`ignoreSmallIntegersUpTo`, `tolerance`, `text`, `amount`, `unit`, `currency`) cannot
-  change a verdict. Returned tokens have no prototype for the same reason.
+  change a verdict. Returned tokens inherit nothing from `Object.prototype` for the same reason (their prototype chain ends in an internal object, so `token.hasOwnProperty` is not there, and a token is not `deepStrictEqual` to a plain object literal).
 - **The output is bounded too.** `maxOutputNumbers` (default and maximum 500,000) stops the scan of an output text the moment it holds more numbers
   and skipped forms; a 5,000,000-character text of single digits would otherwise be millions of tokens.
 - **Text policy.** ASCII, full-width and every BMP script's decimal digits are
@@ -184,19 +184,21 @@ compares the exported names to `api-surface.json`, runs
   purpose (`node bench/build/make-regression-baseline.mjs`) and the commit says why.
 - `test/icu-crosscheck.test.ts`: every ICU locale of the supported languages
   prints numbers; the kit reads them back and agrees with ICU on the decimal mark
-  and numeric-date order. A CLDR update that changes a locale fails it on purpose.
+  and numeric-date order. A CLDR update that changes a locale fails it on purpose. The kit's locale rules were fitted to
+  the CLDR data of Node 26.3.0 (ICU 78.3), the only version this release was run on; the CI compatibility matrix runs the
+  same test on older Node lines with older CLDR data (Not run: unverified until it has run there).
 - `test/decimal-crosscheck.test.ts`: 3,000 seeded cases answered by Python's
   `decimal` and `fractions` (rounding, exact arithmetic, the seven derivations).
 
 ## Benchmark and cross-checks
 
 `bench/` and `scripts/crosscheck*` are development tools. Neither is in the npm
-tarball (`files` lists `dist`, the README and the changelog), and nothing in
+tarball (`files` lists `dist`, `README.md`, `METHOD.md`, `LICENSE` and `CHANGELOG.md`), and nothing in
 `src` may import from them. `npm run bench` prints false-fail, catch and false-pass
 with denominators and 95% intervals; `bench/METHOD.md` says how every label was
 made. Rules:
 
-- The README's "Accuracy on real output" numbers are copied from `npm run bench`.
+- The README's "Accuracy on real data" numbers are copied from `npm run bench`.
   Change the kit, rerun, update the README; never quote a number the bench did not print.
 - Third-party data is committed only as derived data a license allows (model
   answers, annotator labels, number-centered excerpts). FinanceBench (CC BY-NC) is
@@ -228,6 +230,10 @@ Publishing is only by a `v*` tag through `.github/workflows/release.yml`, never
    re-run on a published version does nothing), and publishes with npm trusted
    publishing (`id-token: write`, no stored token, provenance automatic). Trusted
    publishing must be configured for this package on npmjs.com.
+
+Before the first tag: the GitHub repository named in `package.json`, the README and `SECURITY.md`
+(`lkopietz3-byte/number-trace-kit`) must exist, be public and have private vulnerability reporting on, because
+trusted publishing, provenance and the README link to `bench/` all point at it. The release review found it did not exist yet.
 
 A published `name@version` can never be reused and npm's unpublish window is
 narrow, so fix forward with a new patch version instead of unpublishing.
