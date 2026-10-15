@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (S8: sign glyphs)
+
+- A leading en dash (`–3.2%`) is no longer read as an unsigned positive that traces to `3.2%` with nothing flagged (false-pass:F12). It is `ambiguous` with the new reason `sign` (read as positive, the negative as the alternate) and traces to `unknown` with the new reason `ambiguous-sign` against `3.2%` and `-3.2%` alike; the same text in the evidence (`–3.2%`) still traces, and ranges (`5–8%`) are unchanged. `+/-5%` and `+-5%` used to read as `-5%`; they now read like `±5%`: `5%`, no sign. New `AmbiguityReason` `sign`.
+
 ### Added (S7: whole-date checks beyond English)
 
 - Month names in German, French, Spanish, Italian, Portuguese, Dutch and Swedish (full names in any case, and their abbreviations with a dot), the forms `5 de marzo de 2026`, `5 de marzo del 2026`, `5. März 2026` and `1er mars`, the hyphen forms `8-Jun-2026` and `Jun-08-2026`, and `2026年3月4日`, `3月4日` and `2026년 3월 4일` are read as whole dates. Before, `Le 5 mars 2026` came back `clean` against `Déposé le 4 mars 2026 et 5 jours` because its day traced to the unrelated `5 jours`, `Due 8-Jun-2026` traced to `Net 8 days`, and an honest `2026年3月4日` was `untraced` against `2026-03-04` (false-pass:F07). `Mars`, `Mayo`, `Mai`, `Maj`, `Mei`, `Juli` and `Juni` with a capital are months only in a locale that has a table, so `The Mars 2020 rover` is unchanged.

@@ -19,6 +19,9 @@ import type {
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 type Tok = Mutable<NumberToken>
 
+/** U+2013. Read as a minus sign it is a guess, so a number glued behind one is flagged (`sign`). */
+const EN_DASH = 0x2013
+
 const MONTHS: Record<string, number> = {
   january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4, may: 5,
   june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8, september: 9, sep: 9, sept: 9,
@@ -1881,12 +1884,12 @@ export function scan(
     // ---- prefix: sign, currency, opening parenthesis --------------------------
     let signPos = -1
     let cur: CurrencyMatch | null
-    if (i0 - 1 >= floor && isSignCode(at(i0 - 1))) {
+    if (i0 - 1 >= floor && (isSignCode(at(i0 - 1)) || at(i0 - 1) === EN_DASH)) {
       signPos = i0 - 1
       cur = matchCurrencyEnding(signPos)
     } else {
       cur = matchCurrencyEnding(i0)
-      if (cur !== null && cur.start - 1 >= floor && isSignCode(at(cur.start - 1))) signPos = cur.start - 1
+      if (cur !== null && cur.start - 1 >= floor && (isSignCode(at(cur.start - 1)) || at(cur.start - 1) === EN_DASH)) signPos = cur.start - 1
     }
     // "$(557)": the currency sits outside the accounting parentheses.
     let parenAfterCurrency = false
@@ -1904,6 +1907,8 @@ export function scan(
       signValid =
         (pc === -1 || (!isAlnum(pc) && pc !== 0x29 && pc !== 0x5d)) &&
         !(prevTok !== undefined && prevTok.end === signPos)
+      // "+/-5%" and "+-5%" are a tolerance, read like "\u00b15%": the number has no sign.
+      if (signValid && at(signPos) !== 0x2b && (pc === 0x2b || (pc === 0x2f && at(signPos - 2) === 0x2b))) signValid = false
     }
     let start = i0
     if (cur !== null) start = cur.start
@@ -2054,6 +2059,7 @@ export function scan(
       const tok = makeToken('', tokStart, tokEnd, '0', 0, 'count')
       let neg = false
       let signStyle: SignStyle | undefined
+      let dashSign = false
       let currency: string | undefined
       let hasPrefixCurrency = false
       let currencyConflict = false
@@ -2065,8 +2071,12 @@ export function scan(
           if (cur.conflict === true) currencyConflict = true
         }
         if (signValid && at(signPos) !== -1) {
-          neg = at(signPos) === 0x2d
-          signStyle = neg ? 'minus' : 'plus'
+          // An en dash is a minus in typeset text and a dash everywhere else: no sign is read, and the number says so.
+          dashSign = at(signPos) === EN_DASH
+          if (!dashSign) {
+            neg = at(signPos) === 0x2d
+            signStyle = neg ? 'minus' : 'plus'
+          }
         }
       }
       if (isLast && vulgarEnd >= 0 && !vulgarRead) {
@@ -2149,6 +2159,14 @@ export function scan(
           alternates.push({ value: decimalString(neg, sub.int, sub.frac, 0), scale: sub.frac.length })
           ambiguity = ambiguity ?? 'suffix'
         }
+        if (dashSign && (ambiguity === undefined || ambiguity === 'separator' || ambiguity === 'suffix')) {
+          // "\u20133.2%": positive as written, negative if the dash was a minus. Neither reading may trace on its own.
+          const readings = [{ value: tok.value, scale: tok.scale }, ...alternates]
+          for (const r of readings) {
+            if (r.value !== '0' && !r.value.startsWith('-')) alternates.push({ value: `-${r.value}`, scale: r.scale })
+          }
+          ambiguity = 'sign'
+        }
         if (vulgarRead && isLast && sub.int !== '' && ambiguity === 'fraction') {
           // "3½": 3.5, or the 3 the fraction character was dropped from.
           alternates.push({ value: decimalString(neg, sub.int, '', exp10), scale: -exp10 })
@@ -2179,7 +2197,7 @@ export function scan(
       tok.end = rawEnd
       tok.raw = text.slice(rawStart, rawEnd)
       // The same words written the same way in the evidence vouch for these (like a fraction written 3/4 twice).
-      if (ambiguity === 'magnitude' || ambiguity === 'currency' || (vulgarRead && isLast)) tok.groupRaw = tok.raw
+      if (ambiguity === 'magnitude' || ambiguity === 'currency' || ambiguity === 'sign' || (vulgarRead && isLast)) tok.groupRaw = tok.raw
       if (signStyle !== undefined) tok.signStyle = signStyle
       if (parenthesized) tok.parenthesized = true
       if (ambiguity !== undefined) {

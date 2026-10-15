@@ -52,7 +52,7 @@ import type {
 } from './types.js'
 
 const KINDS: readonly NumberKind[] = ['percent', 'currency', 'count', 'decimal', 'year', 'date-part', 'time', 'ordinal']
-const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long', 'magnitude', 'currency', 'meridiem', 'date']
+const AMBIGUITIES: readonly AmbiguityReason[] = ['separator', 'suffix', 'superscript', 'date-order', 'fraction', 'identifier', 'too-long', 'magnitude', 'currency', 'meridiem', 'date', 'sign']
 const DERIVATIONS: readonly Derivation[] = ['sum', 'difference', 'ratio', 'percent-change', 'percent-of', 'average', 'product']
 const DATE_PARTS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 const MAX_LIST = 8
@@ -500,7 +500,7 @@ function addEnt(ev: Evidence, ent: Ent, weak: boolean): void {
 function weakPrimary(t: NumberToken): boolean {
   if (t.localeGuess === true) return true
   return (
-    t.ambiguous && (t.ambiguity === 'fraction' || t.ambiguity === 'identifier' || t.ambiguity === 'magnitude' || t.ambiguity === 'currency' || t.ambiguity === 'date' || t.ambiguity === 'separator') &&
+    t.ambiguous && (t.ambiguity === 'fraction' || t.ambiguity === 'identifier' || t.ambiguity === 'magnitude' || t.ambiguity === 'currency' || t.ambiguity === 'date' || t.ambiguity === 'sign' || t.ambiguity === 'separator') &&
     (t.ambiguity !== 'separator' || t.alternates === undefined || t.alternates.length === 0)
   )
 }
@@ -1658,7 +1658,7 @@ function traceOne(
   const mantissa = mantissaAt(dec.n < 0n ? { n: -dec.n, s: dec.s } : dec, tok.scale)
   if (mantissa === null) return unknownTrace(tok, 'unrepresentable')
 
-  if ((tok.ambiguity === 'fraction' || tok.ambiguity === 'magnitude' || tok.ambiguity === 'currency' || tok.ambiguity === 'date') && tok.groupRaw !== undefined) {
+  if ((tok.ambiguity === 'fraction' || tok.ambiguity === 'magnitude' || tok.ambiguity === 'currency' || tok.ambiguity === 'date' || tok.ambiguity === 'sign') && tok.groupRaw !== undefined) {
     // The same fraction (or the same unread phrase) written the same way vouches for it.
     const same = ev.groupRaw.get(tok.groupRaw, key)
     if (same !== undefined && same.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(same) }
@@ -1684,7 +1684,7 @@ function traceOne(
       linksVia(tok, tok.scale, outNeg, mantissa, key, ['strong', 'weak'], true, variants, ev, matcher, ctx) ||
       alternateLinks(tok, variants, ev, matcher, ctx)
     ) {
-      return unknownTrace(tok, 'ambiguous-reading')
+      return unknownTrace(tok, tok.ambiguity === 'sign' ? 'ambiguous-sign' : 'ambiguous-reading')
     }
     // An incomplete derivation search stays unknown.
     if (ctx.derivations.size > 0 && matcher.capHit) return unknownTrace(tok, 'candidate-cap')

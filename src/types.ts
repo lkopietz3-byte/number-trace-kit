@@ -25,6 +25,7 @@ export type AmbiguityReason =
   | 'currency'
   | 'meridiem'
   | 'date'
+  | 'sign'
 
 /** How a negative or explicitly signed number was written. */
 export type SignStyle = 'minus' | 'plus' | 'parentheses'

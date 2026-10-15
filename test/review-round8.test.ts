@@ -307,3 +307,51 @@ describe('S7 false-pass:F07: whole-date checks beyond English month names', () =
     expect(extractNumbers('5 Mrz 2026', { locale: 'ja-JP' }).map((t) => t.ambiguous)).toEqual([false, false])
   })
 })
+
+describe('S8 false-pass:F12: a leading en dash may be a minus, and +/- is a tolerance', () => {
+  const rows = (text: string): string[] => extractNumbers(text).map((t) => `${t.raw}=${t.value}${t.ambiguity === undefined ? '' : `/${t.ambiguity}`}`)
+
+  it('S8 false-pass:F12 an en dash glued to a number is an ambiguous sign, never a silent positive', () => {
+    const r = traceNumbers('Change –3.2%', 'Change 3.2%')
+    expect(r.verdict).toBe('unknown')
+    expect(r.numbers[0]).toMatchObject({ status: 'unknown', reason: 'ambiguous-sign' })
+    expect(verdict('Change –3.2%', 'Change -3.2%')).toBe('unknown')
+    expect(verdict('Change –3.2%', 'Change −3.2%')).toBe('unknown')
+    expect(verdict('Change –3.2%', 'Change 7.9%')).toBe('untraced')
+    // The same text copied from the source is not a guess.
+    expect(verdict('Change –3.2%', 'Change –3.2%')).toBe('clean')
+    expect(verdict('(–3.2%)', '(–3.2%)')).toBe('clean')
+    expect(extractNumbers('Change –3.2%')[0]).toMatchObject({ raw: '–3.2%', value: '3.2', ambiguous: true, ambiguity: 'sign', alternates: [{ value: '-3.2' }] })
+  })
+
+  it('S8 false-pass:F12 a range with an en dash is unchanged', () => {
+    expect(rows('5–8%')).toEqual(['5=5', '8%=8'])
+    expect(rows('5 – 8%')).toEqual(['5=5', '8%=8'])
+    expect(rows('10–12 kg')).toEqual(['10=10', '12 kg=12'])
+    expect(rows('$5–$8')).toEqual(['$5=5', '$8=8'])
+    expect(rows('Oct 5–7')).toEqual(['Oct=10', '5=5', '7=7'])
+    expect(rows('-5–-3%')).toEqual(['-5=-5', '-3%=-3'])
+    expect(verdict('Growth of 5–8%.', 'Growth of 5% to 8%.')).toBe('clean')
+  })
+
+  it('S8 false-pass:F12 other dashes keep their meaning', () => {
+    expect(rows('Change -3.2%')).toEqual(['-3.2%=-3.2'])
+    expect(rows('Change −3.2%')).toEqual(['−3.2%=-3.2'])
+    expect(rows('Change ‑3.2%')).toEqual(['‑3.2%=-3.2'])
+    expect(rows('Change —3.2%')).toEqual(['3.2%=3.2'])
+    expect(rows('item–5')).toEqual(['5=5'])
+  })
+
+  it('S8 false-pass:F12 +/- and +- are read like ±', () => {
+    expect(rows('Accuracy is ±5%')).toEqual(['5%=5'])
+    expect(rows('Accuracy is +/-5%')).toEqual(['5%=5'])
+    expect(rows('Accuracy is +-5%')).toEqual(['5%=5'])
+    expect(rows('Accuracy is +/−5%')).toEqual(['5%=5'])
+    expect(rows('Accuracy is +/–5%')).toEqual(['5%=5'])
+    expect(verdict('Accuracy is ±5%', 'Accuracy is +/-5%')).toBe('clean')
+    expect(verdict('Accuracy is +/-5%', 'Accuracy is 5%')).toBe('clean')
+    expect(verdict('Accuracy is +/-5%', 'Accuracy is 6%')).toBe('untraced')
+    // A plain minus after a plus elsewhere is still a minus.
+    expect(rows('+5 and -5')).toEqual(['+5=5', '-5=-5'])
+  })
+})
