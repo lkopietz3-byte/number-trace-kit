@@ -165,6 +165,30 @@ const FORMS: ReadonlyArray<(rnd: Rng) => Variant[]> = [
       { text: n.replace(/\d/g, (d) => String.fromCharCode(0xff10 + Number(d))) },
     ]
   },
+  // Times of day, in 12-hour and 24-hour forms.
+  (r) => {
+    const t = pick(r, [['6pm', '18:00', '6:00 PM', '18:0', '6 p.m.'], ['9:30 AM', '09:30', '9:30am', '9:30 a.m.'], ['12 PM', '12:00', '12:00 pm'], ['12 AM', '00:00', '0:00', '12:00 AM']] as const)
+    return t.map((text) => ({ text }))
+  },
+  // The same date in other languages, with hyphens and with East Asian markers.
+  (r) => {
+    const day = pick(r, ['5', '14', '28'])
+    const pad = day.padStart(2, '0')
+    return [
+      { text: `${day} mars 2026`, locale: 'fr-FR' },
+      { text: `${day}. März 2026`, locale: 'de-DE' },
+      { text: `${day} de marzo de 2026`, locale: 'es-ES' },
+      { text: `${day} marzo 2026`, locale: 'it-IT' },
+      { text: `${day} maart 2026`, locale: 'nl-NL' },
+      { text: `${day}-Mar-2026` },
+      { text: `Mar-${pad}-2026` },
+      { text: `2026年3月${day}日` },
+      { text: `2026-03-${pad}` },
+    ]
+  },
+  () => [{ text: '\u00b15%' }, { text: '+/-5%' }, { text: '+-5%' }],
+  () => [{ text: 'the 1990s' }, { text: 'the 1990s' }],
+  () => [{ text: '800 m\u00b2' }, { text: '800 m2' }, { text: '800m2' }],
   () => [{ text: '31/12/2026' }, { text: '2026-12-31' }, { text: 'December 31, 2026' }, { text: '31 December 2026' }],
   () => [{ text: 'Sept. 5th, 2026' }, { text: '2026-09-05' }, { text: 'September 5 2026' }],
   () => [{ text: '13.10.2026', locale: 'de-DE' }, { text: '2026-10-13', locale: 'en-US' }],
@@ -357,7 +381,7 @@ function statuses(r: TraceResult): string[] {
   return r.numbers.map((n) => n.status)
 }
 
-const WEAK_REASONS = ['fraction', 'superscript', 'too-long', 'date-order', 'identifier']
+const WEAK_REASONS = ['fraction', 'superscript', 'too-long', 'date-order', 'identifier', 'magnitude', 'currency', 'date', 'sign']
 
 /** A token whose primary reading is a guess or part of something the kit does not evaluate. */
 function isWeak(t: NumberToken): boolean {
@@ -367,7 +391,7 @@ function isWeak(t: NumberToken): boolean {
 function classOf(t: NumberToken): string {
   return t.kind === 'percent' ? (t.unit === 'pp' ? 'pp' : 'pct')
     : t.kind === 'currency' ? `cur:${t.currency ?? ''}`
-      : t.kind === 'date-part' ? 'date' : 'plain'
+      : t.kind === 'date-part' ? 'date' : t.kind === 'time' ? 'time' : 'plain'
 }
 
 function canon(v: string): string {

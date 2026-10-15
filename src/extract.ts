@@ -807,7 +807,7 @@ export function scan(
             } else if (h >= 1 && h <= 12 && !(a === 2 && at(i) === 0x30)) {
               alt = h === 12 ? mi : minutes + 720
             }
-            const t = makeToken(slice(i, end), i, end, String(minutes), 0, 'time')
+            const t = makeToken(text.slice(i, end), i, end, String(minutes), 0, 'time')
             if (mer !== null) t.unit = mer.unit
             if (end > stop) {
               t.ambiguous = true

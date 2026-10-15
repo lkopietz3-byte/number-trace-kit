@@ -129,6 +129,13 @@ describe('S2 field:F2: clock times are read as minutes of the day', () => {
     expect(verdict('at 8:30:15 PM', 'at 8:30:15 AM')).not.toBe('clean')
   })
 
+  it('S2 field:F2 a time written with full-width digits keeps its own text and reads the same', () => {
+    const t = extractNumbers('at \uff11\uff12:\uff13\uff14 \uff30\uff2d')[0]
+    expect(t).toMatchObject({ kind: 'time', value: '754' })
+    expect('at \uff11\uff12:\uff13\uff14 \uff30\uff2d'.slice(t?.start, t?.end)).toBe(t?.raw)
+    clean('at \uff11\uff12:\uff13\uff14', 'at 12:34')
+  })
+
   it('S2 field:F2 a time is read, never computed, and a bare number still does not clear 5pm', () => {
     expect(verdict('Open until 5pm.', 'Ask about 3 and 2.', { preset: 'report' })).toBe('untraced')
     const r = traceNumbers('Open until 5pm.', '{"review_stars": 5.0}')

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (sweep of the new forms)
+
+- A time of day written with full-width digits (`１２:３４`) now keeps its own text as `raw` (it held the folded ASCII text, so the offsets did not slice back to it). The seeded sweep gained forms for times of day, the same date in seven languages, hyphen and East Asian dates, `+/-`, decades and square units, and its independent oracle knows the `time` kind and the weak readings added in this round (`magnitude`, `currency`, `date`, `sign`).
+
 ### Changed (L1: coarse rounding)
 
 - A whole number that ends in zeros and is a rounding of evidence at hundreds, thousands and so on (`About 1,200` from `1,234`, `Nearly 80%` from `78.4%`, `Over 10,000` from `10,432`) is `unknown` with the new reason `coarse-rounding`, not `untraced` (false-pass:F13): the honest paraphrase no longer fails while `1.2K` was accepted. `1,300` against `1,234` is still `untraced`, and so is `100` against `90`: the rounding place has to be below the evidence number's leading digit. It only ever turns a failure into `unknown`. The labeled benchmark is unchanged for the default, `strict`, `report` and `allowBareEvidence` runs, and the field corpus has the same 96 of 106 unsupported numbers caught.
