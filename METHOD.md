@@ -46,8 +46,9 @@ Number statuses: `traced` (same class and exact value), `rounded` (evidence roun
 | `parenthesesAreNegative: true` | accounting prints losses in parentheses, but a bare `(2)` or `(2024)` is left alone | `false` |
 | `evidenceScale`, `evidenceCurrency`: none | the kit never guesses a scale from a header such as "(in thousands)"; you say it | set them, or `scale` and `currency` on an evidence document |
 | `evidenceOrder: 'oldest-first'` | the direction of a change follows the order the evidence mentions the numbers | `'newest-first'` for tables that list the later period first |
+| `checkIdentifiers: false` | identifiers (`Q3`, `5G`, `v2.1`) are names, not numbers, so they are skipped and listed without changing the verdict; a wrong quarter passes if the numbers around it trace | `true`: an identifier the evidence text does not contain is `unknown` (`not-in-evidence`) |
 | nothing ignored | an ignore hides real errors | `ignore`, `ignoreKinds`, `ignoreYears`, `ignoreStructure`, `ignoreSmallIntegersUpTo`, `ignorePattern` |
-| size limits (text 5,000,000 UTF-16 units, 1,000,000 array items, 50,000,000 evidence characters, 500,000 evidence numbers) | bounded memory and time on untrusted input; over the limit is a `RangeError`, not a partial answer | `maxEvidenceNumbers` lowers the evidence-number limit; the others are fixed |
+| size limits (text 5,000,000 UTF-16 units, 1,000,000 array items, 50,000,000 evidence characters, 500,000 evidence numbers, 500,000 output numbers) | bounded memory and time on untrusted input; over the limit is a `RangeError`, not a partial answer | `maxEvidenceNumbers` and `maxOutputNumbers` lower their limits; the others are fixed |
 | unknown option names are a `RangeError` | a typo must not silently turn a check off | fix the name |
 | `reconcile`: tolerance `'0'`, floats are a `TypeError` | totals are exact; a float is not | `tolerance`, `allowFloat: true` knowingly |
 

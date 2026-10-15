@@ -15,7 +15,7 @@ import {
   toRat,
 } from './decimal.js'
 import type { Dec, Rat } from './decimal.js'
-import { NumberLimitError, scan } from './extract.js'
+import { NumberLimitError, scan, skippedFormsOf } from './extract.js'
 import type { SkipRecord } from './extract.js'
 import {
   MAX_TEXT_LENGTH,
@@ -272,6 +272,8 @@ interface Ctx {
   readonly ignoreSmall: number
   readonly ignoreStructure: boolean
   readonly maxEvidenceNumbers: number
+  readonly maxOutputNumbers: number
+  readonly checkIdentifiers: boolean
   readonly pattern: RegExp | null
 }
 
@@ -384,6 +386,7 @@ function readContext(options: unknown): Ctx {
       'preset', 'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates', 'maxOperands', 'maxEvidenceNumbers',
       'maxDerivationMatches', 'maxDerivationDensity', 'roundSums', 'evidenceOrder', 'evidenceScale', 'evidenceCurrency', 'evidenceScaleApplies', 'allowBareOutput',
       'allowBareEvidence', 'signMode', 'ignore', 'ignoreKinds', 'ignoreYears', 'ignoreSmallIntegersUpTo', 'ignoreStructure', 'ignorePattern',
+      'checkIdentifiers', 'maxOutputNumbers',
     ] as const,
     'traceNumbers',
   )
@@ -418,6 +421,8 @@ function readContext(options: unknown): Ctx {
   }
   const maxCandidates = readInteger(o['maxCandidates'], 'maxCandidates', 1, 1_000_000, DEFAULT_MAX_CANDIDATES)
   const maxEvidenceNumbers = readInteger(o['maxEvidenceNumbers'], 'maxEvidenceNumbers', 1, MAX_EVIDENCE_NUMBERS, MAX_EVIDENCE_NUMBERS)
+  const maxOutputNumbers = readInteger(o['maxOutputNumbers'], 'maxOutputNumbers', 1, MAX_EVIDENCE_NUMBERS, MAX_EVIDENCE_NUMBERS)
+  const checkIdentifiers = readBoolean(o['checkIdentifiers'], 'checkIdentifiers', false)
   const maxOperands = readInteger(o['maxOperands'], 'maxOperands', 2, 3, 2) as 2 | 3
   const signMode = o['signMode'] === undefined ? 'explicit' : o['signMode']
   if (signMode !== 'explicit' && signMode !== 'magnitude' && signMode !== 'strict') {
@@ -465,7 +470,7 @@ function readContext(options: unknown): Ctx {
   return {
     loc, evLoc, parenNeg, derivations, modes, maxCandidates, maxOperands, signMode, allowBare, allowBareOut, maxMatches, maxDensity,
     roundSums, newestFirst: order === 'newest-first', evScale, evCurrency, evScaleCurrency,
-    ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, ignoreStructure, maxEvidenceNumbers, pattern,
+    ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, ignoreStructure, maxEvidenceNumbers, maxOutputNumbers, checkIdentifiers, pattern,
   }
 }
 
@@ -483,6 +488,8 @@ interface Evidence {
   readonly weakAll: Ent[]
   /** Every whole date in the evidence, under each subset of its parts (year, month, day, hour, minute, second). */
   readonly dateKeys: Map<string, EvidenceRef[]>
+  /** The text of every stretch the scanner passed over in the evidence (identifiers and unread forms), to vouch for the same text in the output. */
+  readonly forms: Set<string>
   readonly count: number
 }
 
@@ -671,7 +678,7 @@ function applyHints(token: NumberToken, exp: number, currency: string | undefine
 function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
   const ev: Evidence = {
     strong: new Index(), weak: new Index(), groupRaw: new GroupIndex(), dateAny: new Index(),
-    dateUnknown: new Index(), byValue: new Index(), all: [], weakAll: [], dateKeys: new Map(), count: 0,
+    dateUnknown: new Index(), byValue: new Index(), all: [], weakAll: [], dateKeys: new Map(), forms: new Set(), count: 0,
   }
   let count = 0
   let textTotal = 0
@@ -690,7 +697,10 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
   /** Scan one evidence text, stopping as soon as the evidence as a whole holds too many numbers. */
   const scanEvidence = (body: string): NumberToken[] => {
     try {
-      return scan(body, ctx.evLoc, ctx.parenNeg, true, null, ctx.maxEvidenceNumbers - count)
+      const skips: SkipRecord[] = []
+      const tokens = scan(body, ctx.evLoc, ctx.parenNeg, true, skips, ctx.maxEvidenceNumbers - count)
+      for (const rec of skips) ev.forms.add(body.slice(rec.start, rec.end))
+      return tokens
     } catch (e) {
       if (e instanceof NumberLimitError) throw tooManyNumbers()
       throw e
@@ -1611,14 +1621,31 @@ export function traceNumbers(
   const ctx = readContext(options)
   let tokens: readonly NumberToken[]
   let outText: string | null = null
+  let formTexts: readonly { readonly raw: string }[] | null = null
   const skips: SkipRecord[] = []
   if (typeof output === 'string') {
     if (output.length > MAX_TEXT_LENGTH) throw new RangeError(`output has ${output.length} characters; the limit is ${MAX_TEXT_LENGTH}.`)
     outText = output
-    tokens = scan(output, ctx.loc, ctx.parenNeg, false, skips)
+    try {
+      tokens = scan(output, ctx.loc, ctx.parenNeg, false, skips, ctx.maxOutputNumbers)
+    } catch (e) {
+      if (e instanceof NumberLimitError) {
+        throw new RangeError(`output has more than ${ctx.maxOutputNumbers} numbers; split it (the maxOutputNumbers option can raise the limit to ${MAX_EVIDENCE_NUMBERS} or lower it).`, { cause: e })
+      }
+      throw e
+    }
   } else {
     if (!Array.isArray(output)) throw new TypeError(`output must be a string or an array of tokens, got ${describe(output)}.`)
     const items = snapshotArray(output, 'output')
+    if (items.length > ctx.maxOutputNumbers) {
+      throw new RangeError(`output has ${items.length} numbers; the limit is ${ctx.maxOutputNumbers} (the maxOutputNumbers option).`)
+    }
+    // The array extractNumbers returned, unchanged, carries the forms it passed over.
+    const forms = skippedFormsOf(output, items)
+    if (forms !== null) {
+      for (const f of forms) skips.push({ start: f.start, end: f.end, reason: f.reason })
+      formTexts = forms
+    }
     tokens = items.map((item, i) => {
       if (!isRecord(item)) throw new TypeError(`output[${i}] must be a number token, got ${describe(item)}.`)
       const { token } = readToken(item, `output[${i}]`)
@@ -1647,11 +1674,14 @@ export function traceNumbers(
   }
   // Digits the scanner passed over. A glued form it cannot read is never a pass: it makes the verdict unknown.
   let unreadForms = 0
-  const skipped: SkippedNumber[] = skips.map((rec) => {
-    const raw = (outText ?? '').slice(rec.start, rec.end)
+  const skipped: SkippedNumber[] = skips.map((rec, k) => {
+    const raw = formTexts !== null ? (formTexts[k]?.raw ?? '') : (outText ?? '').slice(rec.start, rec.end)
     const covered = rec.reason === 'unread-glued-form' && skipIgnored(raw, rec.start, rec.end, outText, ctx)
-    const reason = covered ? 'ignored' : rec.reason
-    if (reason === 'unread-glued-form') unreadForms++
+    // The same text in the evidence vouches for an unread form, as it does for an unreadable magnitude word.
+    let reason: SkippedNumber['reason'] = covered ? 'ignored' : rec.reason
+    if (reason === 'unread-glued-form' && ev.forms.has(raw)) reason = 'in-evidence'
+    else if (reason === 'identifier' && ctx.checkIdentifiers) reason = ev.forms.has(raw) ? 'in-evidence' : 'not-in-evidence'
+    if (reason === 'unread-glued-form' || reason === 'not-in-evidence') unreadForms++
     return { raw, start: rec.start, end: rec.end, reason }
   })
   let unitUnverified = 0

@@ -691,7 +691,28 @@ export function extractNumbers(text: string, options?: ExtractOptions): NumberTo
   const opts = readOptions(options, ['locale', 'parenthesesAreNegative'] as const, 'extractNumbers')
   const info = resolveLocale(opts.locale)
   const parenNeg = readBoolean(opts.parenthesesAreNegative, 'parenthesesAreNegative', true)
-  return scan(text, info, parenNeg)
+  const skips: SkipRecord[] = []
+  const tokens = scan(text, info, parenNeg, false, skips)
+  // The forms the scanner passed over are remembered against this very array, so tracing it can report them.
+  EXTRACTED.set(tokens, { tokens: tokens.slice(), skipped: skips.map((r) => ({ raw: text.slice(r.start, r.end), start: r.start, end: r.end, reason: r.reason })) })
+  return tokens
+}
+
+/** A stretch of the text that was passed over, with its text. */
+export interface SkippedForm extends SkipRecord {
+  readonly raw: string
+}
+
+/** What `extractNumbers` passed over, by the array it returned. An array that was copied or changed is not found here. */
+const EXTRACTED = new WeakMap<object, { readonly tokens: readonly NumberToken[]; readonly skipped: readonly SkippedForm[] }>()
+
+/** The forms `extractNumbers` skipped when it returned exactly these tokens, in this order; otherwise null. */
+export function skippedFormsOf(array: unknown, items: readonly unknown[]): readonly SkippedForm[] | null {
+  if (typeof array !== 'object' || array === null) return null
+  const found = EXTRACTED.get(array)
+  if (found === undefined || found.tokens.length !== items.length) return null
+  for (let k = 0; k < items.length; k++) if (items[k] !== found.tokens[k]) return null
+  return found.skipped
 }
 
 /**
@@ -1297,8 +1318,12 @@ export function scan(
   /** Where the last recorded skip ended, so two skips never overlap. */
   let skipFloor = 0
   /** Pass over [a, b): keep its digits as weak evidence and, if asked, record it as skipped. */
+  // Skipped forms that left no weak token behind (a circled digit): they count toward the limit as well.
+  let bareSkips = 0
   const skip = (a: number, b: number, reason: SkipKind): void => {
+    const held = idTokens.length
     noteIdentifier(a, b)
+    if (idTokens.length === held) bareSkips++
     // Nothing read later may reach back into a stretch that was passed over ("500CA$25": the CA is the skip's).
     // This holds for evidence and output alike, so the same text always reads the same numbers.
     floor = Math.max(floor, b)
@@ -2127,7 +2152,7 @@ export function scan(
   let i = 0
   while (i < n) {
     // Stop as soon as the text has more numbers than allowed, before the rest of it is read and stored.
-    if (out.length + idTokens.length > maxTokens) throw new NumberLimitError(`The text has more than ${maxTokens} numbers.`)
+    if (out.length + idTokens.length + bareSkips > maxTokens) throw new NumberLimitError(`The text has more than ${maxTokens} numbers.`)
     const c = f[i] ?? 0
     if (c < 0x30 || c > 0x39) {
       if (VULGAR_FRACTIONS.has(c)) {
@@ -2167,6 +2192,8 @@ export function scan(
     }
     i = handle(i)
   }
+  // The last number of the text may be the one that crosses the limit.
+  if (out.length + idTokens.length + bareSkips > maxTokens) throw new NumberLimitError(`The text has more than ${maxTokens} numbers.`)
 
   /** True when a decimal mark at `m + 1` has nothing but a boundary before it: ".5", "$.99", "-.25". */
   function leadingMarkBoundary(m: number, mark: number): boolean {

@@ -6,8 +6,9 @@ import type { TraceOptions } from '../src/index.js'
 // (gate-review, gate-false-pass or gate-hostile) and was seen failing before its fix.
 
 type Evidence = Parameters<typeof traceNumbers>[1]
-const verdict = (output: string, evidence: Evidence, options?: TraceOptions): string => traceNumbers(output, evidence, options).verdict
-const trace = (output: string, evidence: Evidence, options?: TraceOptions): ReturnType<typeof traceNumbers> =>
+type Output = Parameters<typeof traceNumbers>[0]
+const verdict = (output: Output, evidence: Evidence, options?: TraceOptions): string => traceNumbers(output, evidence, options).verdict
+const trace = (output: Output, evidence: Evidence, options?: TraceOptions): ReturnType<typeof traceNumbers> =>
   traceNumbers(output, evidence, options)
 
 describe('gate-review:F01 and gate-hostile:G06 a parenthesized negative against positive evidence', () => {
@@ -701,5 +702,115 @@ describe('gate-false-pass:G5-F10 gate-review:F16 ignoreStructure skips structure
     }
     expect(verdict('12. Revenue $5 million.', 'Revenue $5 million.', o)).toBe('clean')
     expect(verdict('Revenue was $5 million [150].', 'Revenue $5 million.', o)).toBe('clean')
+  })
+})
+
+describe('gate-hostile:G17 gate-review:F02 an unread form that the evidence writes the same way', () => {
+  it('gate-hostile:G17 the same unread text in the output and the evidence is vouched for, a different one is not', () => {
+    const same = trace('Fee is Rs1,500.', 'The fee: Rs1,500 due.')
+    expect(same.verdict).toBe('clean')
+    expect(same.skipped.map((s) => [s.raw, s.reason])).toEqual([['Rs1,500', 'in-evidence']])
+    expect(trace('Fee is Rs1,500.', 'The fee: Rs1,200 due.').verdict).toBe('unknown')
+    expect(trace('Fee is Rs1,500.', 'The fee: 1,500 due.').verdict).toBe('unknown')
+    expect(verdict('Value 12foo here', 'Value 12foo there')).toBe('clean')
+    expect(verdict('Value 12foo here', 'Value 13foo there')).toBe('unknown')
+  })
+
+  it('gate-hostile:G01 gate-false-pass:G5-F12 a compound quantity and a week of the year copied from the evidence trace', () => {
+    expect(verdict('Runtime is 2h45m.', 'Runtime is 2h45m.')).toBe('clean')
+    expect(verdict('Runtime is 2h45m.', 'Runtime is 2h50m.')).toBe('unknown')
+    expect(verdict('Shipped 2026-W10.', 'Shipped 2026-W10.')).toBe('clean')
+    expect(verdict('Shipped 2026-W10.', 'Shipped 2026-W11.')).toBe('unknown')
+    expect(verdict('Fee AED1,500 due', 'Fee AED1,500 due')).toBe('clean')
+  })
+
+  it('gate-hostile:G17 an ignore still works, and evidence given as tokens cannot vouch', () => {
+    expect(trace('Fee is Rs1,500.', 'x', { ignore: ['Rs1,500'] }).skipped.map((s) => s.reason)).toEqual(['ignored'])
+    expect(trace('Fee is Rs1,500.', extractNumbers('The fee: Rs1,500 due.')).verdict).toBe('unknown')
+  })
+})
+
+describe('gate-false-pass:G5-F07 gate-review:F05 the identifiers in the output can be checked against the evidence', () => {
+  const pairs: [string, string][] = [
+    ['Q3 revenue was $5M.', 'Q4 revenue was $5M.'], ['FY26 revenue was $5M.', 'FY27 revenue was $5M.'], ['FY2026 revenue was $5M.', 'FY2027 revenue was $5M.'],
+    ['H1 revenue was $5M.', 'H2 revenue was $5M.'], ['Latency p99 was low.', 'Latency p95 was low.'],
+    ['It supports 5G.', 'It supports 4G.'], ['It runs on V8.', 'It runs on V6.'], ['It is 1080p.', 'It is 720p.'], ['The F-150 sold.', 'The F-250 sold.'],
+    ['Uses GPT-4 here.', 'Uses GPT-5 here.'], ['Uses Llama-3.1-70B here.', 'Uses Llama-3.1-8B here.'], ['See clause 4.1.2.', 'See clause 4.1.3.'],
+    ['Host 10.0.0.1 is up.', 'Host 10.0.0.2 is up.'], ['See cell B7.', 'See cell B9.'], ['An iPhone15 sold.', 'An iPhone14 sold.'],
+  ]
+  it.each(pairs)('gate-false-pass:G5-F07 %s against %s', (output, evidence) => {
+    expect(verdict(output, evidence)).toBe('clean')
+    const r = trace(output, evidence, { checkIdentifiers: true })
+    expect(r.verdict).toBe('unknown')
+    expect(r.skipped.map((s) => s.reason)).toContain('not-in-evidence')
+    expect(verdict(output, output, { checkIdentifiers: true })).toBe('clean')
+    expect(trace(output, output, { checkIdentifiers: true }).skipped.map((s) => s.reason)).toContain('in-evidence')
+  })
+
+  it('gate-false-pass:G5-F07 1H26 is read as a time (1:26), so a different half-year is not clean even without the option', () => {
+    expect(verdict('1H26 revenue was $5M.', '2H26 revenue was $5M.')).not.toBe('clean')
+  })
+
+  it('gate-review:F05 a wrong quarter next to a right amount is the case it exists for', () => {
+    expect(verdict('In Q2 revenue was $5 million.', 'In Q3 revenue was $5 million.', { checkIdentifiers: true })).toBe('unknown')
+    expect(verdict('In Q3 revenue was $5 million.', 'In Q3 revenue was $5 million.', { checkIdentifiers: true })).toBe('clean')
+  })
+
+  it('gate-false-pass:G5-F07 it is off by default, and evidence given as tokens cannot be compared, so every identifier is unknown', () => {
+    expect(verdict('Q3 revenue was $5M.', 'Q4 revenue was $5M.')).toBe('clean')
+    expect(verdict('Q3 revenue was $5M.', extractNumbers('Q3 revenue was $5M.'), { checkIdentifiers: true })).toBe('unknown')
+  })
+
+  it('gate-false-pass:G5-F07 the option is a boolean', () => {
+    expect(() => traceNumbers('1', '1', { checkIdentifiers: 'yes' as unknown as boolean })).toThrow(TypeError)
+  })
+})
+
+describe('gate-review:F11 gate-hostile:G05 gate-review:F18 tokens from extractNumbers keep their skipped forms', () => {
+  it.each([['The fee is Rs1,500.'], ['The fee is 12foo.'], ['The total is 𝟓𝟎.'], ['The fee is 2h45m.']])('gate-hostile:G05 %s is unknown as a string and as tokens', (text) => {
+    const asString = trace(text, 'The fee is 500 dollars.')
+    const asTokens = trace(extractNumbers(text), 'The fee is 500 dollars.')
+    expect(asString.verdict).toBe('unknown')
+    expect(asTokens.verdict).toBe('unknown')
+    expect(asTokens.counts.skipped).toBe(1)
+    expect(asTokens.skipped).toEqual(asString.skipped)
+  })
+
+  it('gate-review:F11 an array that is not the one extractNumbers returned has no skipped forms to report', () => {
+    const tokens = extractNumbers('The fee is Rs1,500 and 7.')
+    expect(trace(tokens, 'x 7').verdict).toBe('unknown')
+    expect(trace([...tokens], 'x 7').verdict).toBe('clean')
+    expect(trace(tokens.filter((t) => t.value === '7'), 'x 7').verdict).toBe('clean')
+  })
+
+  it('gate-review:F11 an ignore covers the form for tokens too', () => {
+    expect(trace(extractNumbers('The fee is Rs1,500.'), 'x', { ignore: ['Rs1,500'] }).verdict).toBe('clean')
+  })
+})
+
+describe('gate-hostile:G20 a bound on the numbers in the output', () => {
+  it('gate-hostile:G20 more numbers than maxOutputNumbers is a RangeError, thrown while reading', () => {
+    expect(() => traceNumbers('1 2 3 4 5 6 7 8 9 10 11', 'x', { maxOutputNumbers: 10 })).toThrow(RangeError)
+    expect(traceNumbers('1 2 3 4 5 6 7 8 9 10', '1 2 3 4 5 6 7 8 9 10', { maxOutputNumbers: 10 }).verdict).toBe('clean')
+    expect(() => traceNumbers(extractNumbers('1 2 3 4 5 6 7 8 9 10 11'), 'x', { maxOutputNumbers: 10 })).toThrow(RangeError)
+  })
+
+  it('gate-hostile:G20 the default is 500,000 numbers and the scan stops there, however long the text is', () => {
+    const cpu = (text: string): number => {
+      const before = process.cpuUsage()
+      expect(() => traceNumbers(text, '1')).toThrow(RangeError)
+      const spent = process.cpuUsage(before)
+      return (spent.user + spent.system) / 1000
+    }
+    const short = cpu('1 '.repeat(500_001))
+    const long = cpu('1 '.repeat(2_400_000))
+    // A scan that read all of it would cost about 4.8 times as much.
+    expect(long / Math.max(short, 50)).toBeLessThan(2.5)
+  }, 120_000)
+
+  it('gate-hostile:G20 the option is an integer from 1 to 500,000', () => {
+    expect(() => traceNumbers('1', '1', { maxOutputNumbers: 0 })).toThrow(RangeError)
+    expect(() => traceNumbers('1', '1', { maxOutputNumbers: 500_001 })).toThrow(RangeError)
+    expect(() => traceNumbers('1', '1', { maxOutputNumbers: 1.5 })).toThrow(TypeError)
   })
 })

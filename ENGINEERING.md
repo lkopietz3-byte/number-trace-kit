@@ -115,6 +115,8 @@ source entry is `src/index.ts`; the package export resolves to generated
   currency matches) have no prototype (`noProto`), so a polluted `Object.prototype`
   (`ignoreSmallIntegersUpTo`, `tolerance`, `text`, `amount`, `unit`, `currency`) cannot
   change a verdict. Returned tokens have no prototype for the same reason.
+- **The output is bounded too.** `maxOutputNumbers` (default and maximum 500,000) stops the scan of an output text the moment it holds more numbers
+  and skipped forms; a 5,000,000-character text of single digits would otherwise be millions of tokens.
 - **Text policy.** ASCII, full-width and every BMP script's decimal digits are
   numbers (folded one code unit to one code unit); digits outside the BMP are
   not. Numbers glued to Latin letters on the left, or to unknown Latin letters

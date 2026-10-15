@@ -204,6 +204,18 @@ export interface TraceOptions {
    * so a loss restated as income needs a person. `magnitude`: signs are ignored.
    */
   readonly signMode?: SignMode
+  /**
+   * Check the names, versions and codes the output skips (`Q3`, `FY26`, `5G`, `GPT-4`, `10.0.0.1`) against the evidence text:
+   * one that the evidence does not contain, written exactly the same way, makes the verdict `unknown` (listed in `skipped`
+   * as `not-in-evidence`). Default false: identifiers are skipped and listed, and do not change the verdict. Needs evidence
+   * given as text; evidence given as tokens has no text to compare, so every identifier is then `not-in-evidence`.
+   */
+  readonly checkIdentifiers?: boolean
+  /**
+   * Most numbers the output text may hold, 1 to 500,000 (also the default). More is a `RangeError`, thrown as soon as the
+   * limit is passed. The output is the untrusted side, and a 5,000,000-character text of single digits is millions of numbers.
+   */
+  readonly maxOutputNumbers?: number
   /** Output numbers to skip: exact raw text (string) or a plain value (number). */
   readonly ignore?: readonly (string | number)[]
   readonly ignoreKinds?: readonly NumberKind[]
@@ -273,10 +285,12 @@ export type TraceVerdict = 'clean' | 'untraced' | 'unknown'
 /**
  * Why a stretch of the output was left unread: `identifier` (a name, version or code such as
  * `X3`, `v2.1`, `5G`), `unread-glued-form` (a number glued to letters the kit does not know,
- * such as `12foo` or `Rs1,500`; the verdict cannot be `clean`) or `ignored` (an unread form
- * that your `ignore` or `ignorePattern` option covers).
+ * such as `12foo` or `Rs1,500`; the verdict cannot be `clean`), `ignored` (an unread form
+ * that your `ignore` or `ignorePattern` option covers), `in-evidence` (an unread form, or with `checkIdentifiers` an
+ * identifier, that the evidence text writes exactly the same way) or `not-in-evidence` (with `checkIdentifiers`, an
+ * identifier that the evidence text does not contain; the verdict cannot be `clean`).
  */
-export type SkipReason = 'identifier' | 'unread-glued-form' | 'ignored'
+export type SkipReason = 'identifier' | 'unread-glued-form' | 'ignored' | 'in-evidence' | 'not-in-evidence'
 
 /** A stretch of the output text that holds digits the kit did not read as a number. */
 export interface SkippedNumber {
@@ -302,7 +316,8 @@ export interface TraceResult {
   readonly numbers: readonly NumberTrace[]
   /**
    * Digits in the output text that were not read as numbers: identifiers, and glued forms the
-   * kit cannot read. Empty when the output was given as tokens. An `unread-glued-form` entry
+   * kit cannot read. Filled when the output was given as text, or as the array `extractNumbers` returned, unchanged;
+   * empty for any other array of tokens. An `unread-glued-form` entry (and a `not-in-evidence` one)
    * makes the verdict `unknown` unless a number is `untraced`.
    */
   readonly skipped: readonly SkippedNumber[]
