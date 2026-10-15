@@ -655,3 +655,51 @@ describe('gate-hostile:G02 a percent sign before the number', () => {
     expect(extractNumbers('q=a%20b and =%3D and /%20').map((t) => t.kind)).not.toContain('percent')
   })
 })
+
+describe('gate-false-pass:G5-F09 a displayed 0 or 1 that only a rounding builds (report preset)', () => {
+  const report = { preset: 'report' as const }
+  it('gate-false-pass:G5-F09 a claim of zero is not supported by a ratio that rounds to zero', () => {
+    const r = trace('There were 0 incidents.', 'Take 1 tablet (10 mg) once daily. Do not exceed 20 mg in 24 hours.', report)
+    expect(r.verdict).toBe('unknown')
+    expect(r.numbers[0]).toMatchObject({ status: 'unknown', reason: 'coarse-derivation' })
+  })
+
+  it.each([
+    ['There were 0 incidents.', 'It took 15 min and then 40 min.'],
+    ['There were 0 incidents.', 'The plans cost $29 and $99.'],
+    ['There were 1 incidents.', 'The fee is 5% on $10.'],
+    ['There were 0 incidents.', 'The fee is 5% on $10.'],
+  ])('gate-false-pass:G5-F09 %s is not clean against %s', (output, evidence) => {
+    expect(verdict(output, evidence, report)).not.toBe('clean')
+  })
+
+  it('gate-false-pass:G5-F09 an exact derivation and a number shown with more digits are unchanged', () => {
+    expect(trace('The difference is 1.', 'Counts were 10 and 9.', report).numbers[0]?.status).toBe('derived')
+    expect(trace('Share is 0.5.', 'Counts were 10 and 20.', report).numbers[0]?.status).toBe('derived')
+    expect(verdict('There were 0 incidents.', 'There were 0 incidents.', report)).toBe('clean')
+  })
+})
+
+describe('gate-false-pass:G5-F10 gate-review:F16 ignoreStructure skips structure, not counts, figures and sections', () => {
+  const o = { ignoreStructure: true }
+  it.each([
+    ['Under Section 230 platforms are not liable.', 'Under Section 203 platforms are not liable.'],
+    ['In Section 12 it is stated.', 'In Section 13 it is stated.'],
+    ['See Figure 450 for details.', 'See Figure 45 for details.'],
+    ['250. Revenue was high.', 'Revenue was high.'],
+    ['Sales figures 240 for the quarter.', 'Sales figures 300 for the quarter.'],
+    ['Questions 15 respondents said yes.', 'Questions 20 respondents said yes.'],
+    ['Options 400 customers chose it.', 'Options 300 customers chose it.'],
+    ['Steps 120 were completed.', 'Steps 100 were completed.'],
+  ])('gate-false-pass:G5-F10 %s is untraced against %s', (output, evidence) => {
+    expect(verdict(output, evidence, o)).toBe('untraced')
+  })
+
+  it('gate-false-pass:G5-F10 the labels of the answer itself are still skipped', () => {
+    for (const label of ['Step 4', 'Passage 12', 'Figure 2', 'Option 3', 'Question 7', 'Fig. 2', 'step 4']) {
+      expect(verdict(`In ${label}, revenue was $5 million.`, 'Revenue $5 million.', o), label).toBe('clean')
+    }
+    expect(verdict('12. Revenue $5 million.', 'Revenue $5 million.', o)).toBe('clean')
+    expect(verdict('Revenue was $5 million [150].', 'Revenue $5 million.', o)).toBe('clean')
+  })
+})

@@ -166,8 +166,13 @@ describe('S3 false-pass:F15: ignoreStructure skips list markers, citation number
     expect(verdict('Revenue was $5 million [3].', 'Revenue $5 million.', o)).toBe('clean')
     expect(verdict('Revenue was $5 million [1, 2].', 'Revenue $5 million.', o)).toBe('clean')
     expect(verdict('Revenue was $5 million [1-3].', 'Revenue $5 million.', o)).toBe('clean')
-    for (const label of ['Step 4', 'Passage 12', 'Figure 2', 'Option 3', 'Question 7', 'Section 5', 'Fig. 2', 'step 4', 'Passages 2']) {
+    for (const label of ['Step 4', 'Passage 12', 'Figure 2', 'Option 3', 'Question 7', 'Fig. 2', 'step 4']) {
       expect(verdict(`In ${label}, revenue was $5 million.`, 'Revenue $5 million.', o), label).toBe('clean')
+    }
+    // gate-false-pass:G5-F10 and gate-review:F16: "Section 5" is a legal citation and "Passages 2" a count, so neither is
+    // structure any more (the row used to list both as skipped).
+    for (const label of ['Section 5', 'Passages 2']) {
+      expect(verdict(`In ${label}, revenue was $5 million.`, 'Revenue $5 million.', o), label).toBe('untraced')
     }
   })
 

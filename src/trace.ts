@@ -1509,9 +1509,8 @@ function isWholeNumberAtMost(value: string, limit: number): boolean {
   return Number(value) <= limit
 }
 
-const STRUCTURE_WORDS: ReadonlySet<string> = new Set([
-  'step', 'steps', 'passage', 'passages', 'figure', 'figures', 'fig', 'option', 'options', 'question', 'questions', 'section', 'sections',
-])
+// Singular labels only: "figures 240", "options 400" and "questions 15" are counts, and "Section 230" is a legal citation.
+const STRUCTURE_WORDS: ReadonlySet<string> = new Set(['step', 'passage', 'figure', 'fig', 'option', 'question'])
 
 function isSpaceCode(c: number): boolean {
   return c === 0x20 || c === 0x09 || c === 0xa0
@@ -1520,20 +1519,23 @@ function isSpaceCode(c: number): boolean {
 /**
  * A number that labels the answer's own structure and makes no claim: a list marker ("1." or "2)" at the start of
  * a line, after an optional bullet), a bracket citation ("[3]", "[1, 2]", "[1-3]") or the number of a step, passage,
- * figure, option, question or section ("Step 4"; "Section 50(1)" is a legal citation and is checked). Only a plain whole number of at most three digits can be one.
+ * figure, option or question ("Step 4"; "Section 230" and "Section 50(1)" are legal citations and are checked). Only a plain whole number of at most
+ * three digits can be one, and a list marker or a label has at most two.
  * Every scan is bounded, so this costs a constant amount per number.
  */
 function isStructureNumber(tok: NumberToken, text: string): boolean {
   if (tok.kind !== 'count' || tok.unit !== undefined || tok.ambiguous || tok.signStyle !== undefined) return false
   const len = tok.end - tok.start
   if (len < 1 || len > 3 || tok.end > text.length) return false
+  // A list marker and a label are one or two digits; only a bracket citation may have three ("[150]").
+  const short = len <= 2
   for (let i = tok.start; i < tok.end; i++) {
     const c = text.charCodeAt(i)
     if (c < 0x30 || c > 0x39) return false
   }
   const after = tok.end < text.length ? text.charCodeAt(tok.end) : -1
   // "1. text", "2) text": a marker at the start of a line.
-  if ((after === 0x2e || after === 0x29) && tok.end + 1 < text.length) {
+  if (short && (after === 0x2e || after === 0x29) && tok.end + 1 < text.length) {
     const next = text.charCodeAt(tok.end + 1)
     if (next === 0x20 || next === 0x09 || next === 0x0a || next === 0x0d || next === 0xa0) {
       let p = tok.start - 1
@@ -1559,15 +1561,14 @@ function isStructureNumber(tok: NumberToken, text: string): boolean {
   }
   // "Step 4", "Figure 2", "Fig. 2", "Passage 12".
   let q = tok.start - 1
-  if (q >= 0 && isSpaceCode(text.charCodeAt(q))) {
+  if (short && q >= 0 && isSpaceCode(text.charCodeAt(q))) {
     while (q >= 0 && isSpaceCode(text.charCodeAt(q)) && q > tok.start - 4) q--
     if (q >= 0 && text.charCodeAt(q) === 0x2e) q--
     let w = q
     while (w >= 0 && q - w < 10 && isLetterCode(text.charCodeAt(w))) w--
     if (w < q && !(w >= 0 && isLetterCode(text.charCodeAt(w)))) {
       const word = text.slice(w + 1, q + 1).toLowerCase()
-      // "Section 50(1)" is a legal citation, a claim that can be invented; a lone "Section 4" points into the answer.
-      if (STRUCTURE_WORDS.has(word) && !(word.startsWith('section') && after === 0x28)) return true
+      if (STRUCTURE_WORDS.has(word)) return true
     }
   }
   return false
@@ -1782,6 +1783,11 @@ function traceOne(
       // A ratio rounded to a single digit ("5") lands on a candidate by chance: ratios of unrelated numbers cluster
       // among small integers, and one digit says too little to tell a derivation from luck.
       if (!hit.exact && hit.cand.kind === 'ratio' && mantissa > 0n && mantissa < 10n) return unknownTrace(tok, 'coarse-derivation')
+      // A whole number 0 or 1 that only a rounding builds (a ratio of 0.5, 5% of $10, a 0.4% change) is the same: a claim
+      // of zero or one is the one most worth checking, and some derivation of a page of numbers rounds to it by chance.
+      if (!hit.exact && mantissa < 2n && tok.scale <= 0 && hit.cand.kind !== 'average' && hit.cand.kind !== 'sum' && hit.cand.kind !== 'difference') {
+        return unknownTrace(tok, 'coarse-derivation')
+      }
       const detail: DerivationDetail = {
         kind: hit.cand.kind,
         operands: hit.cand.operands.map((o) => o.ref),

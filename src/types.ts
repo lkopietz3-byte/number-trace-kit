@@ -214,7 +214,8 @@ export interface TraceOptions {
   /**
    * Skip the numbers that label the answer's own structure and make no claim: list markers (`1.`, `2)` at the
    * start of a line, after an optional bullet), bracket citations (`[3]`, `[1, 2]`, `[1-3]`) and the number
-   * after Step, Passage, Figure, Option, Question or Section. Plain whole numbers of up to three digits only.
+   * after the singular Step, Passage, Figure, Option or Question. Plain whole numbers: one or two digits for a marker
+   * or a label, up to three for a bracket citation. `Section 230` and `figures 240` are checked.
    * Default off. Unlike `ignoreSmallIntegersUpTo`, it does not hide a wrong small count (`7 offices`).
    */
   readonly ignoreStructure?: boolean
