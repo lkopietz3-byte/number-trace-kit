@@ -355,3 +355,67 @@ describe('S8 false-pass:F12: a leading en dash may be a minus, and +/- is a tole
     expect(rows('+5 and -5')).toEqual(['+5=5', '-5=-5'])
   })
 })
+
+describe('S9 docs-release:F1 docs-release:F2 hostile:F7 hostile:F10: error messages and locale tags', () => {
+  it('S9 docs-release:F1 an array of strings as evidence says how to fix it', () => {
+    expect(() => traceNumbers('5', ['5'] as never)).toThrow(TypeError)
+    expect(() => traceNumbers('5', ['5'] as never)).toThrow(/evidence\[0\] must be a \{ id, text \} object or a number token, got string\. Wrap each string as \{ id, text \}, or join the strings into one string\./)
+    expect(() => traceNumbers('5', [5] as never)).toThrow(/evidence\[0\] must be a \{ id, text \} object or a number token, got number\./)
+  })
+
+  it('S9 docs-release:F2 a wrong type for evidence or output says what is valid', () => {
+    expect(() => (traceNumbers as (o: string) => unknown)('5')).toThrow('evidence must be a string or an array of { id, text } documents or tokens')
+    expect(() => traceNumbers('5', 5 as never)).toThrow('evidence must be a string or an array of { id, text } documents or tokens')
+    expect(() => traceNumbers(5 as never, '5')).toThrow('output must be a string or an array of tokens')
+    expect(() => traceNumbers({} as never, '5')).toThrow('output must be a string or an array of tokens')
+    expect(() => traceNumbers(['5'] as never, '5')).toThrow(/output\[0\] must be a number token, got string/)
+  })
+
+  it('S9 hostile:F7 a bare hi locale reads Indian grouping, as the platform prints it', () => {
+    expect(extractNumbers('12,34,567.89', { locale: 'hi' }).map((t) => [t.value, t.ambiguous])).toEqual([['1234567.89', false]])
+    expect(verdict('Total 12,34,567.89', 'Total 1234567.89', { locale: 'hi' })).toBe('clean')
+    expect(verdict('Total 12,34,567.89', 'Total 1234567.89', { locale: 'hi-IN' })).toBe('clean')
+    // Western grouping still reads under hi.
+    expect(extractNumbers('1,234,567.89', { locale: 'hi' })[0]?.value).toBe('1234567.89')
+  })
+
+  it('S9 hostile:F7 numbers as the platform prints them read back exactly, in every region of every supported language', () => {
+    const langs = 'de fr es it pt nl ru pl sv da nb nn no fi cs sk sl hr ro hu bg tr id vi el uk sr lt lv et en ja zh ko he th hi ms fil ga cy'.split(' ')
+    const regions = ['', 'US', 'GB', 'IN', 'CH', 'LI', 'MX', 'ZA', 'BR', 'PT', 'AT', 'CA', 'AU', 'DE', 'FR', 'ES', 'JP', 'CN', 'TW', 'AE', 'EG', 'BD', 'PK', 'NP', 'LK']
+    const numbers = [1234567.89, 1234.5, 12.5, 100000, 0.75, 1234567, 12345678.9, 99999.99, 4321.123]
+    let tags = 0
+    const bad: string[] = []
+    for (const lang of langs) {
+      for (const region of regions) {
+        const tag = region === '' ? lang : `${lang}-${region}`
+        const nf = new Intl.NumberFormat(tag, { maximumFractionDigits: 3 })
+        if (!nf.resolvedOptions().locale.toLowerCase().startsWith(lang)) continue
+        tags++
+        for (const n of numbers) {
+          const printed = nf.format(n)
+          const toks = extractNumbers(printed, { locale: tag })
+          const want = String(n)
+          const ok = toks.length === 1 && (toks[0]?.value === want || (toks[0]?.alternates ?? []).some((a) => a.value === want))
+          if (!ok) bad.push(`${tag}: ${printed} -> ${toks.map((t) => t.value).join('|')}`)
+        }
+      }
+    }
+    expect(tags).toBeGreaterThan(500)
+    expect(bad.slice(0, 5)).toEqual([])
+  })
+
+  it('S9 hostile:F10 a BCP 47 tag with a -u- extension is accepted, and another extension says why it is not', () => {
+    for (const tag of ['en-US-u-nu-latn', 'ja-JP-u-ca-japanese', 'en-US-u-hc-h12', 'de-u-nu-arab', 'hi-IN-u-nu-deva', 'fr_FR']) {
+      expect(() => extractNumbers('1', { locale: tag }), tag).not.toThrow()
+    }
+    // The extension keywords are not read as a region: nu is not a country.
+    expect(extractNumbers('1.234,5', { locale: 'de-u-nu-latn' })[0]).toMatchObject({ value: '1234.5', ambiguous: false })
+    expect(extractNumbers('1,234.5', { locale: 'en-u-nu-latn' })[0]).toMatchObject({ value: '1234.5', ambiguous: false })
+    expect(extractNumbers('1,234.5', { locale: 'en-u-ca-gregory-nu-latn' })[0]).toMatchObject({ value: '1234.5' })
+    expect(() => extractNumbers('1', { locale: 'en-US-x-private' })).toThrow(/"x" extension is not supported/)
+    expect(() => extractNumbers('1', { locale: 'en-t-fr' })).toThrow(/"t" extension is not supported/)
+    expect(() => extractNumbers('1', { locale: 'en-u' })).toThrow(RangeError)
+    expect(() => extractNumbers('1', { locale: 'zz-ZZ' })).toThrow(/language "zz" is not supported/)
+    expect(() => extractNumbers('1', { locale: 'e' })).toThrow(/not a language tag/)
+  })
+})

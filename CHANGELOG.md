@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (S9: messages and locales)
+
+- Evidence given as an array of strings (the natural shape for retrieved chunks) now says what to do: `evidence[0] must be a { id, text } object or a number token, got string. Wrap each string as { id, text }, or join the strings into one string.` A missing or wrong-typed `evidence` says `evidence must be a string or an array of { id, text } documents or tokens`, and a wrong `output` says `output must be a string or an array of tokens`; before, both said "must be an array" although a string is valid (docs-release:F1, docs-release:F2).
+- A bare `hi` locale (and `hi` with any region) reads Indian grouping: `12,34,567.89` was read as `12.34` and `567.89` (hostile:F7). Compared with the platform's own number formatting over 41 supported languages and about 250 regions, `hi` was the only language with a mismatch.
+- A locale tag with a Unicode extension (`en-US-u-nu-latn`, `de-u-nu-arab`) is accepted; before, the one-character `u` failed the tag pattern with a message that called a valid tag invalid. Other extensions (`-x-`, `-t-`) are rejected with a message that names the extension, and the locale error no longer echoes the whole caller string (hostile:F10).
+
 ### Fixed (S8: sign glyphs)
 
 - A leading en dash (`–3.2%`) is no longer read as an unsigned positive that traces to `3.2%` with nothing flagged (false-pass:F12). It is `ambiguous` with the new reason `sign` (read as positive, the negative as the alternate) and traces to `unknown` with the new reason `ambiguous-sign` against `3.2%` and `-3.2%` alike; the same text in the evidence (`–3.2%`) still traces, and ranges (`5–8%`) are unchanged. `+/-5%` and `+-5%` used to read as `-5%`; they now read like `±5%`: `5%`, no sign. New `AmbiguityReason` `sign`.

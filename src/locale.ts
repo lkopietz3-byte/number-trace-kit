@@ -33,12 +33,32 @@ const DEFAULT: LocaleInfo = { language: 'en', decimal: 0x2e, order: 'MDY', india
 export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
   if (locale === undefined) return DEFAULT
   if (typeof locale !== 'string') throw new TypeError(`${name} must be a string such as "en-US", got ${typeof locale}.`)
-  if (locale.length > 35 || !/^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})*$/.test(locale)) {
-    throw new RangeError(`${name} "${locale}" is not a language tag such as "en-US" or "de-DE".`)
+  if (locale.length > 35 || !/^[A-Za-z]{2,3}([-_][A-Za-z0-9]{1,8})*$/.test(locale)) {
+    throw new RangeError(`${name} is not a language tag such as "en-US" or "de-DE" (at most 35 characters).`)
   }
-  const tag = locale.toLowerCase().replace(/_/g, '-')
-  const language = tag.split('-')[0] ?? tag
-  const region = tag.split('-').find((part, i) => i > 0 && /^[a-z]{2}$/.test(part))
+  const parts = locale.toLowerCase().split(/[-_]/)
+  const language = parts[0] ?? ''
+  // Language, then script, region and variants, up to the first extension (a one-character subtag).
+  let end = parts.length
+  for (let i = 1; i < parts.length; i++) {
+    if (parts[i]?.length === 1) {
+      end = i
+      break
+    }
+  }
+  if (end < parts.length) {
+    // "en-US-u-nu-latn", "ja-JP-u-ca-japanese": the Unicode extension holds calendar, hour-cycle and digit choices.
+    // The kit reads every digit script it knows whatever "nu" says, so the keywords change nothing here.
+    const singleton = parts[end] ?? ''
+    if (singleton !== 'u') {
+      throw new RangeError(`${name}: the "${singleton.slice(0, 1)}" extension is not supported; use a language-region tag such as "en-US", with or without a -u- extension.`)
+    }
+    if (parts.length === end + 1 || parts.slice(end + 1).some((p) => p.length === 1 || p.length < 2)) {
+      throw new RangeError(`${name}: the -u- extension needs keywords of two to eight characters, such as "nu-latn".`)
+    }
+  }
+  const head = parts.slice(1, end)
+  const region = head.find((part) => /^[a-z]{2}$/.test(part))
   const regional = region === undefined ? language : `${language}-${region}`
   let decimal: number
   if (DOT_REGIONS.has(regional)) decimal = 0x2e
@@ -47,9 +67,10 @@ export function resolveLocale(locale: unknown, name = 'locale'): LocaleInfo {
   else if (COMMA_DECIMAL.has(language)) decimal = 0x2c
   else {
     throw new RangeError(
-      `${name} "${locale}": language "${language}" is not supported. Supported languages: ${SUPPORTED_LANGUAGES.join(', ')}.`,
+      `${name}: language "${language}" is not supported. Supported languages: ${SUPPORTED_LANGUAGES.join(', ')}.`,
     )
   }
   const order: DateOrder = MDY_REGIONS.has(regional) ? 'MDY' : 'DMY'
-  return { language, decimal, order, indian: region === 'in', apostrophe: region === 'ch' || region === 'li' }
+  // The platform groups Hindi in lakhs and crores whatever the region ("hi", "hi-US"), and English in India.
+  return { language, decimal, order, indian: region === 'in' || language === 'hi', apostrophe: region === 'ch' || region === 'li' }
 }

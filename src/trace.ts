@@ -720,6 +720,9 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     const whole = takeText(evidence)
     feed(scanEvidence(whole), () => 'evidence', whole)
   } else {
+    if (!Array.isArray(evidence)) {
+      throw new TypeError(`evidence must be a string or an array of { id, text } documents or tokens, got ${describe(evidence)}.`)
+    }
     const items = snapshotArray(evidence, 'evidence')
     // Tokens a caller extracted come one by one; the ones that follow each other in one
     // document are fed together so a date written as several tokens is one date.
@@ -736,7 +739,12 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
       batchDoc = undefined
     }
     items.forEach((item, index) => {
-      if (!isRecord(item)) throw new TypeError(`evidence[${index}] must be a { id, text } object or a number token.`)
+      if (!isRecord(item)) {
+        throw new TypeError(
+          `evidence[${index}] must be a { id, text } object or a number token, got ${describe(item)}.` +
+            (typeof item === 'string' ? ' Wrap each string as { id, text }, or join the strings into one string.' : ''),
+        )
+      }
       const text = getOwn(item, 'text')
       if (text !== undefined) {
         flush()
@@ -1564,9 +1572,10 @@ export function traceNumbers(
     outText = output
     tokens = scan(output, ctx.loc, ctx.parenNeg, false, skips)
   } else {
+    if (!Array.isArray(output)) throw new TypeError(`output must be a string or an array of tokens, got ${describe(output)}.`)
     const items = snapshotArray(output, 'output')
     tokens = items.map((item, i) => {
-      if (!isRecord(item)) throw new TypeError(`output[${i}] must be a number token.`)
+      if (!isRecord(item)) throw new TypeError(`output[${i}] must be a number token, got ${describe(item)}.`)
       const { token } = readToken(item, `output[${i}]`)
       if (token.ambiguity !== 'too-long' && token.kind !== 'date-part' && mantissaAt(parseDecimal(token.value), token.scale) === null) {
         throw new TypeError(`output[${i}]: value ${token.value} does not fit scale ${token.scale}.`)
