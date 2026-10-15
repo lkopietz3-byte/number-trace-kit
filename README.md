@@ -31,7 +31,7 @@ traceNumbers(output, evidence, { preset: 'report', maxCandidates: 200_000, evide
 - **`strict`**: no derivations, no unit leniency. A number is traced, rounded, untraced or unknown. Use it when the evidence states every figure the output may use.
 - **`report`**: every derivation (`sum`, `difference`, `ratio`, `percent-change`, `percent-of`, `average`, `product`), rounded sums and differences (`roundSums`), a bare number matching a currency figure in either direction and a percent or amount matching an evidence number with no unit at all (`allowBareEvidence`, `allowBareOutput`: `Churn was 120%` traces to `We have 120 employees`, marked `unitUnverified` and counted in `counts.unitUnverified`), a candidate cap of 50,000, and the coincidence guard (`maxDerivationMatches: 3`, `maxDerivationDensity: 0.5`): a derived number that can be built in more than three ways, or that sits in a crowded neighborhood of buildable values, is `unknown` (`derivation-too-likely`), not `derived`. On a page with a hundred numbers almost any percent can be built from two of them; the guard keeps that from reading as support.
 
-The pattern for tables: set `scale` and `currency` on the evidence document that holds the table (`{ id, text, scale: 'thousand', currency: 'USD' }`), or `evidenceScale` and `evidenceCurrency` for string evidence. The kit never guesses a scale from a header such as "(in thousands)"; you say it. See Options.
+The pattern for tables: set `scale` and `currency` on the evidence document that holds the table (`{ id, text, scale: 'thousand', currency: 'USD' }`), or `evidenceScale` and `evidenceCurrency` for string evidence. A table in millions that also prints `$` on its first row and its totals (`$ 1,577`) needs `scaleApplies: 'bare-and-currency'` (`evidenceScaleApplies` for string evidence); the default scales only bare cells. The kit never guesses a scale from a header such as "(in thousands)"; you say it. See Options.
 
 ## Worked example
 
@@ -197,6 +197,7 @@ A skipped entry with the reason `identifier` (`X3`, `v2.1`, `iPhone15`, `5G`, `3
 | `maxDerivationDensity` | `0.5` | a derived number whose neighborhood has this many candidates per displayed value, or more, is `unknown` (`derivation-too-likely`) |
 | `roundSums` | `false` | let `sum` and `difference` match after display rounding |
 | `evidenceOrder` | `oldest-first` | `newest-first` for tables that list the later period first |
+| `evidenceScaleApplies` | `bare` | `bare-and-currency` also scales cells that print a currency without a magnitude; a document can set its own `scaleApplies` |
 | `evidenceScale`, `evidenceCurrency` | none | scale (`thousand`, `million`, `billion`, `trillion` or an exponent of ten) and currency code of the bare numbers in string evidence; a document can set its own `scale` and `currency` |
 | `allowBareOutput` | `false` | let a bare output number match an evidence amount that has a currency (`5,829 million` against `$5,829 million`), marked `unitUnverified` |
 | `rounding` | `['half-up', 'half-even']` | accepted rounding modes; `[]` means exact matches only (exact derivations such as a sum still work) |
@@ -211,7 +212,7 @@ A skipped entry with the reason `identifier` (`X3`, `v2.1`, `iPhone15`, `5G`, `3
 | `ignoreStructure` | off | skip list markers, bracket citations and step or figure labels; see below |
 | `ignorePattern` | none | a `RegExp`; see below |
 
-Scale and currency hints apply to the bare numbers of a document: counts and decimals with no unit, percent sign or magnitude of their own. Percents, years, dates and numbers like `$3 million` are left alone. `{ id: 'tbl', text: 'Revenue (in thousands)\n2019 | 5,735', scale: 'thousand', currency: 'USD' }` makes `5,735` read as `$5,735,000`, so `$5,735 thousand` traces and `$5.7 million` rounds from it. A table that prints `$` on its first row only is the same pattern with `currency: 'USD'`.
+Scale and currency hints apply to the bare numbers of a document: counts and decimals with no unit, percent sign or magnitude of their own. Percents, years, dates and numbers like `$3 million` are left alone. `{ id: 'tbl', text: 'Revenue (in thousands)\n2019 | 5,735', scale: 'thousand', currency: 'USD' }` makes `5,735` read as `$5,735,000`, so `$5,735 thousand` traces and `$5.7 million` rounds from it. A table that prints `$` on its first row only is the same pattern with `currency: 'USD'`, but only for its bare cells: a cell that already prints the `$` (`$ 1,577`, `$ (1,577)`) is a currency amount and is not rescaled unless the document sets `scaleApplies: 'bare-and-currency'` (a cell with its own magnitude, `$1.5 billion`, is never rescaled).
 
 `evidence` is one string, or an array whose items are `{ id, text, scale?, currency? }` documents and/or pre-extracted tokens (`NumberToken`, optionally with `evidenceId`). Tokens are validated; a malformed one is a `TypeError`. `evidenceOrder` flips only the direction of changes, ratios and percents; sums, products and averages do not depend on it.
 

@@ -188,3 +188,45 @@ describe('S3 false-pass:F15: ignoreStructure skips list markers, citation number
     expect(traceNumbers(toks, 'Revenue $5 million.', { ignoreStructure: true }).verdict).toBe('untraced')
   })
 })
+
+describe('S4 field:F5: the evidence scale reaches currency-tagged cells when asked', () => {
+  const doc = (text: string, extra: Record<string, unknown> = {}): { id: string; text: string } => ({
+    id: 'cf', text, scale: 'million', currency: 'USD', ...extra,
+  }) as { id: string; text: string }
+  const table = 'Capital expenditures | $ 1,577 | 1,400\nDepreciation | 900 | 800'
+
+  it('S4 field:F5 with scaleApplies the first-row and total cells with a $ are scaled like the bare ones', () => {
+    for (const cell of ['$ 1,577', '$1,577', '$ (1,577)', '($1,577)']) {
+      const evidence = [doc(`Capital expenditures | ${cell} | 1,400\nDepreciation | 900 | 800`, { scaleApplies: 'bare-and-currency' })]
+      expect(verdict('Capital expenditures were $1,577 million.', evidence), cell).toBe('clean')
+      expect(verdict('Depreciation was $900 million.', evidence), cell).toBe('clean')
+      expect(verdict('Capital expenditures were $1,578 million.', evidence), cell).toBe('untraced')
+    }
+  })
+
+  it('S4 field:F5 by default only bare cells are scaled, as before', () => {
+    expect(verdict('Capital expenditures were $1,577 million.', [doc(table)])).toBe('untraced')
+    expect(verdict('Depreciation was $900 million.', [doc(table)])).toBe('clean')
+    expect(verdict('Capital expenditures were $1,577 million.', [doc(table, { scaleApplies: 'bare' })])).toBe('untraced')
+  })
+
+  it('S4 field:F5 a cell that already has a magnitude, a percent or a unit is never rescaled', () => {
+    const evidence = [doc('Debt | $1.5 billion | 12.5% | 30 days', { scaleApplies: 'bare-and-currency' })]
+    expect(verdict('Debt was $1.5 billion.', evidence)).toBe('clean')
+    expect(verdict('Debt was $1,500 trillion.', evidence)).toBe('untraced')
+    expect(verdict('Margin was 12.5%.', evidence)).toBe('clean')
+  })
+
+  it('S4 field:F5 string evidence takes evidenceScaleApplies, and a bad value is a RangeError', () => {
+    expect(verdict('Capex was $1,577 million.', 'Capex | $ 1,577', { evidenceScale: 'million', evidenceCurrency: 'USD', evidenceScaleApplies: 'bare-and-currency' })).toBe('clean')
+    expect(verdict('Capex was $1,577 million.', 'Capex | $ 1,577', { evidenceScale: 'million', evidenceCurrency: 'USD' })).toBe('untraced')
+    expect(() => traceNumbers('1', [doc('1', { scaleApplies: 'all' })])).toThrow(RangeError)
+    expect(() => traceNumbers('1', '1', { evidenceScaleApplies: 'all' as unknown as 'bare' })).toThrow(RangeError)
+  })
+
+  it('S4 field:F5 a euro cell in a table of millions is scaled too, and stays euros', () => {
+    const evidence = [doc('Revenue | €5,200', { scaleApplies: 'bare-and-currency' })]
+    expect(verdict('Revenue was €5,200 million.', evidence)).toBe('clean')
+    expect(verdict('Revenue was $5,200 million.', evidence)).toBe('untraced')
+  })
+})

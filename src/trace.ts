@@ -247,6 +247,8 @@ interface Ctx {
   readonly newestFirst: boolean
   readonly evScale: number
   readonly evCurrency: string | undefined
+  /** Apply the evidence scale to cells that print a currency, not only to bare cells. */
+  readonly evScaleCurrency: boolean
   readonly ignoreRaw: ReadonlySet<string>
   readonly ignoreKeys: ReadonlySet<string>
   readonly ignoreKinds: ReadonlySet<NumberKind>
@@ -334,6 +336,13 @@ function scaleExponent(value: unknown, name: string): number {
   throw new RangeError(`${name} must be thousand, million, billion, trillion or an exponent of ten from 0 to 12.`)
 }
 
+/** `scaleApplies`: `'bare'` (the default) scales only bare cells, `'bare-and-currency'` also the cells that print a currency. */
+function scaleAppliesFlag(value: unknown, name: string): boolean {
+  if (value === 'bare') return false
+  if (value === 'bare-and-currency') return true
+  throw new RangeError(`${name} must be "bare" or "bare-and-currency".`)
+}
+
 function currencyCode(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value)) throw new RangeError(`${name} must be a three-letter currency code such as "USD".`)
   return value
@@ -356,7 +365,7 @@ function readContext(options: unknown): Ctx {
     options,
     [
       'preset', 'locale', 'evidenceLocale', 'parenthesesAreNegative', 'derivations', 'rounding', 'maxCandidates', 'maxOperands',
-      'maxDerivationMatches', 'maxDerivationDensity', 'roundSums', 'evidenceOrder', 'evidenceScale', 'evidenceCurrency', 'allowBareOutput',
+      'maxDerivationMatches', 'maxDerivationDensity', 'roundSums', 'evidenceOrder', 'evidenceScale', 'evidenceCurrency', 'evidenceScaleApplies', 'allowBareOutput',
       'allowBareEvidence', 'signMode', 'ignore', 'ignoreKinds', 'ignoreYears', 'ignoreSmallIntegersUpTo', 'ignoreStructure', 'ignorePattern',
     ] as const,
     'traceNumbers',
@@ -406,6 +415,7 @@ function readContext(options: unknown): Ctx {
   if (order !== 'oldest-first' && order !== 'newest-first') throw new RangeError('evidenceOrder must be "oldest-first" or "newest-first".')
   const evScale = o['evidenceScale'] === undefined ? 0 : scaleExponent(o['evidenceScale'], 'evidenceScale')
   const evCurrency = o['evidenceCurrency'] === undefined ? undefined : currencyCode(o['evidenceCurrency'], 'evidenceCurrency')
+  const evScaleCurrency = o['evidenceScaleApplies'] === undefined ? false : scaleAppliesFlag(o['evidenceScaleApplies'], 'evidenceScaleApplies')
   const ignoreRaw = new Set<string>()
   const ignoreKeys = new Set<string>()
   if (o['ignore'] !== undefined) {
@@ -436,7 +446,7 @@ function readContext(options: unknown): Ctx {
   }
   return {
     loc, evLoc, parenNeg, derivations, modes, maxCandidates, maxOperands, signMode, allowBare, allowBareOut, maxMatches, maxDensity,
-    roundSums, newestFirst: order === 'newest-first', evScale, evCurrency,
+    roundSums, newestFirst: order === 'newest-first', evScale, evCurrency, evScaleCurrency,
     ignoreRaw, ignoreKeys, ignoreKinds, ignoreYears, ignoreSmall, ignoreStructure, pattern,
   }
 }
@@ -598,14 +608,25 @@ function addDateKeys(store: Map<string, EvidenceRef[]>, tuple: readonly string[]
 }
 
 /** An evidence number with the document's declared scale and currency applied to a bare table cell. */
-function applyHints(token: NumberToken, exp: number, currency: string | undefined): NumberToken {
+function applyHints(token: NumberToken, exp: number, currency: string | undefined, scaleCurrency: boolean): NumberToken {
   // Nothing is parsed for a token that is excluded, or for one that says its own magnitude (3 million, 4K, 5e-3).
   if (exp === 0 && currency === undefined) return token
   if (token.ambiguity === 'too-long' || token.ambiguity === 'superscript') return token
-  const bare =
-    (token.kind === 'count' || token.kind === 'decimal') && token.unit === undefined && token.scale >= 0 &&
-    token.magnitude === undefined && !weakPrimary(token)
-  if (!bare) return token
+  const plain = token.unit === undefined && token.scale >= 0 && token.magnitude === undefined && !weakPrimary(token)
+  const bare = (token.kind === 'count' || token.kind === 'decimal') && plain
+  // A cell that already prints its currency ("$ 1,577" on the first row and the totals of a table in millions)
+  // is in the table's scale too, when the caller says so; the currency it prints stays.
+  const priced = scaleCurrency && exp !== 0 && token.kind === 'currency' && plain
+  if (!bare && !priced) return token
+  if (priced) {
+    const d = parseDecimal(token.value)
+    const alternates = token.alternates?.map((a) => {
+      const ad = parseDecimal(a.value)
+      return { value: formatDec({ n: ad.n * 10n ** BigInt(exp), s: ad.s }), scale: a.scale - exp }
+    })
+    const base = { ...token, value: formatDec({ n: d.n * 10n ** BigInt(exp), s: d.s }), scale: token.scale - exp }
+    return alternates === undefined ? base : { ...base, alternates }
+  }
   const shift = (v: string): string => {
     const d = parseDecimal(v)
     return formatDec({ n: d.n * 10n ** BigInt(exp), s: d.s })
@@ -636,9 +657,10 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
     text: string | null,
     exp = ctx.evScale,
     currency = ctx.evCurrency,
+    scaleCurrency = ctx.evScaleCurrency,
   ): void => {
     for (const t of tokens) {
-      ingest(ev, applyHints(t, exp, currency), idOf(t))
+      ingest(ev, applyHints(t, exp, currency, scaleCurrency), idOf(t))
       count++
     }
     for (const cluster of dateClusters(tokens)) {
@@ -699,6 +721,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
         const id = readString(item['id'], `evidence[${index}].id`)
         const docScale = item['scale']
         const docCurrency = item['currency']
+        const docApplies = item['scaleApplies']
         const body = takeText(readString(text, `evidence[${index}].text`))
         feed(
           scan(body, ctx.evLoc, ctx.parenNeg, true),
@@ -706,6 +729,7 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
           body,
           docScale === undefined ? ctx.evScale : scaleExponent(docScale, `evidence[${index}].scale`),
           docCurrency === undefined ? ctx.evCurrency : currencyCode(docCurrency, `evidence[${index}].currency`),
+          docApplies === undefined ? ctx.evScaleCurrency : scaleAppliesFlag(docApplies, `evidence[${index}].scaleApplies`),
         )
       } else {
         const { token, evidenceId } = readToken(item, `evidence[${index}]`)

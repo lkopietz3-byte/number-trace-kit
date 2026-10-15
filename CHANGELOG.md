@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (S4: scale hints for currency cells)
+
+- New evidence document field `scaleApplies` and option `evidenceScaleApplies`: `'bare'` (the default, unchanged) or `'bare-and-currency'`. With the second value an evidence `scale` also applies to cells that print a currency without a magnitude, so a 10-K table in millions that prints `$` on its first row and its totals (`$ 1,577`, `$1,577`, `$ (1,577)`) traces `Capital expenditures were $1,577 million`. A cell with its own magnitude, a percent or a unit is never rescaled, and a cell keeps the currency it prints. README's table paragraph no longer implies the default handles this case (field:F5).
+
 ### Added (S3: structure numbers)
 
 - New option `ignoreStructure` (default off, so nothing is ignored by default): it skips list markers (`1.`, `2)` at the start of a line, after an optional bullet, also at the very start of the text), bracket citations (`[3]`, `[1, 2]`, `[1-3]`) and the number after Step, Passage, Figure, Option, Question or Section. The skipped numbers are `ignored` with the reason `structure`. Plain whole numbers of up to three digits only, and only for text the kit scanned itself. `Section 50(1)` is a legal citation and is still checked: with a bare `Section N` rule an invented section number passed in the field corpus (RT-12765). Field check (RAGTruth, strict): 0 of 72 responses with an unsupported number came back clean, and 42 of 45 honest question-answering responses were clean (93%), against 21 of 45 without any ignore. The README now warns that `ignoreSmallIntegersUpTo` hides real small counts (3 of those 72 responses came back clean with it). (false-pass:F15, field:F4)

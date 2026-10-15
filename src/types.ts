@@ -103,6 +103,13 @@ export interface EvidenceDoc {
   readonly scale?: EvidenceScale
   /** The currency code of the bare numbers in this document (a table that prints `$` on its first row only). */
   readonly currency?: string
+  /**
+   * Which cells `scale` applies to. `'bare'` (the default): only numbers with no unit, currency or magnitude.
+   * `'bare-and-currency'`: also numbers that print a currency without a magnitude, because a table in millions
+   * often prints `$` on its first row and its totals only (`$ 1,577`, `$ (1,577)`). A number that carries
+   * its own magnitude (`$1.5 billion`) is never rescaled.
+   */
+  readonly scaleApplies?: 'bare' | 'bare-and-currency'
 }
 
 export type EvidenceScale = 'thousand' | 'million' | 'billion' | 'trillion' | number
@@ -163,6 +170,8 @@ export interface TraceOptions {
   readonly evidenceScale?: EvidenceScale
   /** The currency of the bare numbers in string evidence (and in documents that do not set their own). */
   readonly evidenceCurrency?: string
+  /** `scaleApplies` for string evidence and for documents that do not set their own. Default `'bare'`. */
+  readonly evidenceScaleApplies?: 'bare' | 'bare-and-currency'
   /**
    * Let a bare output number trace to an evidence amount that has a currency
    * (`5,829 million` against `$5,829 million`). Marked `unitUnverified`. Default false.
