@@ -1567,17 +1567,28 @@ export function scan(
     const c = at(m)
     if (c === -1) return true
     if (c === 0x20 || c === NBSP || c === 0x28) return true
-    if (mark === 0x2c) return false
+    if (mark === 0x2c) {
+      // A decimal comma (",5" under a comma-decimal locale) keeps the same boundaries after symbols
+      // and opening punctuation; after a letter, digit or closing punctuation it is a separator.
+      return (
+        c === 0x7e || c === 0x2248 || c === 0x7c || c === 0x23 || c === 0x5f || c === 0x60 || c === 0x2265 || c === 0x2264 ||
+        c === 0x201c || c === 0x2018 || c === 0x22 || c === 0x27 || c === 0x5b || c === 0x7b || c === 0x3c || c === 0x3e ||
+        c === 0x3d || c === 0x3a || c === 0x3b || c === 0x2f || c === 0x2a || c === 0x2d || c === 0x2b || c === 0x2013 ||
+        c === 0x2014 || CURRENCY_SYMBOLS.has(c)
+      )
+    }
     // An x or a multiplication sign right after a number: ".5x.7", "5 x.7".
     if (c === 0x78 || c === 0x58 || c === 0xd7) {
       let q = m - 1
       if (at(q) === 0x20 || at(q) === NBSP) q--
       return isDigit(at(q))
     }
-    return (
-      c === 0x2013 || c === 0x2014 || c === 0x5b || c === 0x7b || c === 0x3c || c === 0x3e || c === 0x22 || c === 0x27 || c === 0x2d || c === 0x2b ||
-      c === 0x3a || c === 0x3b || c === 0x3d || c === 0x2f || c === 0x2a || CURRENCY_SYMBOLS.has(c)
-    )
+    // Anything else keeps the point ("~.5", "|.99", "#.5", curly quotes), except where the point is
+    // punctuation: after a letter or digit ("item.5"), another point or an ellipsis ("wait...5"), or
+    // right after a number that ends there ("5%.5").
+    if (isDigit(c) || isLetter(c) || isMark(c) || c === 0x2e || c === 0x2026) return false
+    const prev = lastPlain()
+    return !(prev !== undefined && prev.end === m + 1)
   }
 
   function handle(d0: number): number {

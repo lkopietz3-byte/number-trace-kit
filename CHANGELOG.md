@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (S1: leading decimal point)
+
+- A leading decimal point survives the punctuation that used to drop it (false-pass:F08): `~.5%` is 0.5%, not 5%, and `≈.5`, `|.99`, `#.5`, `“.5”`, `_.5_` and the backtick forms read the same way, so `Growth was ~.5%` no longer traces to `Growth was 5%`. The point is kept unless a letter, a digit, another point or an ellipsis comes right before it, or a number ends right there (`item.5`, `5%.5`, `wait...5` are as before). A decimal comma after the same symbols (`~,5%`) keeps its mark too.
+
 ### Fixed (M2: "X to Y" is not always a range)
 
 - `Revenue increased 8% to $4.2 billion` no longer gives the 8 the magnitude of the amount (8,000,000,000 percent), and `Subscribers rose 8% to 1,200` no longer reads 1,200 as a percent, so `Sales grew 1,200%` no longer traces to it. A percent beside an amount or a measured unit is never one range, and in the spoken forms (`to`, a spaced en dash, `between ... and`) a percent is carried only backward onto a bare number (`5 to 8%`). Tight dashes (`5%-10`) and the range controls (`5 to 8%`, `$4 to 5 million`, `$5 to 10`) are unchanged. README Known limits now says exactly what is shared.
