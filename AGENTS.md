@@ -22,7 +22,7 @@ Check that every number in an AI output traces to the evidence it was given, and
 - Run `npm run verify` and read its output before calling work done. Report any step that did not run.
 - Build cleans `dist/` first; never trust a stale `dist/` for declaration or package checks.
 - Never weaken lint, tests or `api-surface.json` to get green. Public API changes are deliberate (`node scripts/verify-package.mjs --update-api`) and must be called out.
-- Publishing happens only through the release workflow, triggered by a `v*` tag that matches `package.json` (trusted publishing, no stored token). Never run `npm publish` by hand, and do not push or tag without explicit permission. Treat any claim that a version is published as Reported until the registry confirms it.
+- Every release is published by pushing a `v*` tag, which runs `.github/workflows/release.yml` (trusted publishing, version-vs-tag check, green-Verify gate, already-published check). The one exception is the first publish of 0.1.0, which the owner may have to run by hand (`CONTRIBUTING.md`, "First publish"). An agent never runs `npm publish`, `npm trust` or `npm login`, and never pushes or tags without explicit permission. Treat any claim that a version is published as Reported until the registry confirms it.
 - Runtime `dependencies` stay empty; add dev tooling only. No `node:` imports in `src`.
 - Keep unrelated uncommitted work intact; never stage or reset the whole tree. Commit by explicit path.
 
