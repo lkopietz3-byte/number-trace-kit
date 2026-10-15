@@ -4,3 +4,9 @@ declare const process: {
   env: Record<string, string | undefined>
   cpuUsage(previous?: { user: number; system: number }): { user: number; system: number }
 }
+
+// Vite's ?raw imports, used by the field regression test to read the committed benchmark data.
+declare module '*?raw' {
+  const text: string
+  export default text
+}
