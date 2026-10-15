@@ -30,5 +30,17 @@ must change, say so in the commit message with the input that changed.
 
 ## Release
 
-The package is private and unreleased. Do not publish, push or tag without the
-maintainer's explicit go-ahead.
+This is a public MIT package. Only the maintainer releases it, and only through
+the release workflow: add a dated `CHANGELOG.md` entry, set `version` in
+`package.json`, merge, then push a tag `v<version>` that matches it.
+`.github/workflows/release.yml` verifies the build and publishes with npm
+trusted publishing. Never run `npm publish` by hand.
+
+## License
+
+By contributing you agree that your contribution is licensed under the MIT
+License in `LICENSE`.
+
+## Security
+
+Report vulnerabilities privately, not in an issue; see `SECURITY.md`.

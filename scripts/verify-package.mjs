@@ -67,10 +67,14 @@ const forbidden = [
 ];
 const leaked = packed.filter((p) => forbidden.some((re) => re.test(p)));
 assert.deepEqual(leaked, [], `Tarball contains files that must not ship: ${leaked.join(', ')}`);
-for (const required of ['package.json', 'README.md']) {
+assert.notEqual(pkg.private, true, 'package.json must not be private: this is a public package');
+assert.equal(pkg.license, 'MIT', 'package.json license must be MIT');
+for (const required of ['package.json', 'README.md', 'LICENSE', 'CHANGELOG.md']) {
   assert.ok(packed.includes(required), `Tarball is missing ${required}`);
 }
 assert.ok(packed.some((p) => p.startsWith('dist/')), 'Tarball has no dist/ output; run npm run build first');
+const unexpected = packed.filter((p) => !(p.startsWith('dist/') || ['package.json', 'README.md', 'METHOD.md', 'LICENSE', 'CHANGELOG.md'].includes(p)));
+assert.deepEqual(unexpected, [], `Tarball holds files outside dist, README, METHOD, LICENSE and CHANGELOG: ${unexpected.join(', ')}`);
 
 // 3. Install into a clean consumer --------------------------------------------
 run('npm', [

@@ -4,20 +4,34 @@
   "description": "Check that every number in an AI output traces to the evidence it was given, and that rows add up to printed totals, using exact decimal arithmetic. Zero-dependency, framework-agnostic TypeScript.",
   "keywords": [
     "numbers",
+    "number-verification",
     "numeric-verification",
     "decimal",
+    "bigint",
     "reconciliation",
+    "llm",
     "llm-output",
+    "hallucination",
+    "rag",
+    "grounding",
+    "fact-checking",
+    "finance",
     "extraction",
-    "honesty",
-    "ci",
     "honesty-kits"
   ],
   "author": "Lucas Kopietz",
-  "license": "UNLICENSED",
-  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lkopietz3-byte/number-trace-kit.git"
+  },
+  "homepage": "https://github.com/lkopietz3-byte/number-trace-kit#readme",
+  "bugs": {
+    "url": "https://github.com/lkopietz3-byte/number-trace-kit/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -30,6 +44,8 @@
   "files": [
     "dist",
     "README.md",
+    "METHOD.md",
+    "LICENSE",
     "CHANGELOG.md"
   ],
   "engines": {

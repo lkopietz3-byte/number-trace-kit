@@ -210,8 +210,22 @@ made. Rules:
 
 ## Release
 
-The package is private and unreleased; the version is 0.1.0 and the changelog
-heading says unreleased. Releasing means choosing a license, removing
-`"private": true`, adding a `LICENSE` file and repository metadata, adding the
-`LICENSE` file to `files` in `package.json`, and following the maintainer's
-release process. None of that has been done.
+The package is public and MIT licensed (`LICENSE`, `"license": "MIT"`, repository
+metadata in `package.json`). `files` lists `dist`, `README.md`, `METHOD.md`,
+`LICENSE` and `CHANGELOG.md`, and `scripts/verify-package.mjs` fails if the tarball
+holds anything else, if `private` is set, or if the license is not MIT.
+
+Publishing is only by a `v*` tag through `.github/workflows/release.yml`, never
+`npm publish` by hand (`prepublishOnly` still runs `npm run verify` as a guard):
+
+1. Add a dated entry to `CHANGELOG.md` and set `version` in `package.json`.
+2. Merge, then push the tag `v<version>`.
+3. The workflow refuses a run that is not on a tag, refuses a tag that differs from
+   `package.json`, runs the dependency audit, `npm run verify` and `npm run attw`,
+   checks the registry (only a confirmed E404 means "not published yet", so a
+   re-run on a published version does nothing), and publishes with npm trusted
+   publishing (`id-token: write`, no stored token, provenance automatic). Trusted
+   publishing must be configured for this package on npmjs.com.
+
+A published `name@version` can never be reused and npm's unpublish window is
+narrow, so fix forward with a new patch version instead of unpublishing.

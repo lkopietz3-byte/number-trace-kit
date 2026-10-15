@@ -1,15 +1,17 @@
 # Security policy
 
-## Status
+## Supported versions
 
-This package is private and unreleased. There are no supported published
-versions yet.
+Security fixes go to the latest minor version only. If a vulnerability affects an
+older minor version, upgrade to the latest minor first.
 
 ## Reporting a vulnerability
 
-Please report suspected vulnerabilities privately to the maintainer (Lucas
-Kopietz) rather than in a public place. Include what you can: the version or
-commit, a minimal reproduction, and the impact you expect.
+Please report suspected vulnerabilities privately, not in a public issue. Use
+[GitHub private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability)
+on this repository: open the Security tab and choose "Report a vulnerability".
+Include what you can: the version, a minimal reproduction, and the impact you
+expect.
 
 ## Posture
 
