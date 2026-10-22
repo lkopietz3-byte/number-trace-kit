@@ -327,6 +327,14 @@ function rateWord(w: string): string | undefined {
   return own(RATE_WORDS, w.toLowerCase()) ?? spacedUnit(w) ?? own(GLUED_UNITS, w)
 }
 
+// A watt unit followed by "hours" is the energy unit written out ("kilowatt-hours" is "kWh"), which is not power ("kW").
+const ENERGY_UNITS: Readonly<Record<string, string>> = { W: 'Wh', kW: 'kWh', MW: 'MWh', GW: 'GWh' }
+
+/** Two units written with a hyphen between them ("kilowatt-hours", "foot-pounds"): one compound unit, not the first word. */
+function compoundUnit(first: string, second: string): string {
+  return (second === 'hour' ? own(ENERGY_UNITS, first) : undefined) ?? `${first}-${second}`
+}
+
 /** What a word after a hyphen ("100-days", "12-percent", "50-dollars") says about the number before it. */
 function hyphenWord(w: string): { unit?: string; percent?: '%'; currency?: string } | undefined {
   const lower = w.toLowerCase()
@@ -1685,7 +1693,7 @@ export function scan(
     for (let k = 0; k < 2; k++) {
       let q: number
       if (at(p) === 0x2f) q = p + 1
-      else if (isGap(at(p)) && (at(p + 1) | 0x20) === 0x70 && (at(p + 2) | 0x20) === 0x65 && (at(p + 3) | 0x20) === 0x72 && isGap(at(p + 4))) q = p + 5
+      else if ((isGap(at(p)) || at(p) === 0x2d) && (at(p + 1) | 0x20) === 0x70 && (at(p + 2) | 0x20) === 0x65 && (at(p + 3) | 0x20) === 0x72 && at(p + 4) === at(p)) q = p + 5
       else break
       if (!isLetter(at(q))) break
       const w = readWord(q, 10)
@@ -1703,8 +1711,39 @@ export function scan(
     }
   }
 
+  /** A hyphen and then a unit word right at `p` ("-hours" in "kilowatt-hours"): the unit it names and where it ends, or null. */
+  const hyphenUnitAt = (p: number): { unit: string; end: number } | null => {
+    if (at(p) !== 0x2d || !isLetter(at(p + 1))) return null
+    const w = readWord(p + 1, 12)
+    const end = p + 1 + w.length
+    if (w.length > 12 || isLetter(at(end)) || isDigit(at(end)) || at(end) === 0x5f || isMark(at(end))) return null
+    const unit = w === 'h' ? 'hour' : spacedUnit(w)
+    return unit === undefined ? null : { unit, end }
+  }
+
+  /**
+   * A unit or a currency word followed by a hyphen and another unit ("25 kilowatt-hours", "5 kW-h", "3 foot-pounds",
+   * "25 dollar-days") is one compound unit, not the first word: energy is not power and a dollar-day is not a dollar.
+   * A watt unit with hours is the energy unit ("kWh"); any other pair is a unit of its own ("ft-lb").
+   */
+  const attachCompound = (sfx: Suffix): void => {
+    if (sfx.skipTo >= 0 || sfx.superscript || sfx.tooLong || sfx.unreadMagnitude || sfx.ordinal || sfx.percent !== undefined) return
+    if (sfx.exp10 !== 0 || sfx.looseMagnitude) return
+    const first = sfx.unit ?? sfx.currency
+    if (first === undefined || first === 'am' || first === 'pm' || first === 'x' || first === 'decade') return
+    // Only a word that just ended: a currency symbol after the number is not the first half of a compound.
+    if (!isLetter(at(sfx.end - 1)) || at(sfx.end) !== 0x2d) return
+    const next = hyphenUnitAt(sfx.end)
+    if (next === null) return
+    sfx.unit = compoundUnit(first, next.unit)
+    delete sfx.currency
+    sfx.dollarWord = false
+    sfx.end = next.end
+  }
+
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean, yearShaped: boolean): Suffix => {
     const sfx = readSuffixBase(e, hasCurrency, isInteger, isZero, resolution, yearShaped)
+    attachCompound(sfx)
     attachRate(sfx, hasCurrency)
     return sfx
   }
@@ -2023,6 +2062,14 @@ export function scan(
         // "5 MM" and "5 m": millimeters or meters, or millions. The kit cannot tell, so the other reading is kept.
         if ((w === 'MM' || w === 'm') && !scientific && !magnitudeRead && sfx.exp10 === 0) sfx.unitMagnitudeAlt = 6
         return we
+      }
+      // "25 ton-miles", "20 person-days": a word, a hyphen and a unit is a compound unit of its own, not the bare number.
+      if (at(we) === 0x2d && w.length >= 2 && lower !== 'per' && !scientific && !magnitudeRead) {
+        const next = hyphenUnitAt(we)
+        if (next !== null) {
+          sfx.unit = `${lower}-${next.unit}`
+          return next.end
+        }
       }
       return -1
     }

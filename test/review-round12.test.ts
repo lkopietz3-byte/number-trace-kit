@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { traceNumbers } from '../src/index.js'
+import { extractNumbers, traceNumbers } from '../src/index.js'
 import type { TraceOptions } from '../src/index.js'
+import { GROWTH_LIMIT, growthRatio } from './growth.js'
 
 // Regression rows from the field-trial review of the 0.1.0 release candidate (c4ea4e0). Each row names its finding and
 // was seen failing before its fix. The ids are first5:Fnn (first pass) and hunt:Fn (hunt pass).
@@ -41,6 +42,59 @@ describe('hunt:F1 a year before 1900 is a label too when only a derivation build
     expect(statuses('It has 1,500 units.', 'It has 1,000 units and 500 units.', report)).toEqual(['1,500:derived'])
     expect(statuses('It has 999 units.', 'It has 900 units and 99 units.', report)).toEqual(['999:derived'])
     expect(statuses('It has 1999 units.', 'It has 1996 units and 3 units.', report)).toEqual(['1999:untraced'])
+  })
+})
+
+
+describe('hunt:F2 a hyphenated compound unit is not read as its first word', () => {
+  it.each([
+    ['Output is 25 kilowatt-hours.', 'Output is 25 kilowatts.'],
+    ['Output is 25 megawatt-hours.', 'Output is 25 megawatts.'],
+    ['Output is 25 watt-hours.', 'Output is 25 watts.'],
+    ['Output is 25 kW-h.', 'Output is 25 kW.'],
+    ['The ride is 25 mile-per-hour.', 'The ride is 25 miles.'],
+    ['Efficiency is 25 miles-per-gallon.', 'Efficiency is 25 miles.'],
+    ['Cost is 25 dollar-days.', 'Cost is 25 dollars.'],
+    ['Moved 25 ton-miles.', 'Moved 25 tons.'],
+    ['Output is 25 kilowatts.', 'Output is 25 kilowatt-hours.'],
+    ['Used 25 kilowatt-hours.', 'Used 25 kilowatt-minutes.'],
+  ])('hunt:F2 %s against %s is not clean', (output, evidence) => {
+    expect(trace(output, evidence).verdict).not.toBe('clean')
+  })
+
+  it.each([
+    ['Output is 25 kilowatt-hours.'],
+    ['Output is 25 kW-h.'],
+    ['The ride is 25 mile-per-hour.'],
+    ['Efficiency is 25 miles-per-gallon.'],
+    ['Cost is 25 dollar-days.'],
+    ['Moved 25 ton-miles.'],
+    ['A 25-kilowatt-hours battery.'],
+  ])('hunt:F2 %s traced against itself is clean', (text) => {
+    expect(trace(text, text).verdict).toBe('clean')
+  })
+
+  it('hunt:F2 kilowatt-hours is the unit kWh, which differs from kW', () => {
+    expect(statuses('Output is 25 kilowatt-hours.', 'Output is 25 kWh.')).toEqual(['25 kilowatt-hours:traced'])
+    expect(statuses('Output is 25 kWh.', 'Output is 25 kilowatt-hours.')).toEqual(['25 kWh:traced'])
+    expect(statuses('Output is 25 kilowatt-hours.', 'Output is 25 kW.')).toEqual(['25 kilowatt-hours:untraced'])
+    expect(statuses('Output is 25 megawatt-hours.', 'Output is 25MWh.')).toEqual(['25 megawatt-hours:traced'])
+  })
+
+  it('hunt:F2 a hyphenated word that is not a unit still leaves the first word as the unit', () => {
+    expect(extractNumbers('a 10 minute-long call')[0]?.unit).toBe('minute')
+    expect(extractNumbers('about 5 year-over-year')[0]?.unit).toBe('year')
+    expect(extractNumbers('the 30-day trial')[0]?.unit).toBe('day')
+  })
+
+  it('hunt:F2 hyphenated compounds are read in linear time', () => {
+    const run = (n: number): (() => void) => {
+      const text = '25 kilowatt-hours, 3 ton-miles, 5 kW-h and 7 mile-per-hour. '.repeat(Math.ceil(n / 60))
+      return () => {
+        expect(extractNumbers(text).length).toBeGreaterThan(0)
+      }
+    }
+    expect(growthRatio(run)).toBeLessThan(GROWTH_LIMIT)
   })
 })
 
