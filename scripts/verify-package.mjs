@@ -69,6 +69,10 @@ const leaked = packed.filter((p) => forbidden.some((re) => re.test(p)));
 assert.deepEqual(leaked, [], `Tarball contains files that must not ship: ${leaked.join(', ')}`);
 assert.notEqual(pkg.private, true, 'package.json must not be private: this is a public package');
 assert.equal(pkg.license, 'MIT', 'package.json license must be MIT');
+// The shipped package.json is read by the consumer's npm: an install-time script (`prepare` builds the repository, it is
+// not for a consumer) makes npm warn about unapproved install scripts on a tarball or git install. Build in `prepack`.
+const installScripts = ['preinstall', 'install', 'postinstall', 'prepare'].filter((name) => Object.hasOwn(pkg.scripts ?? {}, name));
+assert.deepEqual(installScripts, [], `package.json ships install-time scripts (${installScripts.join(', ')}); use prepack to build before a pack`);
 for (const required of ['package.json', 'README.md', 'LICENSE', 'CHANGELOG.md']) {
   assert.ok(packed.includes(required), `Tarball is missing ${required}`);
 }

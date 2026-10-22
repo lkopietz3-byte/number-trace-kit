@@ -139,7 +139,13 @@ source entry is `src/index.ts`; the package export resolves to generated
 ## Setup and verification
 
 Declared dependencies are TypeScript, Vitest, ESLint and the package-check
-tools in package-lock.json. For a clean environment use `npm ci`.
+tools in package-lock.json. For a clean environment use `npm ci`. It does not
+build `dist/`: the build runs in `prepack` (so `npm pack`, `npm publish` and
+`npm run attw` build first) and in `npm run build`, `bench`, `crosscheck` and
+`verify`. There is deliberately no `prepare` script, because a script of that
+name ships in the tarball and makes npm warn about install scripts on a
+consumer's tarball or git install; `scripts/verify-package.mjs` fails if one
+returns.
 
 ```sh
 npm run lint
