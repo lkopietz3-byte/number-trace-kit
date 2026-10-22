@@ -73,7 +73,8 @@ source entry is `src/index.ts`; the package export resolves to generated
   keeps a count and the first candidate of each kind per key, so candidates that
   collide on one value cost one lookup, not a rescan.
   Cost, stated exactly: extraction is linear in characters; the evidence heap is
-  about a kilobyte per number, so evidence is capped at 500,000 numbers
+  one to two and a half kilobytes per number (about 600 MB for 500,000 bare numbers and 1.0 to 1.5 GB for 500,000 distinct
+  amounts, which carry one more index entry each), so evidence is capped at 500,000 numbers
   (`maxEvidenceNumbers` lowers it) and the scan stops the moment it is exceeded.
   Derivation candidates are counted before they are built (same-class pairs
   times derivations, plus the count-times-amount and percent-of-amount pairs)
