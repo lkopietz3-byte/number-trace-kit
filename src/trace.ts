@@ -497,6 +497,8 @@ interface Evidence {
   readonly groupRaw: GroupIndex
   readonly dateAny: Index
   readonly dateUnknown: Index
+  /** The negative reading of every evidence percent that was read as a label ("Tax (8.25%)"), to vouch for the same text in the output. */
+  readonly labels: Index
   readonly byValue: Index
   readonly all: Ent[]
   readonly weakAll: Ent[]
@@ -705,7 +707,7 @@ function applyHints(token: NumberToken, exp: number, currency: string | undefine
 function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
   const ev: Evidence = {
     strong: new Index(), weak: new Index(), groupRaw: new GroupIndex(), dateAny: new Index(),
-    dateUnknown: new Index(), byValue: new Index(), all: [], weakAll: [], dateKeys: new Map(), forms: new Set(), count: 0,
+    dateUnknown: new Index(), labels: new Index(), byValue: new Index(), all: [], weakAll: [], dateKeys: new Map(), forms: new Set(), count: 0,
   }
   let count = 0
   let textTotal = 0
@@ -759,7 +761,10 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
       if (negative !== undefined) {
         // The other reading of "Tax (8.25%)": a loss. It can only make a written negative `unknown`, never a pass.
         const ent = makeEnt(negative, shapeOf(negative), negative.value, negative.scale, idOf(t))
-        if (ent !== null) addEnt(ev, ent, true)
+        if (ent !== null) {
+          addEnt(ev, ent, true)
+          for (const u of regKeys(ent.cls, ent.unit)) ev.labels.add(entKey(ent.cls, u, true, ent.key), ent)
+        }
         labelNegatives.delete(t)
       }
       count++
@@ -1914,6 +1919,12 @@ function traceOne(
   matcher.scaleCapped = false
   // A parenthesis right after a figure is an aside (a conversion), so it is not held as a possible negative.
   const aside = tok.signStyle === 'parentheses' && text !== null && followsFigure(tok, text)
+  // A parenthesized percent that is a label here, as "Tax (8.25%)" is in the evidence, traces to the same label as written
+  // (copying a row or a sentence from the evidence is not a restated loss). A rounded or derived figure is still held.
+  if (text !== null && tok.kind === 'percent' && tok.signStyle === 'parentheses' && labelsPercent(tok, text)) {
+    const same = lookup(ev.labels, shape, true, key)
+    if (same.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(same) }
+  }
 
   if (weakPrimary(tok)) {
     if (

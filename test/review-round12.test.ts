@@ -119,3 +119,27 @@ describe('first5:F03 a quantity written 3 x Widget A is a count, like 3 × Widge
   })
 })
 
+
+describe('first5:F04 and hunt:F5 a parenthesized percent after a word, copied from the evidence, traces to it', () => {
+  const evidence = 'Subtotal $1,200.00. Tax (8.25%) $99.00. Total due $1,299.00.'
+  it.each([
+    [evidence],
+    ['Support is high (70%) overall.'],
+    ['The largest customers (35%) are retail.'],
+    ['The majority of Democrats (70%) and Independents (60%) support this.'],
+    ['Heavy drinking among Americans rose 17.2 percent (22 percent) in some states.'],
+  ])('first5:F04 %s traced against itself is clean', (text) => {
+    expect(trace(text, text).verdict).toBe('clean')
+  })
+
+  it('first5:F04 the label is the same figure only when it is written the same', () => {
+    expect(statuses('Support is high (71%) overall.', 'Support is high (70%) overall.')).toEqual(['(71%):untraced'])
+    // The kit does not read the sentence: an unlabeled evidence percent still leaves the parenthesized negative held.
+    expect(statuses('Support is high (70%) overall.', 'Support is high at 70% overall.')).toEqual(['(70%):unknown(sign-differs)'])
+    // A rounded figure is not the same text.
+    expect(statuses('Tax (8.3%) was due.', evidence)).toEqual(['(8.3%):unknown(sign-differs)'])
+    // A percent after a linking word is a loss on both sides and was already traced.
+    expect(statuses('Margin was (12%).', 'Margin was (12%).')).toEqual(['(12%):traced'])
+  })
+})
+
