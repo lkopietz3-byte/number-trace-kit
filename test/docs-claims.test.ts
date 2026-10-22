@@ -18,8 +18,10 @@ describe('first5:F01 and hunt:F3 the revision a figure was run at is the revisio
   it('no document says the commits after the benchmark revision change documentation only', () => {
     for (const [name, text] of [['README.md', readme], ['METHOD.md', method]] as const) {
       expect(text, name).not.toMatch(/change documentation only/)
-      // The rows that need the raw downloads say which revision they were run at and that they were not re-run.
-      expect(text, name).toMatch(/b9a4713[^\n]*not re-run/)
+      // The figures that need the raw downloads were run at the release head, so no document says they were not re-run.
+      expect(text, name).toMatch(/f98944a/)
+      expect(text, name).not.toMatch(/b9a4713[^\n]*not re-run/)
+      expect(text, name).not.toMatch(/not re-run at the release head/)
     }
   })
 })
