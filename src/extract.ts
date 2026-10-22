@@ -2055,6 +2055,8 @@ export function scan(
         return we
       }
       if ((w === 'x' || w === 'X') && startsNumber(we)) return -1
+      // "Qty 3 x Widget A" and "3 x $45.00": a quantity mark before a name or a price, the same as "3 \u00d7 Widget A", not the multiple "3x".
+      if (w === 'x' && isGap(at(we)) && (isUpper(at(we + 1)) || CURRENCY_SYMBOLS.has(at(we + 1)))) return -1
       // A lone "c" after a space is a label (option c), not cents; "12 cents" is in the spaced table.
       const unit = spacedUnit(w) ?? (w === 'c' ? undefined : own(GLUED_UNITS, w))
       if (unit !== undefined) {

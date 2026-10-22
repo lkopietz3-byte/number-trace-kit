@@ -98,3 +98,24 @@ describe('hunt:F2 a hyphenated compound unit is not read as its first word', () 
   })
 })
 
+
+describe('first5:F03 a quantity written 3 x Widget A is a count, like 3 × Widget A', () => {
+  it.each([
+    ['3 Widget A', 'Qty 3 x Widget A @ $45.00 = $135.00'],
+    ['Qty 3', 'Qty 3 x Widget A'],
+    ['3 Widget A', '3 × Widget A'],
+    ['3 Widget A', 'Qty 3 x $45.00'],
+  ])('first5:F03 %s against %s is clean', (output, evidence) => {
+    expect(trace(output, evidence, { preset: 'report' }).verdict).toBe('clean')
+    expect(trace(output, evidence).verdict).toBe('clean')
+  })
+
+  it('first5:F03 a multiple and a dimension are unchanged', () => {
+    expect(extractNumbers('10 x faster')[0]?.unit).toBe('x')
+    expect(extractNumbers('3x Widget A')[0]?.unit).toBe('x')
+    expect(extractNumbers('3 x widget')[0]?.unit).toBe('x')
+    expect(extractNumbers('3 x 4 cm').map((t) => t.unit)).toEqual(['cm', 'cm'])
+    expect(statuses('It ran 10 faster.', 'It ran 10 x faster.')).toEqual(['10:unknown(unit-unverified)'])
+  })
+})
+
