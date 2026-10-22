@@ -335,6 +335,17 @@ function compoundUnit(first: string, second: string): string {
   return (second === 'hour' ? own(ENERGY_UNITS, first) : undefined) ?? `${first}-${second}`
 }
 
+// Counted things that become a measure of work or traffic when a time or distance unit follows the hyphen ("20 person-days",
+// "8 passenger-miles"). Any other word before a hyphenated unit is an adjective ("5 all-day workshops", "3 half-day sessions"),
+// not part of a unit, and is left alone so two adjectives never read as two incompatible units.
+const MEASURE_NOUNS: Readonly<Record<string, string>> = {
+  person: 'person', persons: 'person', people: 'person', man: 'man', men: 'man', staff: 'staff', worker: 'worker', workers: 'worker',
+  employee: 'employee', employees: 'employee', student: 'student', students: 'student', patient: 'patient', patients: 'patient',
+  passenger: 'passenger', passengers: 'passenger', customer: 'customer', customers: 'customer', visitor: 'visitor', visitors: 'visitor',
+  ton: 'ton', tons: 'ton', tonne: 'tonne', tonnes: 'tonne', user: 'user', users: 'user', seat: 'seat', seats: 'seat', vehicle: 'vehicle', vehicles: 'vehicle', bed: 'bed', beds: 'bed',
+  machine: 'machine', machines: 'machine', engineer: 'engineer', engineers: 'engineer', labor: 'labor', labour: 'labor', crew: 'crew',
+}
+
 /** What a word after a hyphen ("100-days", "12-percent", "50-dollars") says about the number before it. */
 function hyphenWord(w: string): { unit?: string; percent?: '%'; currency?: string } | undefined {
   const lower = w.toLowerCase()
@@ -694,6 +705,10 @@ interface Suffix {
   unitMagnitudeAlt: number
   /** The denominator of a rate written after the number and its unit ("/month", "/kg/day"). */
   rate?: string
+  /** The compound unit of a money amount whose first half is a unit ("$25 kilowatt-hours"): money keeps its currency, and this rides with it. */
+  compound?: string
+  /** The unit after the hyphen of a currency-qualified compound on a money amount ("$25 CAD-days" is "day"); the unit is `<currency>-<this>`. */
+  currencyCompound?: string
 }
 
 /** Extract the numbers from a text. Linear time; never throws on odd characters. */
@@ -772,6 +787,8 @@ export function scan(
     currencyBare?: 'dollar' | 'yen'
     /** Two members name currencies that cannot be the same ("$5-10 EUR"). */
     conflict?: boolean
+    /** The compound a money member carries ("$5 to $10 CAD-days"): every member of a range has it. */
+    currencyUnit?: string
   }
   // The currency symbols and words that name no particular currency ("$", "¥", "dollars"), by token.
   const bareCurrency = new Map<Tok, 'dollar' | 'yen'>()
@@ -1729,24 +1746,34 @@ export function scan(
    * "25 dollar-days") is one compound unit, not the first word: energy is not power and a dollar-day is not a dollar.
    * A watt unit with hours is the energy unit ("kWh"); any other pair is a unit of its own ("ft-lb").
    */
-  const attachCompound = (sfx: Suffix): void => {
+  const attachCompound = (sfx: Suffix, hasCurrency: boolean): void => {
     if (sfx.skipTo >= 0 || sfx.superscript || sfx.tooLong || sfx.unreadMagnitude || sfx.ordinal || sfx.percent !== undefined) return
-    if (sfx.exp10 !== 0 || sfx.looseMagnitude) return
     const first = sfx.unit ?? sfx.currency
     if (first === undefined || first === 'am' || first === 'pm' || first === 'x' || first === 'decade') return
     // Only a word that just ended: a currency symbol after the number is not the first half of a compound.
     if (!isLetter(at(sfx.end - 1)) || at(sfx.end) !== 0x2d) return
     const next = hyphenUnitAt(sfx.end)
     if (next === null) return
+    sfx.end = next.end
+    if (hasCurrency) {
+      // "$25 CAD-days", "$25 USD-days": the amount is money, so the currency stays (a code settles a bare symbol, or
+      // contradicts it) and the compound travels with it. "$25 kilowatt-hours" keeps its energy unit the same way.
+      if (sfx.unit !== undefined) {
+        sfx.unit = compoundUnit(sfx.unit, next.unit)
+        sfx.compound = sfx.unit
+      } else {
+        sfx.currencyCompound = next.unit
+      }
+      return
+    }
     sfx.unit = compoundUnit(first, next.unit)
     delete sfx.currency
     sfx.dollarWord = false
-    sfx.end = next.end
   }
 
   const readSuffix = (e: number, hasCurrency: boolean, isInteger: boolean, isZero: boolean, resolution: boolean, yearShaped: boolean): Suffix => {
     const sfx = readSuffixBase(e, hasCurrency, isInteger, isZero, resolution, yearShaped)
-    attachCompound(sfx)
+    attachCompound(sfx, hasCurrency)
     attachRate(sfx, hasCurrency)
     return sfx
   }
@@ -2068,11 +2095,13 @@ export function scan(
         if ((w === 'MM' || w === 'm') && !scientific && !magnitudeRead && sfx.exp10 === 0) sfx.unitMagnitudeAlt = 6
         return we
       }
-      // "25 ton-miles", "20 person-days": a word, a hyphen and a unit is a compound unit of its own, not the bare number.
-      if (at(we) === 0x2d && w.length >= 2 && lower !== 'per' && !scientific && !magnitudeRead) {
-        const next = hyphenUnitAt(we)
-        if (next !== null) {
-          sfx.unit = `${lower}-${next.unit}`
+      // "20 person-days", "8 passenger-miles": a counted thing and a unit is a compound unit of its own, not the bare number.
+      // Any other word ("5 all-day workshops") is an adjective, and the number keeps no unit.
+      if (at(we) === 0x2d) {
+        const noun = own(MEASURE_NOUNS, lower)
+        const next = noun === undefined ? null : hyphenUnitAt(we)
+        if (noun !== undefined && next !== null) {
+          sfx.unit = `${noun}-${next.unit}`
           return next.end
         }
       }
@@ -2640,6 +2669,9 @@ export function scan(
       } else if (currency !== undefined) {
         kind = 'currency'
         tok.currency = currency
+        // "$25 CAD-days": a currency compound is part of the quantity, so it stays on the amount.
+        if (sfx?.compound !== undefined) tok.unit = sfx.compound
+        else if (sfx?.currencyCompound !== undefined) tok.unit = `${currency}-${sfx.currencyCompound}`
       } else if (sfx?.ordinal === true) {
         kind = 'ordinal'
       } else if (
@@ -2767,6 +2799,7 @@ export function scan(
         m.currency = g.currency
       }
     }
+    if (g.kind === 'range' && g.currencyUnit !== undefined && m.kind === 'currency' && m.unit === undefined) m.unit = g.currencyUnit
     const inf = numInfo.get(m)
     if (g.kind === 'range' && g.exp !== 0 && inf !== undefined && !inf.sci && inf.exp === 0 && m.ambiguity !== 'too-long' && m.ambiguity !== 'superscript') {
       m.value = decimalString(inf.neg, inf.int, inf.frac, g.exp)
@@ -2862,6 +2895,10 @@ export function scan(
       }
     } else if (m.kind !== 'percent' && m.kind !== 'currency' && m.unit !== undefined && g.unit === undefined) {
       g.unit = m.unit
+      changed = true
+    }
+    if (g.kind === 'range' && m.kind === 'currency' && m.unit !== undefined && g.currencyUnit === undefined) {
+      g.currencyUnit = m.unit
       changed = true
     }
     if (g.kind === 'range' && m.rate !== undefined && g.rate === undefined) {

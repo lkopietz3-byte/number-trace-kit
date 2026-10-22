@@ -52,7 +52,7 @@ export interface NumberToken {
    */
   readonly scale: number
   readonly kind: NumberKind
-  /** `%` or `pp` for percents, a canonical measurement unit such as `kg` or `day`, or `x`. */
+  /** `%` or `pp` for percents, a canonical measurement unit such as `kg` or `day`, or `x`. A currency amount has one only for a compound such as `CAD-day` (`$25 CAD-days`). */
   readonly unit?: string
   /** Canonical currency code such as `USD` or `EUR`. A bare `$` is read as `USD`. */
   readonly currency?: string

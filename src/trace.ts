@@ -124,7 +124,8 @@ function shapeOf(t: NumberToken): Shape {
   // A rate ("$29/month", "25 mg/kg") is a class of its own: the denominator is part of the quantity.
   const rate = t.rate ?? ''
   if (t.kind === 'percent') return { cls: `${t.unit === 'pp' ? 'pp' : 'pct'}${rate}`, unit: '' }
-  if (t.kind === 'currency') return { cls: `cur:${t.currency ?? ''}${rate}`, unit: '' }
+  // A currency compound ("$25 CAD-days") is a quantity of its own: its unit keeps it apart from the plain amount.
+  if (t.kind === 'currency') return { cls: `cur:${t.currency ?? ''}${rate}`, unit: t.unit ?? '' }
   if (t.kind === 'date-part') return { cls: 'date', unit: t.part ?? '' }
   // A time of day (minutes since midnight) matches only another time of day, never a count.
   if (t.kind === 'time') return { cls: 'time', unit: '' }
