@@ -4,6 +4,7 @@ import type { TraceOptions } from '../src/index.js'
 import readme from '../README.md?raw'
 import method from '../METHOD.md?raw'
 import engineering from '../ENGINEERING.md?raw'
+import benchReadme from '../bench/README.md?raw'
 
 // Claims in the documentation that the field-trial review of the 0.1.0 release candidate found false or missing. Each row names
 // its finding (first5:Fnn from the first pass, hunt:Fn from the hunt pass) and was seen failing before the text was fixed.
@@ -72,5 +73,14 @@ describe('first5:F02, F03, F05, F10, F11 and F13 the README tells a reader what 
 
   it('first5:F13 the lead pairs the favorable honest-number figure with the less favorable one', () => {
     expect(glance).toMatch(/7\.6%/)
+  })
+})
+
+describe('first5:F09 bench/README.md matches the package README and works from a fresh clone as written', () => {
+  it('names the README section as it is called and says to install first', () => {
+    expect(readme).toMatch(/^## Accuracy on real data$/m)
+    expect(benchReadme).not.toMatch(/Accuracy on real output/)
+    expect(benchReadme).toMatch(/npm ci/)
+    expect(benchReadme).not.toMatch(/lists only `dist`/)
   })
 })

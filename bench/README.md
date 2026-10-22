@@ -1,6 +1,8 @@
 # bench: reproducible accuracy checks
 
-Everything behind the numbers in the package README's "Accuracy on real output" section. It is a development folder: it is not in the npm package (`files` in `package.json` lists only `dist`, the README and the changelog).
+Everything behind the numbers in the package README's "Accuracy on real data" section. It is a development folder: it is not in the npm package (`files` in `package.json` lists `dist`, `README.md`, `METHOD.md`, `LICENSE` and `CHANGELOG.md`).
+
+Run `npm ci` once first: `npm run bench` starts by cleaning `dist/` and compiling it with the TypeScript compiler from `node_modules`, so in a fresh clone without `npm ci` the build step fails and `dist/` is gone.
 
 ```sh
 npm run bench                      # builds, then prints every table below; works offline on the committed data
