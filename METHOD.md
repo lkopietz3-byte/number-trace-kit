@@ -1,6 +1,6 @@
 # Method
 
-How `number-trace-kit` decides, why each default is what it is, how to change it, and how often each heuristic was wrong when measured. Exact matching rules are in the README; this file is the reasoning and the evidence.
+How `@evidencekit/numbers` decides, why each default is what it is, how to change it, and how often each heuristic was wrong when measured. Exact matching rules are in the README; this file is the reasoning and the evidence.
 
 ## What this kit does and does not claim
 

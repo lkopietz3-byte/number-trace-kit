@@ -254,7 +254,7 @@ so a re-run on a published version does nothing), and publishes with npm trusted
 
 The 0.1.0 path is the one exception to "only through the workflow". npm's docs do not say
 whether a never-published name can be given a trusted publisher. On tag day the owner first
-tries `npm trust github number-trace-kit --file release.yml --repo lkopietz3-byte/number-trace-kit --allow-publish --yes`
+tries `npm trust github @evidencekit/numbers --file release.yml --repo evidencekit/numbers --allow-publish --yes`
 and pushes the tag at once if npm accepts it. If npm refuses because the package does not
 exist, the owner (never an agent) runs `npm publish` once from a clean checkout of the tagged
 commit, which gives 0.1.0 no provenance. The owner does not set up trusted publishing on that
@@ -265,7 +265,7 @@ provenance. Every later release goes only through `release.yml`; nobody runs `np
 hand again (`CONTRIBUTING.md` has the steps).
 
 Before the first tag: the GitHub repository named in `package.json`, the README and `SECURITY.md`
-(`lkopietz3-byte/number-trace-kit`) must exist, be public and have private vulnerability reporting on, because
+(`evidencekit/numbers`) must exist, be public and have private vulnerability reporting on, because
 trusted publishing, provenance and the README link to `bench/` all point at it. The release review found it did not exist yet.
 
 A published `name@version` can never be reused and npm's unpublish window is

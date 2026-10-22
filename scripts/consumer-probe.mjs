@@ -3,7 +3,7 @@
 // consumer would, asserting real outputs rather than just "it exports
 // something."
 import assert from 'node:assert/strict';
-import { extractNumbers, reconcile, reconcileComponents, traceNumbers } from 'number-trace-kit';
+import { extractNumbers, reconcile, reconcileComponents, traceNumbers } from '@evidencekit/numbers';
 
 // extractNumbers: exact decimal strings, kinds and units, never floats.
 const tokens = extractNumbers('Revenue was $1,234.50 (up 12.5%), about 1.2 million users.');
@@ -69,4 +69,4 @@ assert.equal(reconcile({ rows: [{ label: 'a', amount: 1010 }], total: '10.10' })
 assert.throws(() => reconcile({ rows: [{ label: 'a', amount: 0.1 }], total: '0.1' }), TypeError);
 assert.equal(reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '1250.50' }).ok, true);
 
-console.log('number-trace-kit consumer probe: all assertions passed');
+console.log('@evidencekit/numbers consumer probe: all assertions passed');

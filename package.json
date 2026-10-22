@@ -1,5 +1,5 @@
 {
-  "name": "number-trace-kit",
+  "name": "@evidencekit/numbers",
   "version": "0.1.0",
   "description": "Check that every number in an AI output traces to the evidence it was given, and that rows add up to printed totals, using exact decimal arithmetic. Zero-dependency, framework-agnostic TypeScript.",
   "keywords": [
@@ -17,17 +17,22 @@
     "fact-checking",
     "finance",
     "extraction",
-    "honesty-kits"
+    "evidence-kit",
+    "number-trace-kit"
   ],
   "author": "Lucas Kopietz",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lkopietz3-byte/number-trace-kit.git"
+    "url": "git+https://github.com/evidencekit/numbers.git"
   },
-  "homepage": "https://github.com/lkopietz3-byte/number-trace-kit#readme",
+  "homepage": "https://github.com/evidencekit/numbers#readme",
   "bugs": {
-    "url": "https://github.com/lkopietz3-byte/number-trace-kit/issues"
+    "url": "https://github.com/evidencekit/numbers/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "type": "module",
   "main": "./dist/index.js",

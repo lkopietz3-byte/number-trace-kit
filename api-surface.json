@@ -1,5 +1,5 @@
 {
-  "number-trace-kit": [
+  "@evidencekit/numbers": [
     "extractNumbers",
     "reconcile",
     "reconcileComponents",

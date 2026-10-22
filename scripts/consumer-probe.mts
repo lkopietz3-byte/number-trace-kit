@@ -20,7 +20,7 @@ import {
   type TraceResult,
   type TraceStatus,
   type TraceVerdict,
-} from 'number-trace-kit';
+} from '@evidencekit/numbers';
 
 function assertEqual<T>(actual: T, expected: T, message: string): void {
   if (actual !== expected) {

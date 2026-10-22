@@ -1,4 +1,6 @@
-# number-trace-kit
+# @evidencekit/numbers
+
+Part of Evidence Kit: checks that tie AI output and public claims back to their evidence.
 
 Does every number in an AI answer appear in the evidence it was given, and do the rows add up to the printed total?
 
@@ -13,7 +15,7 @@ Version 0.1.0, MIT license.
 ## Install
 
 ```sh
-npm i number-trace-kit
+npm i @evidencekit/numbers
 ```
 
 ES module for Node 20 or newer (and bundlers); TypeScript types ship with it.
@@ -21,7 +23,7 @@ ES module for Node 20 or newer (and bundlers); TypeScript types ship with it.
 ## First example
 
 ```js
-import { traceNumbers } from 'number-trace-kit'
+import { traceNumbers } from '@evidencekit/numbers'
 
 const evidence = 'Subtotal $1,200.00. Tax (8.25%) $99.00. Total due $1,299.00.'
 const output = 'Total due is $1,299.00, including 8.3% tax. Payment is due in 45 days.'
@@ -54,14 +56,14 @@ It does not call a model, read a network, or use the clock or randomness. Same i
 
 ## Modules and TypeScript
 
-Install with `npm i number-trace-kit`; from a checkout: `npm ci`, `npm run build`, then import from `dist/index.js`.
+Install with `npm i @evidencekit/numbers`; from a checkout: `npm ci`, `npm run build`, then import from `dist/index.js`.
 
 It is an ES module with no dependencies and no `node:` imports, so it also runs in a browser or an edge runtime through a bundler.
 
 | You write | Node 22.12 and newer, Node 20.19 and newer | Older Node 20 and 22 |
 | --- | --- | --- |
-| `import { traceNumbers } from 'number-trace-kit'` | works | works (Node 20 or newer is required) |
-| `const { traceNumbers } = require('number-trace-kit')` | works (`require()` of an ES module, no flag) | needs `--experimental-require-module` where it exists; use `import` |
+| `import { traceNumbers } from '@evidencekit/numbers'` | works | works (Node 20 or newer is required) |
+| `const { traceNumbers } = require('@evidencekit/numbers')` | works (`require()` of an ES module, no flag) | needs `--experimental-require-module` where it exists; use `import` |
 | TypeScript | `dist/index.d.ts` ships; use `module` and `moduleResolution` of `node16`, `nodenext` or `bundler` | the same |
 
 The Node versions where `require()` of an ES module needs no flag are Reported by the Node release notes (20.19.0 and 22.12.0); `require` and `import` were both run here on Node 26.3.0 (Verified). `npm run verify:package` installs the packed tarball into an empty project and imports every entry point.
@@ -88,7 +90,7 @@ The pattern for tables: set `scale` and `currency` on the evidence document that
 ## Worked example
 
 ```ts
-import { traceNumbers, reconcile } from 'number-trace-kit'
+import { traceNumbers, reconcile } from '@evidencekit/numbers'
 
 const evidence = [
   { id: 'last-quarter', text: 'Last quarter the total was $1,000.00.' },
@@ -307,7 +309,7 @@ reconcileComponents({ parts: { paid: '1000.00', reserve: '250.50' }, total: '125
 
 Corpus and revision: every figure in this section and in the lead was printed by one full run of `npm run bench` on 2026-10-21 at `f98944a` (Node 26.12.0, ICU 78.3); no commit after `37e0f39`, including the ones that record this run, changes `src`. The run used the raw downloads that `npm run bench:fetch -- --yes` fetched that day (19 files, about 41 MB: 2 RAGTruth files and 17 FinanceBench files), each checked against the SHA-256 in `bench/SOURCES.json`, so it covers all 289 RAGTruth answers (including the 105 data-to-text answers), FinanceBench and the full 150-answer holdout; the frozen holdout label files matched their pinned hashes. Every figure equals the one printed by the earlier run at `b9a4713` (2026-10-15, Node 26.3.0). Without the downloads, `npm run bench` still runs the labeled benchmark and the part of each corpus whose evidence is committed (184 RAGTruth question-answering and summary responses, 101 holdout responses).
 
-Every number below is printed by `npm run bench`, with its denominator and a 95% Wilson interval. The data, the labels and the scoring code are in `bench/` in the [repository](https://github.com/lkopietz3-byte/number-trace-kit) (not in the npm package), and `bench/METHOD.md` says how each label was made, which were made after the kit's verdicts were seen, and what each corpus cannot show. The corpora are third-party text with their own terms: the repository holds the model answers, the annotators' labels and number-centered excerpts of the sources, and `npm run bench:fetch` downloads the rest from pinned URLs, checked against hashes (FinanceBench is CC BY-NC and is never committed). Read the numbers as what one run on one sample said, not as a rate you will see on your own data.
+Every number below is printed by `npm run bench`, with its denominator and a 95% Wilson interval. The data, the labels and the scoring code are in `bench/` in the [repository](https://github.com/evidencekit/numbers) (not in the npm package), and `bench/METHOD.md` says how each label was made, which were made after the kit's verdicts were seen, and what each corpus cannot show. The corpora are third-party text with their own terms: the repository holds the model answers, the annotators' labels and number-centered excerpts of the sources, and `npm run bench:fetch` downloads the rest from pinned URLs, checked against hashes (FinanceBench is CC BY-NC and is never committed). Read the numbers as what one run on one sample said, not as a rate you will see on your own data.
 
 **A holdout the kit had never been run on, against plain checkers.** 150 RAGTruth answers from the train split, labeled from the annotators' spans before the kit ran: 75 with a number the annotators marked as absent from the source, 75 with no annotation at all. The labels and the code that made them are pinned by hash. "Flagged" means the checker marked a number as not in the evidence; the kit's `unknown` is not a flag.
 
@@ -390,9 +392,9 @@ Choices that are made on purpose, not pending work:
 - A derived match is not proof the model derived it; with many evidence numbers, coincidences happen. Treat `derived` with a high `matches` count as weak.
 - It is a mechanical check on numbers and sums. It makes no claim about whether an output is fit for any accounting, audit or legal purpose.
 
-## Relationship to grounding-kit
+## Relationship to @evidencekit/citations
 
-`grounding-kit` checks that a citation marker on a sentence points at the evidence span it should. This library checks the numbers, with no citations needed. They answer different questions and can run on the same output.
+`@evidencekit/citations` checks that a citation marker on a sentence points at the evidence span it should. This library checks the numbers, with no citations needed. They answer different questions and can run on the same output.
 
 ## Development
 

@@ -1,4 +1,4 @@
-# number-trace-kit: agent instructions
+# @evidencekit/numbers: agent instructions
 
 Check that every number in an AI output traces to the evidence it was given, and that rows add up to printed totals, using exact decimal arithmetic (BigInt, never floats). Zero-dependency, framework-agnostic TypeScript. Public MIT package (`license: MIT`, `LICENSE` in the tarball).
 

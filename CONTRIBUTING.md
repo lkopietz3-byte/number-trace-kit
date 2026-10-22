@@ -30,7 +30,7 @@ must change, say so in the commit message with the input that changed.
 
 ## Publishing
 
-number-trace-kit is a public MIT package. After 0.1.0, every release goes only through
+@evidencekit/numbers is a public MIT package. After 0.1.0, every release goes only through
 `.github/workflows/release.yml`: push a `v*` tag whose version matches `package.json`
 and the workflow runs the checks and publishes with npm trusted publishing. Do not push
 tags without the owner's decision. Before tagging, update `CHANGELOG.md` and run
@@ -48,15 +48,15 @@ never runs `npm trust`, `npm login` or `npm publish`):
 1. On tag day the owner first tries to set up trusted publishing for the new name:
 
    ```bash
-   npm trust github number-trace-kit --file release.yml --repo lkopietz3-byte/number-trace-kit --allow-publish --yes
+   npm trust github @evidencekit/numbers --file release.yml --repo evidencekit/numbers --allow-publish --yes
    ```
 
    If npm accepts it, there is a pending trusted publisher for `release.yml`. Push the `v0.1.0`
    tag on the green `main` commit and the workflow publishes 0.1.0 with provenance. npm expires a
    trusted-publisher setting that has no successful publish within 2 days, so create it on the day
    of the tag and push the tag at once.
-2. If npm refuses because the package does not exist, the owner runs `npm publish` once, by
-   hand, from a clean checkout of the tagged commit (`git clone`, `git checkout v0.1.0`,
+2. If npm refuses because the package does not exist, the owner runs `npm publish --access public` once
+   (a scoped name needs it on its first publish), by hand, from a clean checkout of the tagged commit (`git clone`, `git checkout v0.1.0`,
    `npm ci`; the `prepublishOnly` script runs `npm run verify`). That publish has no provenance.
    The owner does not set up trusted publishing yet: npm expires a trusted-publisher setting that
    has no successful publish within 2 days, and the next release (0.1.1) will not be ready by
