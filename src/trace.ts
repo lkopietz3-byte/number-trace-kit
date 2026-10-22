@@ -2063,7 +2063,22 @@ function coarselyRounded(
 }
 
 function isLabel(tok: NumberToken): boolean {
-  return tok.kind === 'year' || tok.kind === 'ordinal'
+  return tok.kind === 'year' || tok.kind === 'ordinal' || isEarlyYear(tok)
+}
+
+/**
+ * A count of four digits written with no separator, from 1000 to 1899 (`1879`, `1500`). The extractor reads only 1900 to 2100
+ * as a year, so these are counts, but they are as likely to be a year (a founding date, a battle, a treaty), and a derivation
+ * can build one by coincidence (`1876` and a count of 3 make `1879`). Held like a year when only a derivation builds it;
+ * written with a separator (`1,879`) it is a count. Reads the token's own fields, never its text.
+ */
+function isEarlyYear(tok: NumberToken): boolean {
+  if (tok.kind !== 'count' || tok.scale !== 0 || tok.unit !== undefined || tok.currency !== undefined || tok.magnitude !== undefined) return false
+  if (tok.value.length !== 4 || tok.raw !== tok.value) return false
+  const first = tok.value.charCodeAt(0)
+  // 1000 to 1899: a leading 1 and then a second digit from 0 to 8. The other digits are digits by construction.
+  const second = tok.value.charCodeAt(1)
+  return first === 0x31 && second >= 0x30 && second <= 0x38
 }
 
 function isClockUnit(tok: NumberToken): boolean {
