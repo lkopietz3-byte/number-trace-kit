@@ -202,7 +202,7 @@ compares the exported names to `api-surface.json`, runs
 - `test/icu-crosscheck.test.ts`: every ICU locale of the supported languages
   prints numbers; the kit reads them back and agrees with ICU on the decimal mark
   and numeric-date order. A CLDR update that changes a locale fails it on purpose. The kit's locale rules were fitted to
-  the CLDR data of Node 26.3.0 (ICU 78.3), the only version this release was run on; the CI compatibility matrix runs the
+  the CLDR data of Node 26.3.0 and 26.12.0 (both ICU 78.3), the only versions this release was run on; the CI compatibility matrix runs the
   same test on older Node lines with older CLDR data (Not run: unverified until it has run there).
 - `test/decimal-crosscheck.test.ts`: 3,000 seeded cases answered by Python's
   `decimal` and `fractions` (rounding, exact arithmetic, the seven derivations).
