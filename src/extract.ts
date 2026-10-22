@@ -1693,7 +1693,10 @@ export function scan(
     for (let k = 0; k < 2; k++) {
       let q: number
       if (at(p) === 0x2f) q = p + 1
-      else if ((isGap(at(p)) || at(p) === 0x2d) && (at(p + 1) | 0x20) === 0x70 && (at(p + 2) | 0x20) === 0x65 && (at(p + 3) | 0x20) === 0x72 && at(p + 4) === at(p)) q = p + 5
+      else if (
+        (at(p + 1) | 0x20) === 0x70 && (at(p + 2) | 0x20) === 0x65 && (at(p + 3) | 0x20) === 0x72 &&
+        ((isGap(at(p)) && isGap(at(p + 4))) || (at(p) === 0x2d && at(p + 4) === 0x2d))
+      ) q = p + 5
       else break
       if (!isLetter(at(q))) break
       const w = readWord(q, 10)

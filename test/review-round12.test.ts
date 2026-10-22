@@ -37,6 +37,19 @@ describe('hunt:F1 a year before 1900 is a label too when only a derivation build
     expect(derived).toEqual([])
   })
 
+  it.each([
+    ['full-width digits', 'Founded in \uff11\uff18\uff17\uff19.'],
+    ['Arabic-Indic digits', 'Founded in \u0661\u0668\u0667\u0669.'],
+  ])('hunt:F1 a wrong early year written in %s is held like the ASCII form', (_name, output) => {
+    const evidence = 'Founded in 1876 and has 3 offices.'
+    const ascii = trace('Founded in 1879.', evidence, report)
+    const other = trace(output, evidence, report)
+    expect(ascii.numbers[0]?.reason).toBe('label-derivation')
+    expect(other.numbers[0]?.status).toBe(ascii.numbers[0]?.status)
+    expect(other.numbers[0]?.reason).toBe('label-derivation')
+    expect(other.verdict).toBe('unknown')
+  })
+
   it('hunt:F1 the same year in the evidence, a separated count and a year outside the window are unchanged', () => {
     expect(statuses('Founded in 1879.', 'Founded in 1879 with 3 offices.', report)).toEqual(['1879:traced'])
     expect(statuses('It has 1,500 units.', 'It has 1,000 units and 500 units.', report)).toEqual(['1,500:derived'])
@@ -79,6 +92,16 @@ describe('hunt:F2 a hyphenated compound unit is not read as its first word', () 
     expect(statuses('Output is 25 kWh.', 'Output is 25 kilowatt-hours.')).toEqual(['25 kWh:traced'])
     expect(statuses('Output is 25 kilowatt-hours.', 'Output is 25 kW.')).toEqual(['25 kilowatt-hours:untraced'])
     expect(statuses('Output is 25 megawatt-hours.', 'Output is 25MWh.')).toEqual(['25 megawatt-hours:traced'])
+  })
+
+  it('hunt:F2 a hyphenated per is a rate, and per keeps any whitespace on either side', () => {
+    expect(extractNumbers('25 miles-per-hour')[0]?.rate).toBe('/hour')
+    expect(extractNumbers('25 miles per hour')[0]?.rate).toBe('/hour')
+    expect(extractNumbers('25 miles per\thour')[0]?.rate).toBe('/hour')
+    expect(extractNumbers('25 miles\tper hour')[0]?.rate).toBe('/hour')
+    // A hyphen on one side only is not the word per between two units.
+    expect(extractNumbers('25 miles per-hour')[0]?.rate).toBeUndefined()
+    expect(statuses('Drove 25 miles per\thour.', 'Drove 25 miles.')).toEqual(['25 miles per\thour:untraced'])
   })
 
   it('hunt:F2 a hyphenated word that is not a unit still leaves the first word as the unit', () => {
@@ -130,6 +153,14 @@ describe('first5:F04 and hunt:F5 a parenthesized percent after a word, copied fr
     ['Heavy drinking among Americans rose 17.2 percent (22 percent) in some states.'],
   ])('first5:F04 %s traced against itself is clean', (text) => {
     expect(trace(text, text).verdict).toBe('clean')
+  })
+
+  it('first5:F04 a locale guess on either side is never a trace, label or not', () => {
+    // 12,5 under en-US is a guess about the locale: it can be unknown or untraced, never a pass.
+    expect(statuses('Tax (12,5%)', 'Tax (12.5%)')).toEqual(['(12,5%):unknown(ambiguous-reading)'])
+    expect(trace('Tax (12.5%)', 'Tax (12,5%)').verdict).toBe('unknown')
+    expect(trace('Tax (12,5%)', 'Tax (12,5%)').verdict).not.toBe('clean')
+    expect(trace('Tax (12.5%)', 'Tax (12.5%)').verdict).toBe('clean')
   })
 
   it('first5:F04 the label is the same figure only when it is written the same', () => {

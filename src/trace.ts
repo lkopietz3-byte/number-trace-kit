@@ -763,7 +763,8 @@ function buildEvidence(evidence: unknown, ctx: Ctx): Evidence {
         const ent = makeEnt(negative, shapeOf(negative), negative.value, negative.scale, idOf(t))
         if (ent !== null) {
           addEnt(ev, ent, true)
-          for (const u of regKeys(ent.cls, ent.unit)) ev.labels.add(entKey(ent.cls, u, true, ent.key), ent)
+          // Only a reading that is not a guess can vouch for the same text in the output (12,5% under en-US never does).
+          if (!negative.ambiguous && !weakPrimary(negative)) for (const u of regKeys(ent.cls, ent.unit)) ev.labels.add(entKey(ent.cls, u, true, ent.key), ent)
         }
         labelNegatives.delete(t)
       }
@@ -1921,7 +1922,7 @@ function traceOne(
   const aside = tok.signStyle === 'parentheses' && text !== null && followsFigure(tok, text)
   // A parenthesized percent that is a label here, as "Tax (8.25%)" is in the evidence, traces to the same label as written
   // (copying a row or a sentence from the evidence is not a restated loss). A rounded or derived figure is still held.
-  if (text !== null && tok.kind === 'percent' && tok.signStyle === 'parentheses' && labelsPercent(tok, text)) {
+  if (text !== null && tok.kind === 'percent' && tok.signStyle === 'parentheses' && !tok.ambiguous && !weakPrimary(tok) && labelsPercent(tok, text)) {
     const same = lookup(ev.labels, shape, true, key)
     if (same.length > 0) return { token: tok, status: 'traced', evidence: uniqueRefs(same) }
   }
@@ -2085,7 +2086,9 @@ function isLabel(tok: NumberToken): boolean {
  */
 function isEarlyYear(tok: NumberToken): boolean {
   if (tok.kind !== 'count' || tok.scale !== 0 || tok.unit !== undefined || tok.currency !== undefined || tok.magnitude !== undefined) return false
-  if (tok.value.length !== 4 || tok.raw !== tok.value) return false
+  if (tok.value.length !== 4 || tok.raw.length !== 4) return false
+  // The raw text is the digits as written (full-width, Arabic-Indic): fold them as the scanner does, so no separator hides in them.
+  for (let k = 0; k < 4; k++) if (foldCodeUnit(tok.raw.charCodeAt(k)) !== tok.value.charCodeAt(k)) return false
   const first = tok.value.charCodeAt(0)
   // 1000 to 1899: a leading 1 and then a second digit from 0 to 8. The other digits are digits by construction.
   const second = tok.value.charCodeAt(1)
