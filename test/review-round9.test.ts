@@ -958,7 +958,7 @@ describe('gate-fix:T1 tokens the kit made are accepted back (found by the fuzz s
   })
 })
 
-// Time grows with the text: 4x the characters costs about 4x the CPU for every new construct (see test/growth.ts).
+// Time grows with the text: 8x the characters costs about 8x the CPU for every new construct (see test/growth.ts).
 describe('gate-fix:T2 linear time on the constructs added after the review', { timeout: 120_000 }, () => {
   const shapes: Record<string, (n: number) => string> = {
     'underscore groups in one chain': (n) => '1' + '_000'.repeat(n / 4),

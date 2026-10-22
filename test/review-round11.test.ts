@@ -31,8 +31,8 @@ describe('release-review:P1-pair-iteration candidate generation visits only comp
         expect(r.candidateCapHit).toBe(false)
       }
     }
-    // 4x the tokens: about 4x the time when linear, about 16x when every pair is visited.
-    expect(growthRatio(run, { small: 2_000, large: 8_000 })).toBeLessThan(GROWTH_LIMIT)
+    // 8x the tokens: about 8x the time when linear, about 64x when every pair is visited.
+    expect(growthRatio(run, 2_000)).toBeLessThan(GROWTH_LIMIT)
   })
 
   it('release-review:P1-pair-iteration three-operand candidates are listed from their group, not searched for in every pair', () => {
@@ -46,7 +46,7 @@ describe('release-review:P1-pair-iteration candidate generation visits only comp
         expect(r.derivationCandidates).toBe(60 * 59 / 2 + 60 * 59 * 58 / 6)
       }
     }
-    expect(growthRatio(run, { small: 2_000, large: 8_000 })).toBeLessThan(GROWTH_LIMIT)
+    expect(growthRatio(run, 2_000)).toBeLessThan(GROWTH_LIMIT)
   })
 })
 
