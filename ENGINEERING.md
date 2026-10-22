@@ -248,16 +248,20 @@ so a re-run on a published version does nothing), and publishes with npm trusted
 
 1. Add a dated entry to `CHANGELOG.md` and set `version` in `package.json`.
 2. Merge to `main`, wait for `Verify` to pass on every job, then push the tag `v<version>`.
-3. Trusted publishing must be configured for this package on npmjs.com.
+3. Trusted publishing must be configured for this package on npmjs.com, and not earlier than
+   the day of the tag: a setting with no successful publish within 2 days expires.
 
 The 0.1.0 path is the one exception to "only through the workflow". npm's docs do not say
 whether a never-published name can be given a trusted publisher. On tag day the owner first
-tries `npm trust github number-trace-kit --file release.yml --repo lkopietz3-byte/number-trace-kit --allow-publish --yes`.
-If npm refuses because the package does not exist, the owner (never an agent) runs
-`npm publish` once from a clean checkout of the tagged commit, which gives 0.1.0 no
-provenance, then sets up trusted publishing the same day, so 0.1.1 onward publish from the
-tag with provenance. Every later release goes only through `release.yml`; nobody runs
-`npm publish` by hand again (`CONTRIBUTING.md` has the steps).
+tries `npm trust github number-trace-kit --file release.yml --repo lkopietz3-byte/number-trace-kit --allow-publish --yes`
+and pushes the tag at once if npm accepts it. If npm refuses because the package does not
+exist, the owner (never an agent) runs `npm publish` once from a clean checkout of the tagged
+commit, which gives 0.1.0 no provenance. The owner does not set up trusted publishing on that
+day: npm expires a trusted-publisher setting that has no successful publish within 2 days, so
+one made then would expire before 0.1.1 is ready. The owner sets it up on the day of the 0.1.1
+release and pushes the `v0.1.1` tag right after, so 0.1.1 onward publish from the tag with
+provenance. Every later release goes only through `release.yml`; nobody runs `npm publish` by
+hand again (`CONTRIBUTING.md` has the steps).
 
 Before the first tag: the GitHub repository named in `package.json`, the README and `SECURITY.md`
 (`lkopietz3-byte/number-trace-kit`) must exist, be public and have private vulnerability reporting on, because
