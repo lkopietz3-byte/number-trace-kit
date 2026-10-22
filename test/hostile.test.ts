@@ -15,35 +15,57 @@ function cpu(fn: () => void, runs = 3): number {
   return best
 }
 
-describe('linear time on hostile text', { timeout: 60_000 }, () => {
-  // The harness in test/growth.ts must keep failing a quadratic function at GROWTH_LIMIT, and keep
-  // passing a linear one, however its repeat count or floor are tuned.
+describe('linear time on hostile text', { timeout: 300_000 }, () => {
+  // The harness in test/growth.ts must keep failing a quadratic function by a wide margin (more than
+  // twice GROWTH_LIMIT, where an 8x step gives about 64), and keep passing linear and n log n ones,
+  // however its repeat count, rounds or floor are tuned. The guard in each loop is a plain throw so
+  // the timed function carries no assertion overhead that would dilute a cheap quadratic.
   it('the ratio harness can tell a quadratic function from a linear one', () => {
     const quadratic = growthRatio((n) => () => {
       let acc = 0
       for (let i = 0; i < n; i++) for (let j = 0; j < i / 64; j++) acc = (acc + j) | 0
-      expect(acc).not.toBe(-1)
-    })
-    expect(quadratic).toBeGreaterThan(GROWTH_LIMIT)
+      if (acc === -1) throw new Error('unreachable')
+    }, 5_000)
+    expect(quadratic).toBeGreaterThan(2 * GROWTH_LIMIT)
     const linear = growthRatio((n) => () => {
       let acc = 0
       for (let i = 0; i < n * 40; i++) acc = (acc + i) | 0
-      expect(acc).not.toBe(-1)
-    })
+      if (acc === -1) throw new Error('unreachable')
+    }, 5_000)
     expect(linear).toBeLessThan(GROWTH_LIMIT)
   })
 
   it('the ratio harness fails a cheap quadratic function that needs many repeats to measure', () => {
-    // 40k characters cost only a few milliseconds here, the case that needs the repeat count.
+    // The small input costs only microseconds here, the case that needs the repeat count.
     const quadratic = growthRatio((n) => {
       const text = '1 '.repeat(n / 2)
       return () => {
         let acc = 0
         for (let i = 0; i < text.length; i += 2) for (let j = 0; j < i / 512; j++) acc = (acc + text.charCodeAt(j)) | 0
-        expect(acc).not.toBe(-1)
+        if (acc === -1) throw new Error('unreachable')
       }
-    })
-    expect(quadratic).toBeGreaterThan(GROWTH_LIMIT)
+    }, 8_000)
+    expect(quadratic).toBeGreaterThan(2 * GROWTH_LIMIT)
+  })
+
+  it('the ratio harness passes a cheap linear function and an n log n function', () => {
+    const cheapLinear = growthRatio((n) => {
+      const text = '1 '.repeat(n / 2)
+      return () => {
+        let acc = 0
+        for (let i = 0; i < text.length; i++) acc = (acc + text.charCodeAt(i)) | 0
+        if (acc === -1) throw new Error('unreachable')
+      }
+    }, 8_000)
+    expect(cheapLinear).toBeLessThan(GROWTH_LIMIT)
+    const nLogN = growthRatio((n) => {
+      const values = Array.from({ length: n }, (_, i) => (i * 2_654_435_761) % 1_000_003)
+      return () => {
+        const sorted = [...values].sort((x, y) => x - y)
+        if (sorted.length !== n) throw new Error('unreachable')
+      }
+    }, 20_000)
+    expect(nLogN).toBeLessThan(GROWTH_LIMIT)
   })
 
   const shapes: Record<string, (n: number) => string> = {
