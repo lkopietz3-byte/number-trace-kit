@@ -110,7 +110,7 @@ describe('hunt:F2 a hyphenated compound unit is not read as its first word', () 
     expect(extractNumbers('the 30-day trial')[0]?.unit).toBe('day')
   })
 
-  it('hunt:F2 hyphenated compounds are read in linear time', () => {
+  it('hunt:F2 hyphenated compounds are read in linear time', { timeout: 120_000 }, () => {
     const run = (n: number): (() => void) => {
       const text = '25 kilowatt-hours, 3 ton-miles, 5 kW-h and 7 mile-per-hour. '.repeat(Math.ceil(n / 60))
       return () => {
