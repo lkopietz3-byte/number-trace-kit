@@ -789,7 +789,11 @@ export function scan(
     conflict?: boolean
     /** The compound a money member carries ("$5 to $10 CAD-days"): every member of a range has it. */
     currencyUnit?: string
+    /** The unit after the hyphen of a currency-qualified compound ("day" in "$5 CAD-days"): the unit is `<currency>-<this>`, so it follows the group's currency. */
+    currencyCompound?: string
   }
+  // The currency-qualified compounds ("$5 dollar-days"): the part after the hyphen, by token. Their unit names the token's currency, so it is rebuilt when the range settles a bare sign.
+  const currencyCompoundOf = new Map<Tok, string>()
   // The currency symbols and words that name no particular currency ("$", "¥", "dollars"), by token.
   const bareCurrency = new Map<Tok, 'dollar' | 'yen'>()
   let rangeGroup: Group | null = null
@@ -2671,7 +2675,10 @@ export function scan(
         tok.currency = currency
         // "$25 CAD-days": a currency compound is part of the quantity, so it stays on the amount.
         if (sfx?.compound !== undefined) tok.unit = sfx.compound
-        else if (sfx?.currencyCompound !== undefined) tok.unit = `${currency}-${sfx.currencyCompound}`
+        else if (sfx?.currencyCompound !== undefined) {
+          tok.unit = `${currency}-${sfx.currencyCompound}`
+          currencyCompoundOf.set(tok, sfx.currencyCompound)
+        }
       } else if (sfx?.ordinal === true) {
         kind = 'ordinal'
       } else if (
@@ -2799,7 +2806,15 @@ export function scan(
         m.currency = g.currency
       }
     }
-    if (g.kind === 'range' && g.currencyUnit !== undefined && m.kind === 'currency' && m.unit === undefined) m.unit = g.currencyUnit
+    if (g.kind === 'range' && m.kind === 'currency' && m.unit === undefined) {
+      if (g.currencyCompound !== undefined && m.currency !== undefined) {
+        currencyCompoundOf.set(m, g.currencyCompound)
+        m.unit = `${m.currency}-${g.currencyCompound}`
+      } else if (g.currencyUnit !== undefined) m.unit = g.currencyUnit
+    }
+    // A compound that names the member's currency follows it when the range settles a bare sign ("$5 dollar-days to $10 CAD-days").
+    const compoundOf = currencyCompoundOf.get(m)
+    if (compoundOf !== undefined && m.kind === 'currency' && m.currency !== undefined) m.unit = `${m.currency}-${compoundOf}`
     const inf = numInfo.get(m)
     if (g.kind === 'range' && g.exp !== 0 && inf !== undefined && !inf.sci && inf.exp === 0 && m.ambiguity !== 'too-long' && m.ambiguity !== 'superscript') {
       m.value = decimalString(inf.neg, inf.int, inf.frac, g.exp)
@@ -2899,6 +2914,8 @@ export function scan(
     }
     if (g.kind === 'range' && m.kind === 'currency' && m.unit !== undefined && g.currencyUnit === undefined) {
       g.currencyUnit = m.unit
+      const compound = currencyCompoundOf.get(m)
+      if (compound !== undefined) g.currencyCompound = compound
       changed = true
     }
     if (g.kind === 'range' && m.rate !== undefined && g.rate === undefined) {
