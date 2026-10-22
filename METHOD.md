@@ -96,7 +96,9 @@ Against plain checkers, on the 150-answer holdout (Verified at `b9a4713` with th
 
 - It checks numbers, not sentences. A right number in the wrong place, a direction flip (`rose` for `fell`) and swapped fields pass. On the labeled benchmark 0 of 18 such items were caught under the default settings. On 153 FinanceBench answers with a wrong headline number, 8 (5.2%) came back `clean` (Verified at `b9a4713`, not re-run since); the audit found the values on the page, in the wrong row or rounded from another cell.
 - It does not know whether the evidence is true or complete.
-- It does not read number words (`twelve`), fractions it cannot value (`⅓`), a scale stated elsewhere (`in thousands`; you set `scale`), or currency written as prose other than dollars, euros and codes.
+- It does not read number words (`twelve`, `five million`, `forty-five percent`; an answer that spells every number is `clean` with no numbers, so check `numbers.length`), fractions it cannot value (`⅓`), a scale stated elsewhere (`in thousands`; you set `scale`), or currency written as prose other than dollars, euros and codes.
+- Evidence is plain text. Markup, entities and JSON are not stripped or decoded, so `$` split from its digits by a tag or an entity (`<td>&#36;1,299.00</td>`) leaves a bare number against the output's `$1,299.00`, which is `untraced`.
+- A copy of the array `extractNumbers` returned (a `filter`, a spread) has no record of what was skipped. Only the output as a string, or that array exactly as returned, can never be `clean` past an unread form such as `12foo` or `Rs1,500`.
 - The word lists for units, currencies and month names are short and mostly English. Month names are read in English and seven other languages.
 - Some honest answers are flagged. About one honest RAGTruth response in seven needs a person under `strict` with list markers ignored (20 of 135, Verified). Claims about the answer itself (`in 46 words`) are `untraced`.
 - A derived match is not proof the model derived the number. Treat `derived` with a high `matches` count as weak.

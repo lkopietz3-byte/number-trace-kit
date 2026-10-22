@@ -6,7 +6,7 @@ A small TypeScript library that pulls the numbers out of a text, turns them into
 
 **Who it is for.** Developers who ship AI-written summaries, reports or answers and hold the source text the numbers should come from: finance and pricing pages, extracted tables, invoices, metrics write-ups. Run it in tests, CI or a review queue.
 
-**What it does not do.** It checks that numbers are present in the evidence. It does not check that they are true, that they sit in the right sentence, or that the claim around them is right, and it is not a certification of accuracy or compliance (see [METHOD.md](METHOD.md)). `traced` means the number, in that unit, appears in the evidence.
+**What it does not do.** It checks that numbers are present in the evidence. It does not check that they are true, that they sit in the right sentence, or that the claim around them is right, and it is not a certification of accuracy or compliance (see [METHOD.md](METHOD.md)). It does not read numbers written as words (`five million dollars`, `forty-five percent`, `tripled`): an answer that spells its numbers has none for the kit to check and comes back `clean` with 0 numbers, so look at `numbers.length` when you expect some. `traced` means the number, in that unit, appears in the evidence.
 
 Version 0.1.0, MIT license.
 
@@ -42,7 +42,7 @@ $1,299.00 traced
 
 ## Accuracy at a glance
 
-On 289 real RAGTruth answers with annotator labels (preset `strict`, list markers ignored), 96 of the 106 numbers that the annotators marked as absent from the source were flagged `untraced`, the other 10 were sent to a person as `unknown`, and none passed. 14 of 697 honest numbers (2.0%) were flagged, and 20 of 135 honest answers (14.8%) needed a person. On a 150-answer holdout labeled before the kit ran, it flagged 71 of 75 answers with an unsupported number and 11 of 75 clean answers; a plain regex check found about the same (74 of 75 and 22 of 75). It cannot see a right number in the wrong place: on 153 FinanceBench answers with a wrong headline number, 8 came back `clean`. These figures need the raw downloads for part of their answers: they were run at code revision `b9a4713` with local copies whose hashes match the pinned ones and were not re-run after the later source changes (see [Accuracy on real data](#accuracy-on-real-data) for what was re-run at the release head). Denominators, intervals, corpora and revision are there too; every verdict, default and measured rate is in [METHOD.md](METHOD.md).
+On 289 real RAGTruth answers with annotator labels (preset `strict`, list markers ignored), 96 of the 106 numbers that the annotators marked as absent from the source were flagged `untraced`, the other 10 were sent to a person as `unknown`, and none passed. 14 of 697 honest numbers (2.0%) were flagged (57 of 753, 7.6%, when 43 more flagged numbers that are not plain honest numbers either are counted: unit conversions, claims about the answer's own length, numbers the annotators missed), and 20 of 135 honest answers (14.8%) needed a person. On a 150-answer holdout labeled before the kit ran, it flagged 71 of 75 answers with an unsupported number and 11 of 75 clean answers; a plain regex check found about the same (74 of 75 and 22 of 75). It cannot see a right number in the wrong place: on 153 FinanceBench answers with a wrong headline number, 8 came back `clean`. These figures need the raw downloads for part of their answers: they were run at code revision `b9a4713` with local copies whose hashes match the pinned ones and were not re-run after the later source changes (see [Accuracy on real data](#accuracy-on-real-data) for what was re-run at the release head). Denominators, intervals, corpora and revision are there too; every verdict, default and measured rate is in [METHOD.md](METHOD.md).
 
 ## What it does
 
@@ -65,6 +65,10 @@ It is an ES module with no dependencies and no `node:` imports, so it also runs 
 | TypeScript | `dist/index.d.ts` ships; use `module` and `moduleResolution` of `node16`, `nodenext` or `bundler` | the same |
 
 The Node versions where `require()` of an ES module needs no flag are Reported by the Node release notes (20.19.0 and 22.12.0); `require` and `import` were both run here on Node 26.3.0 (Verified). `npm run verify:package` installs the packed tarball into an empty project and imports every entry point.
+
+A TypeScript project that compiles to CommonJS (no `"type": "module"`) with `module` and `moduleResolution` set to `nodenext` needs a TypeScript that can `require()` an ES module: on TypeScript 5.6.3 the import fails with error TS1479, and on 5.9.3 and 7.0.2 it compiles (all Verified here); 5.7 and 5.8 were not tested (5.8 is the release that added it, Reported by the TypeScript release notes). On an older TypeScript, make the project ESM (`"type": "module"`), use `moduleResolution: bundler`, or load the package with a dynamic `import()`. A strict ESM project compiles clean: `npm run verify:package` type-checks a consumer under strict `NodeNext` (Verified).
+
+Tokens come back as plain data whose prototype chain ends in an internal object, so `token.hasOwnProperty('unit')` is not a function (use `Object.hasOwn(token, 'unit')`) and a template string of a token (`${token}`) throws a TypeError (use `token.raw`). Spread, `JSON.stringify`, `Object.keys` and property reads work as usual. The `reason` of a number is typed `string`, not a union: the list under Verdict can grow in a minor release, so an exhaustive `switch` on it needs a `default` branch.
 
 ## Start with a preset
 
@@ -106,7 +110,7 @@ result.verdict // 'untraced'
 
 Each entry in `result.numbers` carries the token, the status, the evidence it matched (`id`, `raw`, offsets), and for `derived` the operands and whether the match was exact.
 
-`result.skipped` lists every stretch of the output that holds digits but was not read as a number, each with its `raw` text, offsets and a reason (see Verdict), and `result.counts.skipped` is its length. Nothing the kit passes over is silent. `result.counts` also has `unitUnverified` (numbers matched with a unit on one side only, which only `allowBareEvidence`, `allowBareOutput` or a derivation allow) and `signDiffers` (numbers that matched evidence of the other sign).
+`result.skipped` lists every stretch of the output that holds digits but was not read as a number, each with its `raw` text, offsets and a reason (see Verdict), and `result.counts.skipped` is its length. Nothing the kit passes over is silent, as long as you pass the output as a string or the very array `extractNumbers` returned: a copy or a filtered version of that array (`tokens.filter(...)`, `[...tokens]`) carries no record of what was skipped, so an unread amount such as `Rs1,500` or `12foo` then comes back `clean` (see Known limits). `result.counts` also has `unitUnverified` (numbers matched with a unit on one side only, which only `allowBareEvidence`, `allowBareOutput` or a derivation allow) and `signDiffers` (numbers that matched evidence of the other sign).
 
 ```ts
 reconcile({
@@ -275,6 +279,8 @@ An unread form (`Rs1,500`, `12foo`, `2h45m`) that the evidence text writes exact
 | `maxOutputNumbers` | `500000` | 1 to 500,000; an output with more numbers than this is a `RangeError`, thrown as soon as the limit is passed |
 
 Scale and currency hints apply to the bare numbers of a document: counts and decimals with no unit, percent sign or magnitude of their own. Percents, years, dates and numbers like `$3 million` are left alone. `{ id: 'tbl', text: 'Revenue (in thousands)\n2019 | 5,735', scale: 'thousand', currency: 'USD' }` makes `5,735` read as `$5,735,000`, so `$5,735 thousand` traces and `$5.7 million` rounds from it. A table that prints `$` on its first row only is the same pattern with `currency: 'USD'`, but only for its bare cells: a cell that already prints the `$` (`$ 1,577`, `$ (1,577)`) is a currency amount and is not rescaled unless the document sets `scaleApplies: 'bare-and-currency'` (a cell with its own magnitude, `$1.5 billion`, is never rescaled).
+
+Evidence is plain text. The kit does not strip markup or decode entities, and a number that markup splits is not read as one: against `<td>&#36;1,299.00</td>`, `<td>$&nbsp;1,299.00</td>` or `<td><span>$</span><span>1,299.00</span></td>` the output `$1,299.00` is `untraced` (with a `nearMisses` entry whose reason is `unit-differs`), and a JSON value such as `{"price": 1299.00}` has no currency at all, so it matches only with `allowBareEvidence: true` or the `report` preset. Turn HTML and JSON into text first (strip tags, decode entities, write the unit beside the value), or hand over the cells as tokens.
 
 `evidence` is one string, or an array whose items are `{ id, text, scale?, currency? }` documents and/or pre-extracted tokens (`NumberToken`, optionally with `evidenceId`). Tokens are validated; a malformed one is a `TypeError`. `evidenceOrder` flips only the direction of changes, ratios and percents; sums, products and averages do not depend on it.
 
