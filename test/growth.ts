@@ -36,12 +36,28 @@ export function cpuSeconds(fn: () => void, repeats = 1, runs = RUNS): number {
 }
 
 /**
- * CPU time for the large input divided by CPU time for the small one (4x the size by default).
- * Both are run once first, so the measurement is of warmed-up code.
+ * Up to this many full measurements per call. Noise only ever adds CPU time to the large input (or
+ * removes none from the small one), so one honest low reading is evidence of linear growth; a
+ * quadratic function reads about 16 on every attempt. A passing reading stops the loop, so a quiet
+ * machine pays for one measurement. The 2026-10-22 CI runs read a linear function as 10.09 and
+ * 10.36 against a limit of 10 on a single attempt.
+ */
+const ATTEMPTS = 3
+
+/**
+ * CPU time for the large input divided by CPU time for the small one (4x the size by default):
+ * the lowest of up to ATTEMPTS measurements, stopping at the first one under GROWTH_LIMIT.
+ * Both inputs are run once first, so the measurement is of warmed-up code.
  */
 export function growthRatio(make: (n: number) => () => void, sizes: { small: number; large: number } = { small: 40_000, large: 160_000 }): number {
   const small = make(sizes.small)
   const large = make(sizes.large)
+  let best = Infinity
+  for (let attempt = 0; attempt < ATTEMPTS && best >= GROWTH_LIMIT; attempt++) best = Math.min(best, measureOnce(small, large))
+  return best
+}
+
+function measureOnce(small: () => void, large: () => void): number {
   small()
   large()
   // The fastest of a few warm calls, in wall-clock time: a pause from another process only ever
