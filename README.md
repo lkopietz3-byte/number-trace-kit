@@ -12,14 +12,8 @@ Version 0.1.0, MIT license.
 
 ## Install
 
-Not on npm yet: npm publishing is pending, so `npm i number-trace-kit` does not work today. Install from a clone of this repository:
-
 ```sh
-git clone https://github.com/lkopietz3-byte/number-trace-kit
-cd number-trace-kit
-npm ci && npm run build         # once, inside the clone
-cd ../your-project
-npm install ../number-trace-kit
+npm i number-trace-kit
 ```
 
 ES module for Node 20 or newer (and bundlers); TypeScript types ship with it.
@@ -66,8 +60,6 @@ All of these figures come from one full `npm run bench` run on the raw downloads
 It does not call a model, read a network, or use the clock or randomness. Same input, same options, same result.
 
 ## Modules and TypeScript
-
-Install from a clone as shown above (not on npm yet); the package name `number-trace-kit` in the import lines below is what your project sees after that install.
 
 It is an ES module with no dependencies and no `node:` imports, so it also runs in a browser or an edge runtime through a bundler.
 
