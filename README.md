@@ -49,7 +49,7 @@ $1,299.00 traced
 | 150-answer holdout, labeled before the kit ran: answers with an unsupported number that were flagged / clean answers that were flagged | Kit with `ignoreStructure`: 71 of 75 / 11 of 75. A plain regex check: 74 of 75 / 22 of 75. |
 | 153 FinanceBench answers whose headline number is wrong | 8 came back `clean`: the kit cannot see a right number in the wrong place. |
 
-All of these figures come from one full `npm run bench` run on the raw downloads at `f98944a`, the release head the source of the package comes from. Denominators, intervals, corpora and revision are in [Accuracy on real data](#accuracy-on-real-data), and every verdict, default and measured rate is in [METHOD.md](METHOD.md).
+All of these figures come from one full `npm run bench` run on the raw downloads at `f98944a` (2026-10-21). A full rerun on 2026-11-18 at `07b5733`, whose `src` is the same as this release's, printed the same figures. Denominators, intervals, corpora and revision are in [Accuracy on real data](#accuracy-on-real-data), and every verdict, default and measured rate is in [METHOD.md](METHOD.md).
 
 ## What it does
 
