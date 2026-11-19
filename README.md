@@ -8,7 +8,7 @@ A small TypeScript library that pulls the numbers out of a text, turns them into
 
 **What it does not do.** It checks that numbers are present in the evidence. It does not check that they are true, that they sit in the right sentence, or that the claim around them is right, and it is not a certification of accuracy or compliance (see [METHOD.md](METHOD.md)). It does not read numbers written as words (`five million dollars`, `forty-five percent`, `tripled`): an answer that spells its numbers has none for the kit to check and comes back `clean` with 0 numbers, so look at `numbers.length` when you expect some. `traced` means the number, in that unit, appears in the evidence.
 
-Version 0.1.0, MIT license.
+Version 0.1.1, MIT license.
 
 ## Install
 
