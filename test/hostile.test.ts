@@ -36,12 +36,14 @@ describe('linear time on hostile text', { timeout: 300_000 }, () => {
   })
 
   it('the ratio harness fails a cheap quadratic function that needs many repeats to measure', () => {
-    // The small input costs only microseconds here, the case that needs the repeat count.
+    // The small input costs well under a millisecond here, the case that needs the repeat count. The
+    // inner loop must dominate the outer one: with j < i / 512 the outer loop was an eighth of the work
+    // at the small size, which pulled the ratio down to 32.5 on Node 22.12.0 in CI (2026-11-18).
     const quadratic = growthRatio((n) => {
       const text = '1 '.repeat(n / 2)
       return () => {
         let acc = 0
-        for (let i = 0; i < text.length; i += 2) for (let j = 0; j < i / 512; j++) acc = (acc + text.charCodeAt(j)) | 0
+        for (let i = 0; i < text.length; i += 2) for (let j = 0; j < i / 128; j++) acc = (acc + text.charCodeAt(j)) | 0
         if (acc === -1) throw new Error('unreachable')
       }
     }, 8_000)
