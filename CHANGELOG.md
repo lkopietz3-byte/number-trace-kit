@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-19
+
+No change to the package code. The behavior and the public API are the same as 0.1.0.
+
+### Changed
+
+- The README on npm now shows the install line `npm i number-trace-kit`. The 0.1.0 page still said the package was not on npm yet and showed a source install.
+- The README's benchmark note no longer says that no commit after `37e0f39` changes `src`. Two later commits do; a full rerun on 2026-11-18 that includes them printed the same figures. It also says which figure is computed by hand.
+- The linear-time tests are stable on shared continuous-integration runners. They now measure growth with interleaved samples and an eight times step, and fail only past a ratio of 20 (linear is about 8, quadratic about 64). A self-check that proves the harness catches a quadratic function was adjusted so the cheap quadratic's inner loop dominates its outer loop.
+
 ## [0.1.0] - 2026-10-21
 
 First release. MIT license.
