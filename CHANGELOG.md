@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-11-20
+
+Documentation only. The package code and API are the same as 0.1.1.
+
+### Changed
+
+- The README points to its full version on GitHub, since npm cuts long READMEs off, and links that land past that point go to GitHub.
+- The README says which revision the benchmark figures come from, which numbers the kit reads and skips, and how the benchmark finds unsupported numbers inside the passages annotators marked.
+- A shorter package description that matches what the kit checks.
+
 ## [0.1.1] - 2026-11-19
 
 No change to the package code. The behavior and the public API are the same as 0.1.0.

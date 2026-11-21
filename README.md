@@ -1,6 +1,8 @@
 # number-trace-kit
 
-Does every number in an AI answer appear in the evidence it was given, and do the rows add up to the printed total?
+This README is long, and npm cuts it off partway. If the page stops early, read the [full version on GitHub](https://github.com/lkopietz3-byte/number-trace-kit/blob/main/README.md).
+
+Does every number in an AI answer appear in the evidence it was given, and do the rows add up to the printed total? (Numbers written as words are not read.)
 
 A small TypeScript library that pulls the numbers out of a text, turns them into exact decimals, and checks each one against the numbers in the evidence you supply. It also adds up rows and compares the sum to a printed total, to the cent. Comparisons use exact decimal arithmetic (BigInt), never floats. No dependencies, no network, no model calls; the same input gives the same result.
 
@@ -8,7 +10,7 @@ A small TypeScript library that pulls the numbers out of a text, turns them into
 
 **What it does not do.** It checks that numbers are present in the evidence. It does not check that they are true, that they sit in the right sentence, or that the claim around them is right, and it is not a certification of accuracy or compliance (see [METHOD.md](METHOD.md)). It does not read numbers written as words (`five million dollars`, `forty-five percent`, `tripled`): an answer that spells its numbers has none for the kit to check and comes back `clean` with 0 numbers, so look at `numbers.length` when you expect some. `traced` means the number, in that unit, appears in the evidence.
 
-Version 0.1.1, MIT license.
+Version 0.1.2, MIT license.
 
 ## Install
 
@@ -44,12 +46,12 @@ $1,299.00 traced
 
 | Test | Result |
 | --- | --- |
-| 289 real RAGTruth answers, `strict`: numbers the annotators marked as absent from the source | 96 of 106 flagged `untraced`, 10 sent to a person as `unknown`, 0 passed |
+| 289 real RAGTruth answers, `strict`: numbers the benchmark found missing from the source in passages the annotators marked | 96 of 106 flagged `untraced`, 10 sent to a person as `unknown`, 0 passed |
 | The same answers: honest numbers | 14 of 697 flagged (2.0%). Counting 43 more flagged numbers that are not plain honest numbers either (unit conversions, claims about the answer's own length, numbers the annotators missed), 57 of 753 (7.6%). 20 of 135 honest answers (14.8%) needed a person. |
 | 150-answer holdout, labeled before the kit ran: answers with an unsupported number that were flagged / clean answers that were flagged | Kit with `ignoreStructure`: 71 of 75 / 11 of 75. A plain regex check: 74 of 75 / 22 of 75. |
 | 153 FinanceBench answers whose headline number is wrong | 8 came back `clean`: the kit cannot see a right number in the wrong place. |
 
-All of these figures come from one full `npm run bench` run on the raw downloads at `f98944a` (2026-10-21). A full rerun on 2026-11-18 at `07b5733`, whose `src` is the same as this release's, printed the same figures. Denominators, intervals, corpora and revision are in [Accuracy on real data](#accuracy-on-real-data), and every verdict, default and measured rate is in [METHOD.md](METHOD.md).
+All of these figures come from one full `npm run bench` run on the raw downloads at `f98944a` (2026-10-21). A full rerun on 2026-11-18 at `07b5733`, whose `src` is the same as this release's, printed the same figures. Denominators, intervals, corpora and revision are in [Accuracy on real data](https://github.com/lkopietz3-byte/number-trace-kit/blob/main/README.md#accuracy-on-real-data), and every verdict, default and measured rate is in [METHOD.md](METHOD.md).
 
 ## What it does
 
@@ -289,7 +291,7 @@ Evidence is plain text. The kit does not strip markup or decode entities, and a 
 
 `evidence` is one string, or an array whose items are `{ id, text, scale?, currency? }` documents and/or pre-extracted tokens (`NumberToken`, optionally with `evidenceId`). Tokens are validated; a malformed one is a `TypeError`. `evidenceOrder` flips only the direction of changes, ratios and percents; sums, products and averages do not depend on it.
 
-Common ignores: citation markers and reference numbers that are not claims. Start with `ignoreStructure: true`. It skips a plain whole number of up to three digits that only labels the answer's own structure: a list marker at the start of a line (`1.` or `2)`, after an optional bullet, including the very first characters of the text), a bracket citation (`[3]`, `[1, 2]`, `[1-3]`), and the number after Step, Passage, Figure, Option or Question, in the singular (`Step 4`, `Fig. 2`). A list marker or a label has one or two digits (`Figure 450` is a claim); a bracket citation may have three (`[150]`). `Section` is not on the list, because `Section 230` is a legal citation, and neither are the plurals (`figures 240`, `options 400` and `questions 15` are counts). The skipped numbers come back with the status `ignored` and the reason `structure`. It does not touch a count in a sentence (`7 offices` against `9 offices` is still `untraced`), a legal citation (`Section 230` and `Section 50(1)` are checked), or the numbers of tokens you extracted yourself, which carry no text. `ignorePattern: /\[\d+\]|Section \d/` skips `[3]` and `Section 4` the hand-made way; `ignoreYears: true` skips years. Be careful with `ignoreSmallIntegersUpTo: 10`: it also hides a real wrong small count. On a labeled corpus of 289 RAGTruth responses (`bench/`, not in the package), skipping small integers up to 10 let 3 of 72 responses with an unsupported number come back clean (strict preset), and skipping the structure numbers let 0 of 72 through while keeping 42 of 45 honest question-answering responses clean.
+Common ignores: citation markers and reference numbers that are not claims. Start with `ignoreStructure: true`. It skips numbers used as certain list markers, labels or citations: a list marker at the start of a line (`1.` or `2)`, after an optional bullet, including the very first characters of the text), a bracket citation (`[3]`, `[1, 2]`, `[1-3]`), and the number after Step, Passage, Figure, Option or Question, in the singular (`Step 4`, `Fig. 2`). A list marker or a label has one or two digits (`Figure 450` is a claim); a bracket citation may have three (`[150]`). `Section` is not on the list, because `Section 230` is a legal citation, and neither are the plurals (`figures 240`, `options 400` and `questions 15` are counts). The skipped numbers come back with the status `ignored` and the reason `structure`. It does not touch a count in a sentence (`7 offices` against `9 offices` is still `untraced`), a legal citation (`Section 230` and `Section 50(1)` are checked), or the numbers of tokens you extracted yourself, which carry no text. `ignorePattern: /\[\d+\]|Section \d/` skips `[3]` and `Section 4` the hand-made way; `ignoreYears: true` skips years. Be careful with `ignoreSmallIntegersUpTo: 10`: it also hides a real wrong small count. On a labeled corpus of 289 RAGTruth responses (`bench/`, not in the package), skipping small integers up to 10 let 3 of 72 responses with an unsupported number come back clean (strict preset), and skipping the structure numbers let 0 of 72 through while keeping 42 of 45 honest question-answering responses clean.
 
 `ignorePattern` is tested against a short window only: the number itself (at most its first 64 characters) plus up to 32 characters before it and 16 after. The pattern must overlap the number to ignore it. The pattern is copied into a private global RegExp, so your flags (`g`, `y`) and `lastIndex` are never touched or shared, and empty matches advance by a whole code point under `u`/`v`. The window bounds how much text a pattern can see, so work stays linear in the text; it cannot make a badly written pattern fast, so keep patterns simple (`/Section \d/`, not nested quantifiers).
 
@@ -314,7 +316,7 @@ Corpus and revision: every figure in this section and in the lead was printed by
 
 Every number below is printed by `npm run bench`, with its denominator and a 95% Wilson interval. The data, the labels and the scoring code are in `bench/` in the [repository](https://github.com/lkopietz3-byte/number-trace-kit) (not in the npm package), and `bench/METHOD.md` says how each label was made, which were made after the kit's verdicts were seen, and what each corpus cannot show. The corpora are third-party text with their own terms: the repository holds the model answers, the annotators' labels and number-centered excerpts of the sources, and `npm run bench:fetch` downloads the rest from pinned URLs, checked against hashes (FinanceBench is CC BY-NC and is never committed). Read the numbers as what one run on one sample said, not as a rate you will see on your own data.
 
-**A holdout the kit had never been run on, against plain checkers.** 150 RAGTruth answers from the train split, labeled from the annotators' spans before the kit ran: 75 with a number the annotators marked as absent from the source, 75 with no annotation at all. The labels and the code that made them are pinned by hash. "Flagged" means the checker marked a number as not in the evidence; the kit's `unknown` is not a flag.
+**A holdout the kit had never been run on, against plain checkers.** 150 RAGTruth answers from the train split, labeled from the annotators' spans before the kit ran: 75 with a number the benchmark found missing from the source in a passage the annotators marked, 75 with no annotation at all. The labels and the code that made them are pinned by hash. "Flagged" means the checker marked a number as not in the evidence; the kit's `unknown` is not a flag.
 
 | Checker | Answers with an unsupported number that it flagged | Clean answers that it flagged |
 | --- | --- | --- |
