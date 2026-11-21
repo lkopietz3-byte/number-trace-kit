@@ -1,7 +1,7 @@
 {
   "name": "number-trace-kit",
-  "version": "0.1.1",
-  "description": "Check that every number in an AI output traces to the evidence it was given, and that rows add up to printed totals, using exact decimal arithmetic. Zero-dependency, framework-agnostic TypeScript.",
+  "version": "0.1.2",
+  "description": "Check numbers in common formats in AI text against the evidence you supply. Check printed totals using exact decimal math.",
   "keywords": [
     "numbers",
     "number-verification",
